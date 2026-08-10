@@ -1,0 +1,5 @@
+django>=5.0
+yfinance>=1.0
+PyPortfolioOpt>=1.5
+packaging
+pytest
