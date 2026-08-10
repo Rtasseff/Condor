@@ -1,0 +1,25 @@
+# Drive export: contains credentials, personal interview notes, and ~800MB of
+# bulk data. Local reference only — never commit.
+drive_export/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Django
+db.sqlite3
+web/media/
+staticfiles/
+
+# Data cache (fetched market data)
+.condor_cache/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
