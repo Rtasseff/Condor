@@ -20,8 +20,19 @@ diversified portfolio building accessible to people who've never invested.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python web/manage.py migrate
 python web/manage.py runserver
 ```
 
-Then open http://127.0.0.1:8000/.
+Then open http://127.0.0.1:8000/. (No `migrate` needed yet — the prototype
+has no database models; portfolios live in the page.)
+
+Core analytics can also be used directly:
+
+```python
+from condor import fetch_prices, compute_analysis
+prices = fetch_prices(["MSFT", "NEE", "CVX"], years=10)
+res = compute_analysis(prices, risk_free_rate=0.04, method="robust")
+res["tangency"]["weights"]   # the 'reasonable guess' portfolio
+```
+
+Run tests with `python -m pytest tests/`.
