@@ -1,0 +1,182 @@
+/* Condor Funds v2 — Explorer. Committed dark navy/teal look per the
+   2024 concept slides. Chart series colors are validated for CVD on
+   this surface (see dataviz notes in the repo). */
+
+:root {
+  color-scheme: dark;
+  --plane:        #0a0f1a;   /* page background */
+  --surface:      #121a2b;   /* cards / chart surface */
+  --surface-2:    #182238;   /* raised elements */
+  --ink:          #f2f5fa;
+  --ink-2:        #b7c0d0;
+  --muted:        #8791a5;
+  --grid:         #1e2a44;
+  --axis:         #2c3a5c;
+  --ring:         rgba(255,255,255,0.10);
+  --accent:       #17a689;   /* teal UI accent (buttons, wordmark) */
+  --accent-hi:    #1fc6a3;
+  --series-frontier: #3987e5;
+  --series-cal:      #d55181;
+  --series-you:      #c98500;
+  --danger:       #e66767;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--plane);
+  color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.topbar {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 18px 28px 10px;
+}
+.wordmark { font-weight: 800; font-size: 22px; letter-spacing: 0.04em; }
+.wordmark .condor { color: var(--ink); }
+.wordmark .funds  { color: var(--accent-hi); }
+.wordmark .proto  {
+  font-weight: 500; font-size: 12px; color: var(--muted);
+  margin-left: 10px; letter-spacing: 0.02em;
+}
+.pillars { display: flex; gap: 18px; font-size: 13px; color: var(--muted); }
+.pillars .active {
+  color: var(--accent-hi); font-weight: 700;
+  border-bottom: 2px solid var(--accent-hi); padding-bottom: 2px;
+}
+
+main { max-width: 1200px; margin: 0 auto; padding: 8px 24px 48px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--ring);
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin-top: 16px;
+}
+.card h2 { margin: 0 0 4px; font-size: 16px; font-weight: 700; }
+.card .sub { margin: 0 0 12px; color: var(--ink-2); font-size: 13px; }
+
+/* controls row */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 18px; align-items: end;
+  padding: 14px 20px;
+}
+.controls label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; color: var(--muted);
+}
+.controls select, .controls input, #addform input {
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 8px;
+  padding: 7px 10px; font-size: 14px;
+}
+.controls input#rf { width: 70px; }
+.pctwrap { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+.status { color: var(--muted); font-size: 13px; }
+
+button {
+  font: inherit; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--ring);
+}
+button.primary {
+  background: var(--accent); color: #04120e; font-weight: 700;
+  border: none; padding: 9px 22px;
+}
+button.primary:hover { background: var(--accent-hi); }
+button.primary:disabled { opacity: 0.55; cursor: wait; }
+button.ghost {
+  background: transparent; color: var(--ink-2); padding: 7px 12px;
+}
+button.ghost:hover { background: var(--surface-2); color: var(--ink); }
+button.small { padding: 6px 12px; font-size: 13px; }
+
+.error {
+  border-color: var(--danger); color: #ffd9d9;
+  background: #2a1520;
+}
+
+/* main layout */
+.layout { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+.chartcard { min-height: 520px; }
+#chart { width: 100%; height: 520px; }
+.empty {
+  color: var(--muted); text-align: center; padding: 120px 0;
+}
+
+/* sidebar */
+#addform { display: flex; gap: 8px; margin-bottom: 10px; }
+#addform input { flex: 1; min-width: 0; }
+.assetlist { list-style: none; margin: 0; padding: 0; }
+.assetlist li {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 4px; border-bottom: 1px solid var(--grid);
+}
+.assetlist .tick { font-weight: 700; min-width: 52px; }
+.assetlist .name {
+  flex: 1; color: var(--muted); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.assetlist input.w {
+  width: 62px; text-align: right;
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 6px; padding: 4px 6px;
+  font-size: 13px;
+}
+.assetlist .pct { color: var(--muted); font-size: 12px; }
+.assetlist button.rm {
+  background: none; border: none; color: var(--muted);
+  font-size: 16px; padding: 0 4px;
+}
+.assetlist button.rm:hover { color: var(--danger); }
+.sideactions { display: flex; gap: 8px; margin-top: 12px; }
+.quickadd { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+.quickadd .chip {
+  background: var(--surface-2); border: 1px solid var(--ring);
+  color: var(--ink-2); border-radius: 999px;
+  padding: 3px 12px; font-size: 12px;
+}
+.quickadd .chip:hover { color: var(--ink); border-color: var(--accent); }
+
+/* stat tiles */
+.tiles {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+  margin-top: 16px;
+}
+@media (max-width: 700px) { .tiles { grid-template-columns: 1fr; } }
+.tile {
+  background: var(--surface); border: 1px solid var(--ring);
+  border-radius: 14px; padding: 14px 18px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.tile .label { font-size: 12px; color: var(--muted); }
+.tile .label small { font-weight: 400; }
+.tile .value { font-size: 30px; font-weight: 700; }
+
+/* selected-point weights */
+.wbars { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 14px; }
+.wrow { display: grid; grid-template-columns: 60px 1fr 58px; gap: 10px; align-items: center; }
+.wrow .tick { font-weight: 600; font-size: 13px; }
+.wrow .bar {
+  height: 12px; border-radius: 4px 4px 4px 4px;
+  background: var(--series-frontier);
+  min-width: 2px;
+}
+.wrow .val {
+  font-size: 13px; color: var(--ink-2); text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* table */
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--grid); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+footer {
+  margin-top: 26px; color: var(--muted); font-size: 12px; text-align: center;
+}

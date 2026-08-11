@@ -1,0 +1,111 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Condor Funds — Portfolio Explorer</title>
+<link rel="stylesheet" href="{% static 'explorer/style.css' %}">
+<script src="{% static 'explorer/plotly.min.js' %}"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wordmark">
+    <span class="condor">CONDOR</span><span class="funds">FUNDS</span>
+    <span class="proto">v2 prototype</span>
+  </div>
+  <nav class="pillars" aria-hidden="true">
+    <span>Learn</span><span class="active">Build</span><span>Compete</span><span>Develop</span>
+  </nav>
+</header>
+
+<main>
+  <section class="controls card" aria-label="Analysis settings">
+    <label>Method
+      <select id="method">
+        <option value="robust" selected>Robust (median / CoMAD)</option>
+        <option value="normal">Normal (mean / Ledoit-Wolf)</option>
+      </select>
+    </label>
+    <label>Lookback
+      <select id="years">
+        <option value="5">5 years</option>
+        <option value="10" selected>10 years</option>
+        <option value="15">15 years</option>
+        <option value="20">20 years</option>
+      </select>
+    </label>
+    <label>Risk-free rate
+      <span class="pctwrap"><input id="rf" type="number" value="4.0" step="0.1" min="-5" max="25"> %</span>
+    </label>
+    <button id="analyze" class="primary">Analyze</button>
+    <span id="status" class="status" role="status"></span>
+  </section>
+
+  <div id="error" class="error card" hidden></div>
+
+  <div class="layout">
+    <section class="card chartcard">
+      <h2>Risk &amp; Reward</h2>
+      <p class="sub">Every point on the curve is a portfolio of your assets — click one to see its mix.
+         The dashed line runs from the risk-free rate through the tangent portfolio.</p>
+      <div id="chart" aria-label="Efficient frontier chart"></div>
+      <div id="chart-empty" class="empty">Add assets on the right, then hit <b>Analyze</b>.</div>
+    </section>
+
+    <aside class="card sidecard" aria-label="Your portfolio">
+      <h2>Your choice:</h2>
+      <form id="addform" autocomplete="off">
+        <input id="addticker" list="tickerlist" placeholder="Add asset — ticker or name"
+               spellcheck="false" aria-label="Add asset">
+        <datalist id="tickerlist"></datalist>
+        <button type="submit" class="primary small">Add</button>
+      </form>
+      <ul id="assetlist" class="assetlist"></ul>
+      <div class="sideactions">
+        <button id="equalw" class="ghost small" title="Reset to equal weights">Equal weights</button>
+        <button id="tangentw" class="ghost small"
+                title="Adopt the max-Sharpe (tangent) portfolio weights">Reasonable guess</button>
+      </div>
+      <div class="quickadd" id="quickadd"></div>
+    </aside>
+  </div>
+
+  <section class="tiles" id="tiles" hidden>
+    <div class="tile"><span class="label">Expected return <small>(annual)</small></span><span class="value" id="t-ret">–</span></div>
+    <div class="tile"><span class="label">Dispersion <small>(annual σ)</small></span><span class="value" id="t-vol">–</span></div>
+    <div class="tile"><span class="label">Sharpe ratio</span><span class="value" id="t-sharpe">–</span></div>
+  </section>
+
+  <section class="card" id="pointcard" hidden>
+    <h2 id="pointtitle">Selected portfolio</h2>
+    <p class="sub" id="pointstats"></p>
+    <div id="pointweights" class="wbars"></div>
+    <button id="adoptpoint" class="primary small">Make this my portfolio</button>
+  </section>
+
+  <section class="card" id="tablecard" hidden>
+    <h2>Assets</h2>
+    <div class="tablewrap">
+      <table id="assettable">
+        <thead><tr>
+          <th scope="col">Ticker</th><th scope="col">Name</th>
+          <th scope="col" class="num">Weight</th>
+          <th scope="col" class="num">Expected return</th>
+          <th scope="col" class="num">Dispersion (σ)</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="sub" id="datarange"></p>
+  </section>
+
+  <footer>
+    Historical daily prices via Yahoo Finance; statistics are estimates from past data.
+    Educational prototype — not investment advice.
+  </footer>
+</main>
+
+<script src="{% static 'explorer/app.js' %}"></script>
+</body>
+</html>
