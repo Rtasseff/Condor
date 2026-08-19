@@ -6,6 +6,43 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Now
 
+Not yet ordered — the three newest items (UI review, data layer, CLI) were
+added 2026-08-19 and the sequence is still to be decided.
+
+- [ ] **UI review pass** — RT navigates the current prototype end to end and
+  writes down everything that is off: bugs (wrong/missing behaviour), rough
+  edges (things that work but feel wrong), and missing features. Output is
+  a list in this file (or a `UI-NOTES.md`) with each item tagged bug / UX /
+  feature, so the polish work below can be prioritized from evidence
+  rather than guesses. Precedes "UI polish" and "API/UX robustness".
+- [ ] **Data layer v2 — store + sources.** Current state (`condor/data.py`):
+  yfinance per ticker, adjusted close, one CSV per (ticker, lookback) in
+  `.condor_cache/` with a 24h TTL; no incremental updates, no "as of",
+  risk-free rate hardcoded. Proposal, open for discussion:
+  - *Store*: one Parquet file per ticker, append-only, incremental
+    ("fetch since last date"); any lookback is a slice. `condor data
+    update / ls / purge` commands. Explicit total-return vs price basis.
+  - *Sources* behind one small `PriceSource` protocol
+    (`fetch(ticker, start, end) -> Series`): yfinance (default, free,
+    unofficial), Stooq (free, no key, fallback), Tiingo (official EOD
+    API, free tier ≈500 symbols/month — enough for personal use), and an
+    offline loader for the legacy Polygon.io JSON/CSV pulls in
+    `drive_export/files/Data from Polygon.io/` (234 MB, Apr 2024) and
+    `data_analytics_v1/` for backtests. Paid tiers only matter later for
+    survivorship-free universes (screening, "Suggest").
+  - *Risk-free rate* from FRED (`DTB3` / `DGS3MO`, free, official)
+    instead of a constant; surface "data as of" in the UI.
+  - Keep all of this Django-free so the CLI and notebooks use it too.
+  (Absorbs the earlier "Data source hardening" item.)
+- [ ] **CLI** (`python -m condor …`, later a `condor` console script):
+  thin boundary over the object API — argument parsing and table/CSV
+  output only, no numerics (same rule as `views.py`, see ARCHITECTURE.md).
+  Commands: `analyze TICKERS [--method --rf --years]` (summary table,
+  min-vol and tangency weights), `portfolio T=w T=w …` (perf of a given
+  mix), `frontier … [--csv|--json]`, `data update|ls|purge`. No database
+  beyond the price store — for personal use and one-off questions without
+  starting Django. Doubles as a second consumer of `condor/` that keeps the
+  layering honest. Optional `--html` to write a Plotly chart.
 - [ ] **Verification notebook** (`notebooks/01_verify_core.ipynb`): the same
   spot-check story as `202411_refact_optWF.ipynb` — hand-computed value next
   to function output, legacy vs v2 side by side, notebook golden numbers —
@@ -16,11 +53,6 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   legacy default 20 to de-overlap monthly windows), and geometric-vs-
   arithmetic expected return as an explicit choice (pypfopt defaults to
   geometric; v2 forces arithmetic to match legacy — see `stats.py`).
-- [ ] **Data source hardening.** yfinance is convenient and free but
-  unofficial and brittle. Add: offline loader for the legacy Polygon/S&P
-  CSVs (`drive_export/files/data_analytics_v1/`), a provider interface so
-  Polygon.io / Tiingo / Alpha Vantage / EODHD can slot in, cache
-  invalidation strategy, and clear "data as of" messaging in the UI.
 - [ ] **Save portfolios** — first real DB models (Portfolio, Holding,
   AnalysisSnapshot), shareable URL per portfolio; users/auth later.
 
