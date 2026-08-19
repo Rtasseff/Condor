@@ -1,4 +1,9 @@
-"""Explorer views: the page plus one JSON analysis endpoint."""
+"""Explorer views: the page plus one JSON analysis endpoint.
+
+This is the HTTP boundary only: validate input, build the domain objects
+(via the `compute_analysis` facade today), return `to_dict()` payloads as
+JSON. No numerics here — see ARCHITECTURE.md.
+"""
 
 import json
 import logging

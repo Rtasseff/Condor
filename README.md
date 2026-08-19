@@ -7,6 +7,8 @@ diversified portfolio building accessible to people who've never invested.
 
 | Path | What it is |
 |---|---|
+| `ARCHITECTURE.md` | Layering rules and where new features go — read before changing `condor/` or `web/` |
+| `BACKLOG.md` | Prioritized backlog (Now / Next / Later / Done) |
 | `context/` | Everything from round one — start with [`context/CONTEXT.md`](context/CONTEXT.md) |
 | `context/pitch/` | Investor pitch deck; `concept_slides/` are the UI-vision mockups |
 | `context/legacy/` | Snapshot of the real code from `condor_test` (reference only) |

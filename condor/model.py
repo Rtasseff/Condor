@@ -14,7 +14,9 @@ engine functions, so the verification suite pins both APIs at once.
     fr.at_return(0.12).weights     # any point on the curve
     fr.min_vol.to_dict(rf=0.04)    # UI payload shape
 
-Design notes (see BACKLOG.md "Domain model"):
+Design notes (the full rules live in ARCHITECTURE.md — read it before
+adding features; new capabilities become methods here, numerics go in an
+engine module as pure functions):
 
 - `Asset` is identity only (ticker, name).  Statistics are estimated for
   the *set*, vectorized — never asset-by-asset — so μ and Σ stay
