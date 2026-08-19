@@ -177,8 +177,9 @@ NB_PORT_ANNUAL = (0.1743919168213629, 0.17887127917836224)
 
 @pytest.mark.skipif(not CSV.exists(), reason="legacy S&P CSV not present")
 class TestGoldenNotebook:
+    @staticmethod
     @pytest.fixture(scope="class")
-    def legacy_inputs(self):  # noqa: pytest-class-fixture (stateless)
+    def legacy_inputs():
         df = pd.read_csv(CSV, usecols=["Date", "Symbol", "Adj Close"])
         df["Date"] = pd.to_datetime(df["Date"])
         wide = df.pivot_table(index="Date", columns="Symbol", values="Adj Close")

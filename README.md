@@ -29,10 +29,36 @@ has no database models; portfolios live in the page.)
 Core analytics can also be used directly:
 
 ```python
-from condor import fetch_prices, compute_analysis
+from condor import fetch_prices, AssetSet
+
 prices = fetch_prices(["MSFT", "NEE", "CVX"], years=10)
-res = compute_analysis(prices, risk_free_rate=0.04, method="robust")
-res["tangency"]["weights"]   # the 'reasonable guess' portfolio
+aset = AssetSet(prices, method="robust")      # owns μ and Σ for this set
+aset.summary()                                # expected return & dispersion per asset
+
+mine = aset.portfolio({"MSFT": 0.5, "NEE": 0.3, "CVX": 0.2})
+mine.expected_return, mine.dispersion, mine.sharpe(risk_free_rate=0.04)
+
+fr = aset.frontier(risk_free_rate=0.04)       # every point is a Portfolio
+fr.tangency.weights                           # the 'reasonable guess'
+fr.at_return(0.20).weights                    # pick any point on the curve
+fr.min_vol, fr.cal, fr.curve                  # anchors and plotting helpers
+
+# a portfolio is an asset of assets: nest it alongside a benchmark
+AssetSet.from_members([mine, fetch_prices(["SPY"])["SPY"]]).summary()
 ```
 
-Run tests with `python -m pytest tests/`.
+`compute_analysis(prices, ...)` is the one-call procedural facade the web view
+uses; it returns the same numbers as a plain dict.
+
+### Layers
+
+| Module | Role |
+|---|---|
+| `condor/model.py` | Domain objects: `Asset`, `AssetSet`, `Portfolio`, `Frontier` |
+| `condor/stats.py` | Estimation engine: expected returns, risk matrix (normal / robust) |
+| `condor/frontier.py` | Optimization engine (`_perf`, `_solve`) + `compute_analysis` facade |
+| `condor/data.py` | Price fetch + cache |
+
+Run tests with `python -m pytest tests/` — `test_verification.py` pins the
+engine to the legacy code, closed-form Markowitz, and the 2024 notebook's
+numbers; `test_model.py` pins the object API to the engine.

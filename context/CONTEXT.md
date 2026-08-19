@@ -78,8 +78,12 @@ frontier + CAL + assets).
 
 In-code note-to-self (CondorCoreObs ~line 168): an **AssetSet** base class should
 unify Asset/Portfolio — "a portfolio is an asset in a real sense, an asset of
-assets" — with Portfolio inheriting from it. That instinct is right and the v2
-model follows it.
+assets" — with Portfolio inheriting from it. The v2 model (`condor/model.py`,
+2026-08-19) keeps the instinct but not the inheritance: `Portfolio` *has* an
+`AssetSet` (composition), and gets its asset-like face from exposing a daily
+`returns` series / prices-like `value_index`, so a Portfolio can be a member
+of another AssetSet. `Asset` is identity-only; all statistics are estimated
+for the set, vectorized.
 
 ### Methods (`analytics/functions/`)
 

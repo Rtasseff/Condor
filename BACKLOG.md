@@ -6,18 +6,6 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Now
 
-- [ ] **Domain model: `Asset` → `AssetSet` → `Portfolio`, plus `Frontier`.**
-  The prototype core is procedural (`stats.py` / `frontier.py` return dicts)
-  because that was the fastest path to a working UI. The legacy design —
-  and the note in `CondorCoreObs.py` ~L168 that "a portfolio is an asset of
-  assets" — is the right long-term shape. Plan: keep the numerics as the
-  engine, add a thin object layer over them:
-  `Asset(symbol, prices)` with lazy `returns / expected / dispersion`;
-  `AssetSet(assets)` owning `mu`, `sigma`, `method`, `sampling`;
-  `Portfolio(AssetSet)` adding `weights`, `perf()`, `sharpe()`, `optimize()`;
-  `Frontier(asset_set, rf)` with `points`, `tangency`, `min_vol`, `cal`.
-  Verification tests must pass unchanged through the object API (same
-  inputs → same numbers). Legacy: `context/legacy/analytics/classes/`.
 - [ ] **Verification notebook** (`notebooks/01_verify_core.ipynb`): the same
   spot-check story as `202411_refact_optWF.ipynb` — hand-computed value next
   to function output, legacy vs v2 side by side, notebook golden numbers —
@@ -88,6 +76,15 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Done
 
+- [x] **Domain model** `Asset` → `AssetSet` → `Portfolio`, plus `Frontier`
+      (`condor/model.py`) — 2026-08-19. Thin object layer over the unchanged
+      engine; `compute_analysis` is now a facade over `AssetSet.analysis()`.
+      Deviations from the original plan, on purpose: `Asset` is identity-only
+      (stats are estimated for the set, vectorized, never per asset);
+      `Portfolio` *has* an `AssetSet` rather than inheriting; the "asset of
+      assets" idea is delivered via `Portfolio.returns` / `value_index` +
+      `AssetSet.from_members`. Verification suite passed unchanged;
+      `tests/test_model.py` adds 32 tests pinning objects to engine.
 - [x] Context consolidation (`context/`, `drive_export/`) — 2026-08-10
 - [x] Analytics core, procedural (`condor/`) + Django Explorer (`web/`) — 2026-08-10
 - [x] Verification suite vs legacy code, closed-form Markowitz, and notebook

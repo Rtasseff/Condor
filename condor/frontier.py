@@ -1,9 +1,9 @@
-"""Efficient frontier computation and portfolio evaluation.
+"""Optimization engine: portfolio evaluation and single-shot solves.
 
-Produces everything the Explorer UI needs in one plain-dict payload:
-per-asset stats, the frontier curve with inspectable weights at every
-point, the tangency (max-Sharpe) and minimum-volatility portfolios,
-the capital allocation line, and the user's current portfolio point.
+`_perf` (return / dispersion / Sharpe for a weight vector), `_solve` (one
+PyPortfolioOpt solve) and `_weights_dict` are the numeric primitives the
+domain model in `model.py` is built on.  `compute_analysis` is the
+procedural facade that produces the Explorer's one-dict payload.
 """
 
 from __future__ import annotations
@@ -47,83 +47,17 @@ def compute_analysis(
     method: str = "normal",
     n_points: int = N_FRONTIER_POINTS,
 ) -> dict:
-    """Full analysis payload for a set of assets.
+    """Full analysis payload for a set of assets (procedural facade).
+
+    Equivalent to ``AssetSet(prices, method).analysis(weights, risk_free_rate,
+    n_points)`` — kept as the one-call entry point for the web view and for
+    tests that pin the numbers.
 
     weights: optional {ticker: weight} for the user's current portfolio;
              defaults to equal weights. Weights are normalized to sum to 1.
     """
-    tickers = list(prices.columns)
-    mu = stats.expected_annual(prices, method=method)
-    sigma = stats.risk_matrix_annual(prices, method=method)
+    from .model import AssetSet  # local import: model builds on this module
 
-    result: dict = {
-        "tickers": tickers,
-        "method": method,
-        "risk_free_rate": risk_free_rate,
-        "assets": stats.asset_points(mu, sigma),
-        "start": str(prices.index[0].date()),
-        "end": str(prices.index[-1].date()),
-        "n_days": int(len(prices)),
-    }
-
-    # --- user's current portfolio -------------------------------------
-    if weights:
-        w_arr = np.array([max(0.0, float(weights.get(t, 0.0))) for t in tickers])
-    else:
-        w_arr = np.ones(len(tickers))
-    if w_arr.sum() <= 0:
-        w_arr = np.ones(len(tickers))
-    w_arr = w_arr / w_arr.sum()
-    result["portfolio"] = {
-        "weights": _weights_dict(w_arr, tickers),
-        **_perf(w_arr, mu, sigma, risk_free_rate),
-    }
-
-    if len(tickers) < 2:
-        # frontier of one asset is a point; nothing more to optimize
-        result["frontier"] = []
-        result["min_vol"] = result["tangency"] = None
-        result["cal"] = None
-        return result
-
-    # --- anchor portfolios ---------------------------------------------
-    w_minvol = _solve(mu, sigma, "min_volatility")
-    minvol = {"weights": _weights_dict(w_minvol, tickers),
-              **_perf(w_minvol, mu, sigma, risk_free_rate)}
-
-    tangency = None
-    if float(mu.max()) > risk_free_rate:
-        w_tan = _solve(mu, sigma, "max_sharpe", risk_free_rate=risk_free_rate)
-        tangency = {"weights": _weights_dict(w_tan, tickers),
-                    **_perf(w_tan, mu, sigma, risk_free_rate)}
-
-    result["min_vol"] = minvol
-    result["tangency"] = tangency
-
-    # --- frontier sweep: min dispersion at each return target ----------
-    # (same construction as legacy portOpt.calc_efficient_frontier)
-    lo, hi = minvol["ret"], float(mu.max())
-    frontier = []
-    for target in np.linspace(lo, hi, n_points):
-        try:
-            w = _solve(mu, sigma, "efficient_return", target_return=float(target))
-        except Exception:
-            continue  # infeasible edge targets are fine to skip
-        frontier.append({"weights": _weights_dict(w, tickers),
-                         **_perf(w, mu, sigma, risk_free_rate)})
-    result["frontier"] = frontier
-
-    # --- capital allocation line ---------------------------------------
-    if tangency:
-        x_end = max(
-            [p["vol"] for p in frontier + result["assets"]] or [tangency["vol"]]
-        )
-        result["cal"] = {
-            "x": [0.0, x_end * 1.05],
-            "y": [risk_free_rate,
-                  risk_free_rate + tangency["sharpe"] * x_end * 1.05],
-        }
-    else:
-        result["cal"] = None
-
-    return result
+    return AssetSet(prices, method=method).analysis(
+        weights=weights, risk_free_rate=risk_free_rate, n_points=n_points
+    )
