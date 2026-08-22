@@ -122,6 +122,37 @@
     <div class="tile"><span class="label">Sharpe ratio</span><span class="value" id="t-sharpe">–</span></div>
   </section>
 
+  <section class="card" id="forecastcard" hidden aria-label="Forecast">
+    <h2>Forecast <span class="modeltag">model 1 of 3 — simplest: steady rates</span></h2>
+    <p class="sub">Projects your current mix forward assuming the future behaves,
+       on average, like your lookback window: a constant expected return and
+       dispersion. The shaded bands are market randomness; the dashed outer band
+       adds the uncertainty in the return estimate itself — at multi-year horizons
+       that estimate is the biggest unknown. Path realism (model 2) and
+       return-assumption controls (model 3) come next.</p>
+    <div class="fcontrols">
+      <label>Horizon
+        <select id="fhorizon">
+          <option value="1">1 year</option>
+          <option value="2" selected>2 years</option>
+          <option value="5">5 years</option>
+          <option value="10">10 years</option>
+        </select>
+      </label>
+      <label>Starting amount
+        <span class="pctwrap">$ <input id="famount" type="number" value="10000" min="1" step="1000"></span>
+      </label>
+      <button id="forecast" class="primary small" type="button">Project</button>
+      <span id="fstatus" class="status" role="status"></span>
+    </div>
+    <div id="fchart" hidden></div>
+    <p class="sub" id="fmu" hidden></p>
+    <p class="sub" id="fnote" hidden>These bands assume the future resembles your
+       lookback window in kind, if not in detail — they can't anticipate a change
+       in what your holdings fundamentally are, and the middle line is an
+       estimate, not a promise.</p>
+  </section>
+
   <section class="card" id="tablecard" hidden>
     <h2>Assets</h2>
     <div class="tablewrap">

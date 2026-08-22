@@ -174,6 +174,7 @@ async function analyze() {
     }
     renderAssets();
     renderAll();
+    clearForecast();
   } catch (err) {
     showError(err.message);
   } finally {
@@ -524,6 +525,108 @@ function renderTable() {
     ` · ${r.method === "robust" ? "robust (median/CoMAD)" : "normal (mean/Ledoit-Wolf)"} statistics.`;
 }
 
+// ---------- forecast (model 1: constant-rate closed form) ----------
+function clearForecast() {
+  $("forecastcard").hidden = !state.result;
+  for (const id of ["fchart", "fmu", "fnote"]) $(id).hidden = true;
+}
+
+async function runForecast() {
+  showError("");
+  if (!state.result) return;
+  const btn = $("forecast");
+  btn.disabled = true;
+  $("fstatus").textContent = "Projecting…";
+  try {
+    const body = {
+      tickers: state.assets,
+      years: parseInt($("years").value, 10),
+      risk_free_rate: parseFloat($("rf").value) / 100,
+      method: $("method").value,
+      weights: Object.keys(state.weights).length ? state.weights : null,
+      horizon_years: parseInt($("fhorizon").value, 10),
+    };
+    const res = await fetch("/api/forecast", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+    renderForecast(data);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false;
+    $("fstatus").textContent = "";
+  }
+}
+
+function renderForecast(f) {
+  const amount = Math.max(1, parseFloat($("famount").value) || 10000);
+  const dollars = (mults) => mults.map((m) => amount * m);
+  const t = f.t;
+  const traces = [];
+
+  // widest first so fills stack correctly; est-95 band as dashed outline
+  const est95 = f.bands_est[f.bands_est.length - 1];
+  traces.push({
+    x: t, y: dollars(est95.hi), mode: "lines",
+    name: "95% + return-estimate error",
+    line: { color: C.you, width: 1.5, dash: "dash" },
+    hovertemplate: "$%{y:,.0f}<extra>95% high, incl. estimate error</extra>",
+  });
+  traces.push({
+    x: t, y: dollars(est95.lo), mode: "lines", showlegend: false,
+    line: { color: C.you, width: 1.5, dash: "dash" },
+    hovertemplate: "$%{y:,.0f}<extra>95% low, incl. estimate error</extra>",
+  });
+
+  // path-only bands, wide to narrow (95 under 65)
+  const fills = ["rgba(57,135,229,0.16)", "rgba(57,135,229,0.34)"];
+  f.bands.forEach((b, i) => {
+    traces.push({
+      x: t, y: dollars(b.lo), mode: "lines", showlegend: false,
+      line: { width: 0 }, hoverinfo: "skip",
+    });
+    traces.push({
+      x: t, y: dollars(b.hi), mode: "lines",
+      name: `${b.level}% band (market randomness)`,
+      fill: "tonexty", fillcolor: fills[i] || fills[0],
+      line: { width: 0 },
+      hovertemplate: `$%{y:,.0f}<extra>${b.level}% high</extra>`,
+    });
+  });
+
+  traces.push({
+    x: t, y: dollars(f.median), mode: "lines",
+    name: "Median — if the past average holds",
+    line: { color: C.frontier, width: 2.5 },
+    hovertemplate: "$%{y:,.0f} at year %{x:.1f}<extra>median</extra>",
+  });
+
+  Plotly.react("fchart", traces, {
+    paper_bgcolor: C.surface, plot_bgcolor: C.surface,
+    font: { family: "system-ui, -apple-system, 'Segoe UI', sans-serif", color: C.ink2 },
+    margin: { l: 70, r: 20, t: 10, b: 45 },
+    xaxis: { title: { text: "Years from today", font: { color: C.muted } },
+             gridcolor: C.grid, zerolinecolor: C.axis },
+    yaxis: { tickprefix: "$", tickformat: ",.0f",
+             gridcolor: C.grid, zerolinecolor: C.axis },
+    legend: { orientation: "h", x: 0, y: 1.12, font: { color: C.ink2, size: 12 } },
+    hoverlabel: hoverStyle(),
+  }, { displayModeBar: false, responsive: true });
+
+  const pctpt = (x) => (100 * x).toFixed(1);
+  $("fmu").textContent =
+    `Estimated growth rate: ${pctpt(f.mu_annual)}%/yr from ` +
+    `${f.span_years.toFixed(1)} years of data — good to about ` +
+    `±${pctpt(f.mu_se_annual)} points, so the true long-run rate is plausibly ` +
+    `${pctpt(f.mu_ci95[0])}% to ${pctpt(f.mu_ci95[1])}%. ` +
+    `Dispersion: ${pctpt(f.sigma_annual)}%/yr.`;
+  for (const id of ["fchart", "fmu", "fnote"]) $(id).hidden = false;
+}
+
 // ---------- weight shortcuts ----------
 function useWeights(weights) {
   state.weights = {};
@@ -741,6 +844,7 @@ $("tangentw").addEventListener("click", () => {
     showError("Run Analyze first — the tangent portfolio comes from the optimization.");
   }
 });
+$("forecast").addEventListener("click", runForecast);
 $("adoptpoint").addEventListener("click", () => {
   if (state.selected) useWeights(state.selected.weights);
 });

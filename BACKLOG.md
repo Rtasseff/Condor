@@ -60,21 +60,20 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   "advanced" disclosure: metric, timeframe, basis) and the CLI (flags).
   Deliberately left out of the analysis payload so far — adding them is
   a payload change plus the key-set test in tests/test_model.py.
-- [ ] **Forecaster** ("Forecast" button, deck slide 25): fan chart with 65%
-  and 95% bands, backtest-from-2-years-ago vs project-2-years-forward.
-  Research done (2026-08-22, `docs/research/`): build the ladder in
-  `forecast-methods-ladder.md` — (A) GBM analytic + Monte Carlo with a
-  μ-uncertainty overlay (two nested band sets: "market randomness" vs
-  "+ estimate error" — the overlay is free and widens 2y bands ~10-12%,
-  more than GARCH would in normal states), (B) stationary block
-  bootstrap (fixed 21d blocks, never narrower than A's bands), (C) a
-  visible expected-return anchor control (ties into Black-Litterman).
-  Validation plan in `forecast-validation.md` (what pytest pins vs the
-  offline coverage notebook vs what the UI may claim); data-source
-  shortlist in `forecast-data-sources.md` (Fama-French, FRED regime
-  series, CAPE/ERP anchors, SEC EDGAR). Skip ML tier — ~5 independent
-  2-year observations to learn from. Legacy:
-  `analytics_workflow_v1.ipynb` Part 3; RF/LSTM ideas deprioritized.
+- [ ] **Forecaster — rungs B and C** (rung A shipped 2026-08-22, see
+  Done). Per `docs/research/forecast-methods-ladder.md` (summary PDF in
+  the same folder): (B) stationary block bootstrap for path realism —
+  fixed 21-day blocks, disclosed, and guard-railed to never show
+  narrower bands than rung A; (C) a visible expected-return anchor
+  control (Historical / long-run anchor / custom) with Black-Litterman
+  underneath and CAPE/Damodaran-ERP as anchor sources (ties into the
+  B-L backlog item). Then the backtest view (project from 2y ago,
+  overlay reality, report the landed percentile with the
+  sample-of-one caveat) and the offline coverage notebook from
+  `forecast-validation.md`. Skip the ML tier — ~5 independent 2-year
+  observations to learn from. Data shortlist:
+  `forecast-data-sources.md`. Legacy: `analytics_workflow_v1.ipynb`
+  Part 3; RF/LSTM ideas deprioritized.
 - [ ] **Rebalancing & dollar-cost-averaging recommendations.** Drift from
   target weights, calendar vs threshold rules, DCA schedule simulator.
   References: `reference materials/Portfolio-ManagementProcess/
@@ -123,6 +122,20 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Forecaster rung A — the simplest honest fan chart** — 2026-08-22.
+      `condor/forecast.py` (engine: `log_moments`, `mu_standard_error`,
+      `lognormal_bands` — pure closed form, no simulation) +
+      `Forecast` / `Portfolio.forecast()` in the model, `/api/forecast`,
+      and a Forecast card in the Explorer labeled "model 1 of 3 —
+      simplest: steady rates". Two nested band sets exactly per the
+      research: shaded "market randomness" (65/95%) and a dashed
+      "+ return-estimate error" outer band (the Merton overlay — the
+      dominant term); median uses the log/geometric drift (no
+      arithmetic-compounding bias); the card prints the μ error bar as
+      a sentence and the blind-spot line. 11 engine/model tests pinned
+      to scipy lognormal quantiles and the √(1+T/N) identity; 3 API
+      tests; verified live in Chrome.
 
 - [x] **Accounts & login** — 2026-08-22. Django auth wired in (sessions,
       admin for user management, styled login page, logout in the

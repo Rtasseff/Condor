@@ -295,3 +295,54 @@ class AuthTests(TestCase):
         self.assertEqual(res.status_code, 200, res.content)
         legacy.refresh_from_db()
         self.assertEqual(legacy.owner, self.bob)
+
+
+class ForecastApiTests(TestCase):
+    """/api/forecast — boundary only; prices are synthetic (no network)."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+
+    @staticmethod
+    def fake_prices(tickers, years=10, **kw):
+        import numpy as np
+        import pandas as pd
+        rng = np.random.default_rng(3)
+        idx = pd.bdate_range("2020-01-01", periods=756)
+        data = 100 * np.cumprod(
+            1 + 0.0004 + 0.01 * rng.standard_normal((756, len(tickers))), axis=0)
+        return pd.DataFrame(data, index=idx, columns=list(tickers))
+
+    def forecast(self, body):
+        with patch("explorer.views.fetch_prices", side_effect=self.fake_prices):
+            return self.client.post(
+                "/api/forecast", data=json.dumps(body),
+                content_type="application/json")
+
+    def test_happy_path_payload_shape(self):
+        res = self.forecast({"tickers": ["AAA", "BBB"], "years": 3,
+                             "method": "robust", "risk_free_rate": 0.04,
+                             "weights": {"AAA": 70, "BBB": 30},
+                             "horizon_years": 2})
+        self.assertEqual(res.status_code, 200, res.content)
+        d = res.json()
+        self.assertEqual(d["model"], "constant-rate")
+        self.assertEqual(d["t"][0], 0)
+        self.assertEqual(d["median"][0], 1)
+        self.assertAlmostEqual(d["t"][-1], 2.0)
+        self.assertEqual([b["level"] for b in d["bands"]], [65, 95])
+        self.assertEqual(len(d["bands_est"][0]["lo"]), len(d["t"]))
+        # outer (estimate-error) band contains the path-only band
+        self.assertLessEqual(d["bands_est"][1]["lo"][-1], d["bands"][1]["lo"][-1])
+
+    def test_rejects_bad_horizon(self):
+        for bad in (0, 31, "soon"):
+            res = self.forecast({"tickers": ["AAA"], "horizon_years": bad})
+            self.assertEqual(res.status_code, 400, bad)
+
+    def test_requires_login(self):
+        self.client.logout()
+        res = self.client.post("/api/forecast", data="{}",
+                               content_type="application/json")
+        self.assertEqual(res.status_code, 401)

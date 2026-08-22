@@ -81,6 +81,7 @@ or `--rf 0.04` to override. `--method robust|normal`, `--json` everywhere.
 | `condor/model.py` | Domain objects: `Asset`, `AssetSet`, `Portfolio`, `Frontier` |
 | `condor/stats.py` | Estimation engine: expected returns, risk matrix (normal / robust) |
 | `condor/frontier.py` | Optimization engine (`_perf`, `_solve`) + `compute_analysis` facade |
+| `condor/forecast.py` | Forecast engine: closed-form fan-chart bands with estimation-error overlay |
 | `condor/cli.py` | CLI: `python -m condor analyze/portfolio/frontier/data` |
 | `condor/data/` | Price store (`~/.condor/prices`, Parquet) + sources (yfinance, Tiingo) + FRED risk-free rate |
 

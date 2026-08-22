@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Condor Forecaster — Research Summary</title>
+<style>
+  @page { size: letter; margin: 20mm 19mm; }
+  html { font-size: 10.6pt; }
+  body {
+    font-family: Charter, Georgia, "Times New Roman", serif;
+    line-height: 1.5; color: #1a1d24; margin: 0;
+  }
+  h1 { font-size: 1.85rem; line-height: 1.2; margin: 0 0 2pt; }
+  .subtitle { color: #555; font-size: 1.02rem; margin: 0 0 4pt; }
+  .meta { color: #777; font-size: 0.85rem; margin-bottom: 18pt;
+          border-bottom: 2px solid #17a689; padding-bottom: 10pt; }
+  h2 { font-size: 1.25rem; margin: 20pt 0 6pt; color: #0d4f43;
+       border-bottom: 1px solid #cdd6d3; padding-bottom: 2pt;
+       page-break-after: avoid; }
+  h3 { font-size: 1.02rem; margin: 12pt 0 3pt; page-break-after: avoid; }
+  p { margin: 5pt 0; text-align: justify; }
+  ul, ol { margin: 5pt 0 5pt 2pt; padding-left: 16pt; }
+  li { margin: 2.5pt 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0;
+          font-size: 0.86rem; page-break-inside: avoid; }
+  th, td { border: 1px solid #b9c4c0; padding: 3.5pt 6pt; text-align: left;
+           vertical-align: top; }
+  th { background: #e8f2ef; font-weight: 700; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .callout { background: #f0f7f5; border-left: 4px solid #17a689;
+             padding: 7pt 11pt; margin: 9pt 0; page-break-inside: avoid; }
+  .callout p { margin: 3pt 0; }
+  .warn { background: #fbf1f1; border-left-color: #c0564f; }
+  .verdict { font-weight: 700; color: #0d4f43; }
+  .verdict.no { color: #a33; }
+  caption, .tcap { caption-side: top; text-align: left; font-size: 0.82rem;
+                   color: #666; padding: 0 0 3pt; }
+  .foot { margin-top: 22pt; padding-top: 8pt; border-top: 1px solid #cdd6d3;
+          font-size: 0.82rem; color: #666; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em;
+         background: #f2f4f3; padding: 0 3pt; border-radius: 3px; }
+  .pagebreak { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>Forecasting With Honest Uncertainty</h1>
+<p class="subtitle">Research summary for the Condor Forecaster: methods, validation, and data</p>
+<p class="meta">Condor Funds v2 · internal research brief · August 22, 2026 ·
+condensed from three full reports in <code>docs/research/</code>
+(methods ladder, validation, data sources)</p>
+
+<h2>Executive summary</h2>
+
+<p>We plan a Forecaster: given a portfolio, project wealth 1–5 years forward as a
+fan chart with 65% and 95% bands, plus a "project from two years ago and compare"
+backtest view. Three research passes were run — a survey of forecasting methods from
+naive to state-of-the-art (with measurements on our own cached price data), a survey
+of how probabilistic forecasts are validated honestly, and an inventory of free data
+sources that could feed richer models. The findings converge on one theme:</p>
+
+<div class="callout">
+<p><b>The dominant uncertainty at multi-year horizons is not market randomness —
+it is that we do not know the expected return.</b> The standard error of an
+estimated annual return depends only on the calendar span of the data
+(Merton 1980): with 10 years of history and 18% volatility it is ±5.7 percentage
+points <i>per year</i>. Every sophistication upgrade we evaluated (GARCH, regime
+switching, machine learning) buys less accuracy at a 2-year horizon than simply
+admitting this one error bar — which costs nothing to include.</p>
+</div>
+
+<p><b>Recommended build, in order:</b> (A)&nbsp;closed-form constant-rate bands
+("GBM") with a μ-uncertainty overlay, drawn as two nested band sets so the user sees
+market randomness and estimation error separately; (B)&nbsp;a stationary block
+bootstrap for realistic path shapes, guard-railed so it can never present narrower
+bands than A; (C)&nbsp;a visible "expected return assumption" control anchored by
+long-run references (ties into the existing Black-Litterman backlog item).
+<b>Skip the ML tier entirely</b> — a 2-year forecast trained on 10 years of data has
+five independent observations to learn from, and 2026 benchmarks show even
+foundation models barely beat a random walk on financial series.</p>
+
+<h2>1&nbsp;· Three kinds of not-knowing, one formula</h2>
+
+<p>A fan chart answers "what could my wealth be in T years?" We can fail to know
+this for three distinct reasons, and they are not the same size:</p>
+
+<table>
+<tr><th>Source</th><th>What it is</th><th>Grows with horizon like</th></tr>
+<tr><td><b>Path uncertainty</b></td>
+    <td>Even with the true return and dispersion known, the realized sequence is random</td>
+    <td>SD ∝ √T</td></tr>
+<tr><td><b>Parameter uncertainty</b></td>
+    <td>μ and Σ were estimated from a finite window and are wrong by a knowable amount</td>
+    <td>SD ∝ T for μ — <b>linearly</b></td></tr>
+<tr><td><b>Model uncertainty</b></td>
+    <td>The "future resembles the past" assumption itself; regimes shift, companies change</td>
+    <td>Unbounded; not quantifiable from the data</td></tr>
+</table>
+
+<p>The first is what every naive Monte Carlo tool shows. The second is what nearly
+every consumer tool omits, and it grows <i>faster</i> than the first. The third is why
+the chart needs a sentence of prose next to it, forever.</p>
+
+<p>Under i.i.d. returns with annual volatility σ, estimation window N years, horizon
+T years, the variance of cumulative log return is approximately
+σ²T (path) + T²σ²/N (μ-error). Two consequences organize everything:</p>
+
+<ul>
+<li><b>Sampling frequency is irrelevant to μ.</b> Ten years of daily data and ten
+years of monthly data give the <i>same</i> standard error on the mean: σ/√N per year.
+Finer sampling improves σ̂ only. (This also resolves our parked sampling-interval
+question for the forecaster: daily data is right for dispersion; no window length
+rescues μ.)</li>
+<li><b>Band-width inflation from admitting μ-error is √(1&nbsp;+&nbsp;T/N):</b></li>
+</ul>
+
+<table>
+<tr><th>Horizon</th><th class="num">N = 5 y window</th><th class="num">N = 10 y</th><th class="num">N = 20 y</th></tr>
+<tr><td>1 year</td><td class="num">×1.10</td><td class="num">×1.05</td><td class="num">×1.02</td></tr>
+<tr><td>2 years</td><td class="num">×1.18</td><td class="num"><b>×1.10</b></td><td class="num">×1.05</td></tr>
+<tr><td>5 years</td><td class="num">×1.41</td><td class="num"><b>×1.22</b></td><td class="num">×1.12</td></tr>
+<tr><td>10 years</td><td class="num">×1.73</td><td class="num">×1.41</td><td class="num">×1.22</td></tr>
+</table>
+
+<p>Measured on SPY from our own price store (2016–2026): μ̂ = 14.3%/yr,
+σ̂ = 18.0%/yr, so SE(μ̂) = 5.7 points. A 95% confidence interval on the expected
+annual return runs roughly <b>3% to 26%</b>. Concretely, for $10,000 over 2 years:
+path-only 95% range $8,130–$22,000; with estimation error $7,720–$23,310. The width
+moves ~12%; more importantly, <b>the location of the entire fan — the median line —
+is only known to about ±11 points of annual return</b>. A tool that prints
+"median outcome: $13,300" without that caveat is overstating what it knows.</p>
+
+<p>Two further technical notes worth keeping: (i)&nbsp;compounding at the arithmetic
+mean overstates median wealth by exp(σ²T/2) — 3.3% at σ=18%, T=2y; 25% for a
+30%-vol single name over 5 years — so the projection must use the log/geometric
+drift; (ii)&nbsp;μ and σ have different sufficient statistics, so it is legitimate
+(and almost never offered by consumer tools) to estimate σ from a short recent
+daily window and μ from the longest defensible span or an anchor.</p>
+
+<h2>2&nbsp;· The method ladder, rung by rung</h2>
+
+<h3>Rung 0–1 — Constant-rate ("GBM") bands: analytic, then Monte Carlo</h3>
+<p>Assume i.i.d. returns; wealth is lognormal and the quantiles are a closed-form
+formula — no simulation needed. Fat tails are a red herring at multi-year horizons
+for a diversified portfolio: summing ~500 daily returns is close to normal
+regardless (measured: GBM vs bootstrap 95% bands on SPY differ by under 2% at
+2 years). <span class="verdict">Verdict: build first.</span> It is instant, it is
+explainable, and it is the closed-form pin every simulated method gets verified
+against — exactly our house testing style.</p>
+
+<h3>Rung 2 — Bootstrap of actual history (i.i.d., then block)</h3>
+<p>Resample our own daily returns instead of assuming a distribution; block/
+stationary variants (Politis–Romano) keep runs of days together so volatility
+clustering and drawdown sequences survive. Two traps, both measured on our data:</p>
+<ul>
+<li><b>Automatic block-length selection misfires on returns.</b> The standard
+Politis–White rule, applied to raw returns, picks 1–6 day blocks (returns are
+serially near-uncorrelated) — which silently degenerates to the i.i.d. bootstrap.
+Applied to <i>absolute</i> returns (where the clustering lives) it picks 60–85 days.
+Practical answer: fix ~21-day blocks, disclose it.</li>
+<li><b>Block bootstrap can dishonestly narrow the bands.</b> It reproduces whatever
+mean-reversion is in the sample — and at 2-year scale a 10-year window contains
+<i>four</i> independent observations of that. Measured variance ratios at 2 years
+across our own tickers: 0.05 (SPY) to 2.37 (XOM) — pure noise. On SPY the 63-day
+block bootstrap produced 28% <i>narrower</i> 2-year bands than i.i.d.: an artifact
+of one recovered-every-dip decade, not a discovery about markets.</li>
+</ul>
+<p><span class="verdict">Verdict: build second</span>, for path realism ("what a bad
+two years looks like"), with a guard rail: if its bands come out narrower than
+rung A's, show the wider ones.</p>
+
+<h3>Rung 3 — Parameter-uncertainty overlay (the one that matters)</h3>
+<p>Draw each simulated path's μ from its sampling distribution
+N(μ̂,&nbsp;σ̂²/N) — or fold it into the closed form, where it stays analytic.
+Cost: essentially zero. Effect at 2 years: +10–12% band width, and the honest
+admission that the centre line is an estimate. This is the frequentist twin of the
+Bayesian posterior predictive under a flat prior, so we get the "right" answer
+without any MCMC machinery. (Σ-uncertainty, by contrast, is ~1.4% relative with a
+decade of daily data — negligible for the fan; it matters for the frontier, not the
+forecast.) <span class="verdict">Verdict: ship with rung A from day one.</span></p>
+
+<h3>Rung 4 — Volatility dynamics: EWMA, GARCH, filtered historical simulation</h3>
+<p>GARCH-class models forecast <i>near-term</i> volatility well, but the effect
+decays with a half-life of ~2–7 weeks; today's volatility state contributes at most
+a fixed number of days' worth of extra variance no matter the horizon. Measured with
+typical equity persistence: starting from <i>double</i> the long-run volatility
+widens the 2-year band by ~14% and the 5-year band by ~6% — the extreme case buys
+about what the free μ-overlay buys in the normal case.
+<span class="verdict no">Verdict: defer.</span> Worth revisiting only for a
+1–12-month view or a "current market conditions" toggle (e.g. reopening the app the
+week after a crash).</p>
+
+<h3>Rung 5 — Regime switching (Markov)</h3>
+<p>Conceptually attractive (it is our parked "piecewise process" intuition made
+formal) and the literature (Guidolin–Timmermann) finds real regime structure in
+returns. But over a 2-year simulation the chain visits its long-run mixture anyway;
+fits on 10-year windows are unstable; and it adds K×(K+1) parameters of exactly the
+estimation risk nobody prices. <span class="verdict no">Verdict: skip for now</span> —
+the block bootstrap delivers most of the tail-shape benefit non-parametrically.
+Revisit if a "market regime" concept ever becomes a product feature of its own.</p>
+
+<h3>Rung 6 — Bayesian: priors and anchors for μ</h3>
+<p>The genuinely valuable Bayesian move is not machinery but a <b>prior on μ</b>:
+a 10-year bull-market sample mean (SPY: 14.3%/yr) is not a defensible 2-year
+expectation, and shrinking toward a long-run/equilibrium anchor (7–8%) both centres
+the fan somewhere honest and narrows the μ error bar by bringing in outside
+information. PyPortfolioOpt's Black–Litterman implementation (already installed)
+does this properly and closes an existing backlog item at the same time. Full
+posterior sampling (PyMC) adds nothing for the conjugate case and would force a
+Python upgrade. <span class="verdict">Verdict: rung C — a visible "expected return
+assumption" control</span> (Historical X% / Long-run market Y% / Custom), which is
+also the most educational widget the feature can have: the user watches the whole
+fan hinge on that one number.</p>
+
+<h3>Rung 7 — The ML tier: quantile boosting, conformal prediction, deep and foundation models</h3>
+<p>The binding constraint is arithmetic, not architecture: a 2-year-ahead target
+from 10 years of history has <b>five non-overlapping training examples</b>
+(overlapping windows are 99.6% redundant). Conformal prediction — whose entire
+selling point is honest coverage — needs many sequential feedback rounds; at 2-year
+horizons we get one round every two years. The 2026 evidence on time-series
+foundation models (Chronos-2, TimesFM-2.5, Moirai-2.0) applied to equities finds
+gains over a random walk "small and sparse," statistically significant in 2 of the
+tested cases. In the M6 forecasting competition, 8.6% of professional teams beat the
+naive benchmark with significance; the winner improved on it by 2.2%.
+<span class="verdict no">Verdict: skip.</span> The right place to spend effort is
+quantifying how badly we know μ, not on a better μ.</p>
+
+<table>
+<caption>Ladder at a glance (10k paths, 2-year horizon, measured runtimes)</caption>
+<tr><th>Method</th><th>Adds</th><th>Cost</th><th>Runtime</th><th>Verdict</th></tr>
+<tr><td>Analytic GBM bands</td><td>the baseline + test pin</td><td>S</td><td>instant</td><td><b>Build (A)</b></td></tr>
+<tr><td>μ-uncertainty overlay</td><td>the dominant error, honestly</td><td>S</td><td>free</td><td><b>Build (A)</b></td></tr>
+<tr><td>i.i.d. / block bootstrap</td><td>real tails, drawdown paths</td><td>S–M</td><td>~0.2 s</td><td><b>Build (B)</b>, width-guarded</td></tr>
+<tr><td>μ anchor / Black–Litterman</td><td>defensible centre line</td><td>M</td><td>instant</td><td><b>Build (C)</b></td></tr>
+<tr><td>GARCH / FHS</td><td>near-term vol state</td><td>M</td><td>~0.4 s</td><td>Defer (short-horizon view only)</td></tr>
+<tr><td>Regime switching</td><td>state-conditional tails</td><td>M–L</td><td>slow fit</td><td>Skip for now</td></tr>
+<tr><td>PyMC full Bayes</td><td>nothing beyond closed form here</td><td>L</td><td>minutes</td><td>Skip (needs Py ≥3.12 too)</td></tr>
+<tr><td>Conformal / boosting / DeepAR / TSFMs</td><td>—</td><td>M–L</td><td>—</td><td>Skip: ~5 independent 2-y observations</td></tr>
+</table>
+
+<h2 class="pagebreak">3&nbsp;· Validating a fan chart honestly</h2>
+
+<p>Our house rule is that every engine function gets a verification test. For a
+probabilistic forecast, the validation splits into three layers with very different
+strengths, and knowing which layer can support which claim is most of the honesty.</p>
+
+<h3>What a fast, deterministic test suite can pin (CI)</h3>
+<ul>
+<li><b>Closed form:</b> simulated GBM quantiles must match the analytic lognormal
+quantiles within Monte-Carlo tolerance; the μ-overlay band must widen by
+√(1+T/N).</li>
+<li><b>Consistency:</b> on synthetic i.i.d. data with known moments, bootstrap
+bands must converge to the analytic ones; GBM and bootstrap must agree with each
+other on data generated by a GBM.</li>
+<li><b>Implementation checks of the scoring/calibration tools themselves</b>
+(coverage tests reject at ~nominal rates on synthetic data).</li>
+</ul>
+<p>None of this says the forecast matches reality — it says the engine computes
+what it claims to compute. That distinction should be explicit in the code.</p>
+
+<h3>What a periodic offline notebook can measure (real data, quarterly)</h3>
+<ul>
+<li><b>Proper scoring rules</b> — metrics that cannot be gamed by making bands
+dishonestly narrow or wide: <b>CRPS</b> as the headline number (generalizes MAE to
+distributions; closed form for lognormal, so it scores rung A directly), pinball
+loss per band quantile to localize <i>which part</i> of the fan is off, and the
+interval (Winkler) score as the one-number summary of each band. Python:
+<code>scoringrules</code>.</li>
+<li><b>Calibration</b> — "the 95% band should contain reality 95% of the time" is
+testable: hit-rate tests (Kupiec), clustering of misses (Christoffersen), and the
+<b>PIT histogram</b> (transform each realized outcome through its forecast CDF;
+the result should be uniform — U-shaped means bands too narrow, humped means too
+wide, sloped means the centre is biased). This is how the Bank of England's fan
+charts are audited.</li>
+<li><b>Walk-forward design</b> — monthly forecast origins, expanding and rolling
+windows, and the asset universe frozen as of each origin date (using
+today's-survivors is look-ahead in disguise). Results stratified by sub-period, so
+a method tuned on 2010–2020 that fails 2022 is visible.</li>
+</ul>
+
+<div class="callout warn">
+<p><b>The long-horizon wall.</b> With ~25 years of usable data, a 2-year horizon
+yields ~12 non-overlapping outcomes; a 5-year horizon yields 5. No test has real
+power at that sample size, overlapping windows recover apparent-but-not-actual
+sample size (a "63% hit rate on the 65% band" carries a standard error of roughly
+±15 points), and the standard corrections (Newey–West / Hansen–Hodrick) are known
+to be most biased precisely when horizon is long relative to sample. Formal
+calibration claims are supportable at horizons up to ~1 year; beyond that,
+credibility must come from <i>verified arithmetic plus short-horizon calibration</i>,
+descriptive overlays of the few real outcomes we have, and stress replays
+(2000–02, 2008–09, 2020, 2022). No one can validate a 5-year band statistically —
+including everyone who sells one.</p>
+</div>
+
+<h3>What the UI may say — and must not say</h3>
+<ul>
+<li>Supportable: "this range reflects historical variability in returns, estimated
+from your lookback window"; "backtested" only for ≤1-year coverage claims.</li>
+<li>Avoid: a bare "95% probability" attached to a multi-year band (implies a
+validated claim that cannot exist); any suggestion the bands capture regime change
+or events outside the training history; unhedged confidence in the median path —
+μ is the least-precisely-estimated input in the whole system.</li>
+<li>If we ever show a "probability of reaching a goal," show it as a <i>range
+across return assumptions</i> — single probability scores swing wildly on
+half-point changes in assumed return.</li>
+</ul>
+
+<h2>4&nbsp;· Data sources worth wiring in (all free)</h2>
+
+<table>
+<tr><th>Source</th><th>What it unlocks</th><th>Terms</th><th>Effort</th></tr>
+<tr><td><b>1. Fama-French factors</b> (Ken French library, monthly to 1926, via
+<code>pandas-datareader</code>)</td>
+<td>Factor-based μ shrinkage (a far better prior than one sample mean) and a factor
+covariance model — the biggest modeling payoff available</td>
+<td>OK (de-facto standard; attribute)</td><td>Low</td></tr>
+<tr><td><b>2. FRED regime series</b> (yield-curve slope T10Y3M, credit spread
+BAA10Y, VIX/VIX3M — same client we already use)</td>
+<td>Widen/narrow bands by regime. <i>Not</i> point-forecast drivers: Goyal–Welch
+(2008; 2024 follow-up) shows macro predictors almost never beat the historical mean
+out of sample — but they are well-supported <i>risk</i> signals</td>
+<td>OK (attribution, generous limits)</td><td>Trivial</td></tr>
+<tr><td><b>3. Shiller CAPE + Damodaran implied ERP</b> (direct spreadsheet
+downloads; 1871– and 1960s–)</td>
+<td>Long-horizon expected-return anchors — exactly what rung C's "expected return
+assumption" control should offer as its non-historical options</td>
+<td>OK (attribute)</td><td>Low</td></tr>
+<tr><td><b>4. SEC EDGAR XBRL</b> (audited fundamentals, ~2009–, 10 req/s, no key)</td>
+<td>Ground-truth fundamentals; the cleanest license of any source reviewed</td>
+<td>OK (public data)</td><td>Moderate (tag normalization)</td></tr>
+</table>
+
+<p>Notable negatives: <b>no reliable free source of single-name implied volatility
+exists in 2026</b> (realized vol from our own store is the fallback, and is fine);
+Alpha Vantage / Polygon / EODHD free tiers are rate-limited into uselessness
+(~5–25 requests/day-to-minute); Nasdaq Data Link's useful free sets are gone.
+yfinance/Tiingo fundamentals remain ToS-gray — acceptable at our scale, not
+something to build a customer-facing feature on. Factor/macro series don't fit the
+ticker-keyed <code>PriceSource</code> protocol; they get a sibling
+<code>FactorSource</code> protocol with a long cache TTL when we wire them in.</p>
+
+<h2>5&nbsp;· What we will build</h2>
+
+<ol>
+<li><b>Rung A (first ship):</b> closed-form constant-rate fan with the μ-uncertainty
+overlay, presented as two nested band sets — inner "market randomness," outer
+"+&nbsp;uncertainty in our return estimate" — with the estimate's error bar printed
+as a sentence ("Estimated return 14.3%/yr; from 10 years of data that is good to
+about ±5.7 points"). Instant to compute; verified against the lognormal closed form.
+Clearly labeled in the UI as the simplest model.</li>
+<li><b>Rung B:</b> stationary block bootstrap (fixed ~21-day blocks, disclosed),
+for path realism and drawdown narratives; guard-railed to never show narrower bands
+than A.</li>
+<li><b>Rung C:</b> the expected-return-assumption control (Historical / long-run
+anchor / custom), Black–Litterman underneath, CAPE/ERP as anchor sources.</li>
+<li><b>Backtest view</b> at every rung: refit on data ending two years ago, draw
+the fan, overlay what actually happened, report the percentile it landed in — with
+the sample-of-one caveat attached, and the offline coverage study (not the UI)
+carrying any statistical claims.</li>
+</ol>
+
+<p>UI honesty checklist, distilled: name what the median assumes; show both band
+sets; print the μ error bar as a number; dollars, not log returns; disclose the
+knobs (method, window, block length, paths); one line on the blind spot ("these
+bands assume the future resembles the past decade in kind; they cannot price a
+change in what your holdings fundamentally are"); never a bare multi-year
+probability.</p>
+
+<p class="foot">Full reports with references, measured tables, and package
+assessments: <code>docs/research/forecast-methods-ladder.md</code> (methods, with
+measurements on our price store), <code>docs/research/forecast-validation.md</code>
+(scoring rules, calibration tests, backtest design),
+<code>docs/research/forecast-data-sources.md</code> (source-by-source terms and
+integration notes). Key external references: Merton (1980); Pástor &amp; Stambaugh
+(2012); Jacquier, Kane &amp; Marcus (2005); Politis &amp; Romano (1994) and
+Patton–Politis–White (2009); Goyal &amp; Welch (2008) and Goyal, Welch &amp; Zafirov
+(2024); Gneiting &amp; Raftery (2007); the M6 competition papers (2023–24).
+Agent-produced research; citations spot-check before external use.</p>
+
+</body>
+</html>

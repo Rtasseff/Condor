@@ -16,6 +16,7 @@ condor/model.py            DOMAIN MODEL: Asset → AssetSet → Portfolio, Front
         │
 condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns
 condor/frontier.py         OPTIMIZATION ENGINE: _perf, _solve, _weights_dict
+condor/forecast.py         FORECAST ENGINE: closed-form fan-chart bands (rung A)
         │
 condor/data/               DATA LAYER: PriceStore (~/.condor/prices) + sources + FRED rf
 ```
@@ -49,7 +50,8 @@ that gather the object's state and hand it to an engine function.
 | A new HTTP endpoint | `web/explorer/views.py` + `urls.py` | validate → build `AssetSet` → call model → `to_dict()` → `JsonResponse`. No numerics in views. |
 | Persistence (saved portfolios) | `web/explorer/models.py` (Django) | store tickers/weights/method/rf; rebuild a `Portfolio` from them — Django models are storage, `condor` objects are behaviour |
 
-Worked example — the forecaster (backlog "Next"):
+Worked example — the forecaster (rung A shipped 2026-08-22 exactly in
+this shape; rungs B/C follow the same pattern):
 
 ```python
 # condor/forecast.py   (engine: pure functions)

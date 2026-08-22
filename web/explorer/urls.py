@@ -12,6 +12,7 @@ urlpatterns = [
          name="logout"),
     path("p/<uuid:pid>", views.shared_portfolio, name="shared_portfolio"),
     path("api/analyze", views.api_analyze, name="api_analyze"),
+    path("api/forecast", views.api_forecast, name="api_forecast"),
     path("api/portfolios", views.api_portfolios, name="api_portfolios"),
     path("api/portfolios/<uuid:pid>", views.api_portfolio, name="api_portfolio"),
 ]

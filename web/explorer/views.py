@@ -21,7 +21,8 @@ from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods, require_POST
 
-from condor import DataFetchError, compute_analysis, fetch_prices, risk_free_rate
+from condor import (AssetSet, DataFetchError, compute_analysis, fetch_prices,
+                    risk_free_rate)
 from condor.stats import METHODS
 
 from .models import SavedPortfolio
@@ -190,6 +191,52 @@ def api_analyze(request):
         log.exception("analysis failed for %s", tickers)
         return _bad("Analysis failed unexpectedly; see server log.", status=500)
 
+    return JsonResponse(result)
+
+
+@api_login_required
+@require_POST
+def api_forecast(request):
+    """Rung A forecast: closed-form constant-rate fan for the given mix.
+
+    Same input contract as api_analyze plus `horizon_years` (1-30).
+    Boundary is lenient about weights exactly like AssetSet.analysis():
+    unknown tickers ignored, negatives clipped, all-zero -> equal.
+    """
+    body, err = _json_body(request)
+    if err:
+        return _bad(err)
+    tickers, err = _clean_tickers(body.get("tickers") or [])
+    if err:
+        return _bad(err)
+    settings, err = _clean_settings(body)
+    if err:
+        return _bad(err)
+    try:
+        horizon = float(body.get("horizon_years", 2))
+    except (TypeError, ValueError):
+        return _bad("horizon_years must be a number.")
+    if not 1 <= horizon <= 30:
+        return _bad("Forecast horizon must be between 1 and 30 years.")
+    weights = body.get("weights") or None
+    if weights is not None and not isinstance(weights, dict):
+        return _bad("weights must be an object of ticker -> weight.")
+
+    try:
+        prices = fetch_prices(tickers, years=settings["years"])
+        aset = AssetSet(prices, method=settings["method"])
+        clean = None
+        if weights:  # boundary leniency, same as AssetSet.analysis()
+            clean = {t: max(0.0, float(weights.get(t, 0.0)))
+                     for t in aset.tickers}
+            if sum(clean.values()) <= 0:
+                clean = None
+        result = aset.portfolio(clean).forecast(horizon_years=horizon).to_dict()
+    except DataFetchError as e:
+        return _bad(str(e))
+    except Exception:
+        log.exception("forecast failed for %s", tickers)
+        return _bad("Forecast failed unexpectedly; see server log.", status=500)
     return JsonResponse(result)
 
 

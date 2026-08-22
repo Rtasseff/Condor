@@ -41,6 +41,8 @@ import numpy as np
 import pandas as pd
 
 from . import stats
+from . import forecast as _forecast_engine
+from .stats import annual_factor
 from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix, _perf,
                        _solve, _weights_dict)
 
@@ -489,8 +491,114 @@ class Portfolio:
         start = max(first - stats.return_window(aset.timeframe), 0)
         return rets_idx.insert(0, idx[start])
 
+    def forecast(self, horizon_years: float = 2,
+                 levels=_forecast_engine.DEFAULT_LEVELS) -> "Forecast":
+        """Project this portfolio's wealth forward (research rung A):
+        closed-form constant-rate ("GBM") bands, plus a second band set
+        with the drift's own estimation error folded in. Numbers come
+        from the engine (condor/forecast.py); this only gathers state."""
+        return Forecast(self, horizon_years=horizon_years, levels=levels)
+
     def as_asset(self) -> Asset:
         return Asset(self.label, self.label)
+
+
+# ----------------------------------------------------------------------
+# Forecast
+# ----------------------------------------------------------------------
+class Forecast:
+    """A portfolio's forward fan chart — the simplest model, honestly.
+
+    Closed-form lognormal bands from the portfolio's per-period log
+    returns (engine: `condor/forecast.py`), in two nested sets:
+    path-only ("market randomness") and with the expected return's own
+    estimation error (`_est` — the dominant term at multi-year
+    horizons; see docs/research/forecast-methods-ladder.md).
+
+    `table` is a DataFrame indexed by horizon (years): `median`,
+    `lo65/hi65/lo95/hi95` and their `_est` twins, all wealth multiples
+    of 1 (row 0 = today = 1.0). `to_dict()` is the UI payload.
+    """
+
+    MODEL = "constant-rate"  # rung A; later rungs add "bootstrap", ...
+
+    def __init__(self, portfolio: "Portfolio", horizon_years: float = 2,
+                 levels=_forecast_engine.DEFAULT_LEVELS):
+        if not 0 < float(horizon_years) <= 50:
+            raise ValueError("horizon_years must be in (0, 50]")
+        self.portfolio = portfolio
+        self.horizon_years = float(horizon_years)
+        self.levels = tuple(levels)
+        self.periods_per_year = annual_factor(portfolio.asset_set.timeframe)
+        self.m, self.s, self.n_obs = _forecast_engine.log_moments(
+            portfolio.returns)
+        step = 5 if self.periods_per_year >= 252 else 1
+        self.table = _forecast_engine.lognormal_bands(
+            self.m, self.s, self.n_obs,
+            horizon_periods=int(round(self.horizon_years
+                                      * self.periods_per_year)),
+            periods_per_year=self.periods_per_year,
+            levels=self.levels, step=step)
+
+    # -- annualized headline numbers (for honest labeling) --------------
+    @property
+    def mu_annual(self) -> float:
+        """Geometric annual growth rate implied by the median path."""
+        return float(np.exp(self.m * self.periods_per_year) - 1)
+
+    @property
+    def sigma_annual(self) -> float:
+        return float(self.s * np.sqrt(self.periods_per_year))
+
+    @property
+    def mu_se_annual(self) -> float:
+        """SE of the annualized log growth rate (≈ points of annual
+        return) — depends only on the calendar span (Merton)."""
+        return _forecast_engine.mu_standard_error(
+            self.s, self.n_obs, self.periods_per_year)
+
+    @property
+    def mu_ci95(self) -> tuple[float, float]:
+        """95% CI on the geometric annual growth rate."""
+        drift = self.m * self.periods_per_year
+        half = 1.959964 * self.mu_se_annual
+        return (float(np.exp(drift - half) - 1),
+                float(np.exp(drift + half) - 1))
+
+    @property
+    def span_years(self) -> float:
+        return self.n_obs / self.periods_per_year
+
+    def __repr__(self) -> str:
+        return (f"Forecast({self.portfolio.label!r}, {self.horizon_years}y, "
+                f"mu={self.mu_annual:.3f}±{self.mu_se_annual:.3f}/yr)")
+
+    def to_dict(self) -> dict:
+        t = self.table
+        r6 = lambda a: [round(float(x), 6) for x in a]
+        bands, bands_est = [], []
+        for lvl in self.levels:
+            tag = str(int(round(100 * lvl)))
+            bands.append({"level": int(tag),
+                          "lo": r6(t[f"lo{tag}"]), "hi": r6(t[f"hi{tag}"])})
+            bands_est.append({"level": int(tag),
+                              "lo": r6(t[f"lo{tag}_est"]),
+                              "hi": r6(t[f"hi{tag}_est"])})
+        lo_ci, hi_ci = self.mu_ci95
+        return {
+            "model": self.MODEL,
+            "horizon_years": self.horizon_years,
+            "t": r6(t.index),
+            "median": r6(t["median"]),
+            "bands": bands,          # market randomness only
+            "bands_est": bands_est,  # + estimation error in the drift
+            "mu_annual": round(self.mu_annual, 6),
+            "mu_se_annual": round(self.mu_se_annual, 6),
+            "mu_ci95": [round(lo_ci, 6), round(hi_ci, 6)],
+            "sigma_annual": round(self.sigma_annual, 6),
+            "n_obs": self.n_obs,
+            "span_years": round(self.span_years, 3),
+        }
 
 
 # ----------------------------------------------------------------------

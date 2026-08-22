@@ -12,7 +12,7 @@ Engine:                   stats.py (μ, Σ), frontier.py (_perf, _solve)
 from .data import fetch_prices, DataFetchError, PriceStore, risk_free_rate
 from .stats import asset_returns, expected_annual, risk_matrix_annual
 from .frontier import compute_analysis
-from .model import Asset, AssetSet, Portfolio, Frontier
+from .model import Asset, AssetSet, Forecast, Frontier, Portfolio
 
 __all__ = [
     "fetch_prices",
@@ -27,4 +27,5 @@ __all__ = [
     "AssetSet",
     "Portfolio",
     "Frontier",
+    "Forecast",
 ]
