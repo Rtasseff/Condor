@@ -18,6 +18,9 @@ Design notes (the full rules live in ARCHITECTURE.md — read it before
 adding features; new capabilities become methods here, numerics go in an
 engine module as pure functions):
 
+- An `AssetSet` also owns the *return-calculation options* (metric,
+  timeframe, samp_int, basis) that decide what series μ / Σ are estimated
+  from; `with_options()` is the immutable sibling of `with_method()`.
 - `Asset` is identity only (ticker, name).  Statistics are estimated for
   the *set*, vectorized — never asset-by-asset — so μ and Σ stay
   consistent and the per-pair CoMAD semantics live in one place.
@@ -41,6 +44,8 @@ from . import stats
 from .frontier import N_FRONTIER_POINTS, _perf, _solve, _weights_dict
 
 __all__ = ["Asset", "AssetSet", "Portfolio", "Frontier"]
+
+_UNSET = object()  # "argument not given", where None is a meaningful value
 
 
 # ----------------------------------------------------------------------
@@ -67,23 +72,64 @@ class AssetSet:
             column names), DatetimeIndex ascending.
     method: "normal" (mean / Ledoit-Wolf) or "robust" (median / CoMAD).
 
+    How the return series behind μ and Σ is built is owned here too, as
+    read-only options passed straight to the engine (see `stats.py`; all
+    default to the daily/relative/arithmetic behaviour):
+
+    metric:     "relative" or "log"
+    timeframe:  "D" (1-day returns, x252) or "M" (21-day returns, x12)
+    samp_int:   keep every n-th return row; None = the timeframe default
+                (1 for "D", 20 for "M", which de-overlaps 21-day windows)
+    basis:      "arithmetic" or "geometric" expected return ("normal" only)
+
     Estimates are computed lazily once and cached; an AssetSet is treated
-    as immutable — use `with_method()` to re-estimate under another method.
+    as immutable — use `with_method()` / `with_options()` to re-estimate.
     """
 
     def __init__(self, prices: pd.DataFrame, method: str = "normal",
-                 names: Mapping[str, str] | None = None):
+                 names: Mapping[str, str] | None = None, *,
+                 metric: str = "relative", timeframe: str = "D",
+                 samp_int: int | None = None, basis: str = "arithmetic"):
         if not isinstance(prices, pd.DataFrame) or prices.shape[1] == 0:
             raise ValueError("prices must be a non-empty DataFrame (one column per asset)")
         if prices.columns.has_duplicates:
             raise ValueError("prices has duplicate tickers")
         stats._check_method(method)
+        stats._check_metric(metric)
+        stats._check_basis(basis)
         self.prices = prices
         self.method = method
+        self._metric = metric
+        self._timeframe = timeframe
+        self._samp_int = stats.resolve_samp_int(timeframe, samp_int)
+        self._basis = basis
         names = names or {}
         self.assets: tuple[Asset, ...] = tuple(
             Asset(str(t), names.get(str(t))) for t in prices.columns
         )
+
+    # -- return-calculation options (read-only) --------------------------
+    @property
+    def metric(self) -> str:
+        return self._metric
+
+    @property
+    def timeframe(self) -> str:
+        return self._timeframe
+
+    @property
+    def samp_int(self) -> int:
+        return self._samp_int
+
+    @property
+    def basis(self) -> str:
+        return self._basis
+
+    @property
+    def _options(self) -> dict:
+        """The return-calculation options, as engine keyword arguments."""
+        return {"metric": self._metric, "timeframe": self._timeframe,
+                "samp_int": self._samp_int, "basis": self._basis}
 
     # -- identity -------------------------------------------------------
     @property
@@ -106,7 +152,12 @@ class AssetSet:
         raise KeyError(ticker)
 
     def __repr__(self) -> str:
-        return (f"AssetSet({self.tickers}, method={self.method!r}, "
+        # only non-default options are shown, so the common case stays short
+        plain = {"metric": "relative", "timeframe": "D", "basis": "arithmetic",
+                 "samp_int": stats.default_samp_int(self._timeframe)}
+        extra = "".join(f", {k}={v!r}" for k, v in self._options.items()
+                        if v != plain[k])
+        return (f"AssetSet({self.tickers}, method={self.method!r}{extra}, "
                 f"{self.start}..{self.end}, n_days={self.n_days})")
 
     # -- data window ----------------------------------------------------
@@ -125,18 +176,28 @@ class AssetSet:
     # -- estimates (engine calls, cached) --------------------------------
     @cached_property
     def returns(self) -> pd.DataFrame:
-        """Daily relative returns, one column per asset."""
-        return stats.asset_returns(self.prices)
+        """The return series the estimates are built on, one column per asset.
+
+        Daily relative returns by default; `metric` / `timeframe` /
+        `samp_int` change what one row means.
+        """
+        return stats.asset_returns(self.prices, metric=self._metric,
+                                   timeframe=self._timeframe,
+                                   samp_int=self._samp_int)
 
     @cached_property
     def expected_returns(self) -> pd.Series:
         """Annualized expected return per asset (μ)."""
-        return stats.expected_annual(self.prices, method=self.method)
+        return stats.expected_annual(self.prices, method=self.method,
+                                     **self._options)
 
     @cached_property
     def risk_matrix(self) -> pd.DataFrame:
         """Annualized co-dispersion matrix (Σ), PSD."""
-        return stats.risk_matrix_annual(self.prices, method=self.method)
+        return stats.risk_matrix_annual(self.prices, method=self.method,
+                                        metric=self._metric,
+                                        timeframe=self._timeframe,
+                                        samp_int=self._samp_int)
 
     # short math aliases, handy in notebooks
     @property
@@ -164,10 +225,35 @@ class AssetSet:
 
     def with_method(self, method: str) -> "AssetSet":
         """Same assets and prices, different estimation method."""
-        if method == self.method:
+        return self.with_options(method=method)
+
+    def with_options(self, *, method: str | None = None,
+                     metric: str | None = None, timeframe: str | None = None,
+                     samp_int=_UNSET, basis: str | None = None) -> "AssetSet":
+        """Same assets and prices, re-estimated under different options.
+
+        Anything left out is carried over, and an all-unchanged call
+        returns `self`.  One exception, so the legacy defaults stay
+        reachable: changing the timeframe without naming a `samp_int`
+        re-derives it from the new timeframe (1 for "D", 20 for "M").
+        """
+        current = self._options | {"method": self.method}
+        opts = dict(current)
+        for key, value in (("method", method), ("metric", metric),
+                           ("timeframe", timeframe), ("basis", basis)):
+            if value is not None:
+                opts[key] = value
+        if samp_int is not _UNSET:
+            opts["samp_int"] = samp_int
+        elif opts["timeframe"] != self._timeframe:
+            opts["samp_int"] = None  # the new timeframe's default
+        opts["samp_int"] = stats.resolve_samp_int(opts["timeframe"],
+                                                  opts["samp_int"])
+        if opts == current:
             return self
-        return AssetSet(self.prices, method=method,
-                        names={a.ticker: a.name for a in self.assets if a.name})
+        return AssetSet(self.prices,
+                        names={a.ticker: a.name for a in self.assets if a.name},
+                        **opts)
 
     # -- portfolios over this set ---------------------------------------
     def _as_weight_array(self, weights) -> np.ndarray:
@@ -245,12 +331,17 @@ class AssetSet:
     # -- composition: portfolios as members ------------------------------
     @classmethod
     def from_members(cls, members: Iterable, method: str = "normal",
-                     names: Mapping[str, str] | None = None) -> "AssetSet":
+                     names: Mapping[str, str] | None = None, *,
+                     metric: str = "relative", timeframe: str = "D",
+                     samp_int: int | None = None,
+                     basis: str = "arithmetic") -> "AssetSet":
         """Build a set whose members are prices Series and/or Portfolios.
 
         A Portfolio contributes its `value_index` (a prices-like series
         named by its label), so nested portfolios are first-class assets.
-        Members are inner-joined on date.
+        Members are inner-joined on date.  The return-calculation options
+        apply to the *outer* set: a nested portfolio's own options shaped
+        its `value_index`, and the outer set re-estimates from there.
         """
         cols = []
         for m in members:
@@ -265,18 +356,29 @@ class AssetSet:
             else:
                 raise TypeError(f"unsupported member type: {type(m).__name__}")
         prices = pd.concat(cols, axis=1, join="inner")
-        return cls(prices, method=method, names=names)
+        return cls(prices, method=method, names=names, metric=metric,
+                   timeframe=timeframe, samp_int=samp_int, basis=basis)
 
     # -- the Explorer payload (what compute_analysis returns) -----------
     def analysis(self, weights: Mapping[str, float] | None = None,
                  risk_free_rate: float = 0.02,
-                 n_points: int = N_FRONTIER_POINTS) -> dict:
+                 n_points: int = N_FRONTIER_POINTS, *,
+                 metric: str | None = None, timeframe: str | None = None,
+                 samp_int=_UNSET, basis: str | None = None) -> dict:
         """Everything the Explorer UI needs, as one plain dict.
 
         Lenient at the boundary: unknown tickers in `weights` are ignored,
         negatives are clipped to 0, and an all-zero/empty weighting falls
         back to equal weights (matches the original procedural API).
+
+        The return-calculation options default to this set's own; naming
+        one runs the analysis on `with_options(...)` instead.
         """
+        override = self.with_options(metric=metric, timeframe=timeframe,
+                                     samp_int=samp_int, basis=basis)
+        if override is not self:
+            return override.analysis(weights, risk_free_rate, n_points)
+
         if weights:
             clean = {t: max(0.0, float(weights.get(t, 0.0))) for t in self.tickers}
             if sum(clean.values()) <= 0:
@@ -357,16 +459,34 @@ class Portfolio:
     # -- the asset-like face -------------------------------------------
     @cached_property
     def returns(self) -> pd.Series:
-        """Daily returns of the (daily-rebalanced) fixed-weight portfolio."""
+        """Returns of the fixed-weight (rebalanced every period) portfolio.
+
+        One row per row of the set's return series — daily by default, but
+        the set's `timeframe` / `samp_int` decide.
+        """
         r = self.asset_set.returns.to_numpy(dtype=float) @ self._w
         return pd.Series(r, index=self.asset_set.returns.index, name=self.label)
 
     @cached_property
     def value_index(self) -> pd.Series:
-        """Prices-like series: 100 at the first date, then growth."""
-        idx = self.asset_set.prices.index
-        growth = np.concatenate([[1.0], np.cumprod(1.0 + self.returns.to_numpy())])
-        return pd.Series(100.0 * growth, index=idx, name=self.label)
+        """Prices-like series: 100 at the start, then compounded growth.
+
+        Dated on the set's return grid, with the first date backed up to
+        the start of the first return window — so under the daily default
+        this is exactly the prices index.
+        """
+        steps = stats.growth_factors(self.returns, self.asset_set.metric)
+        growth = np.concatenate([[1.0], np.cumprod(steps.to_numpy())])
+        return pd.Series(100.0 * growth, index=self._value_dates(),
+                         name=self.label)
+
+    def _value_dates(self) -> pd.Index:
+        """`value_index` dates: first window's start, then one per return."""
+        aset = self.asset_set
+        idx, rets_idx = aset.prices.index, self.returns.index
+        first = int(idx.get_indexer([rets_idx[0]])[0])
+        start = max(first - stats.return_window(aset.timeframe), 0)
+        return rets_idx.insert(0, idx[start])
 
     def as_asset(self) -> Asset:
         return Asset(self.label, self.label)

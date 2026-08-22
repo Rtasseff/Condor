@@ -46,18 +46,27 @@ def compute_analysis(
     risk_free_rate: float = 0.02,
     method: str = "normal",
     n_points: int = N_FRONTIER_POINTS,
+    *,
+    metric: str = "relative",
+    timeframe: str = "D",
+    samp_int: int | None = None,
+    basis: str = "arithmetic",
 ) -> dict:
     """Full analysis payload for a set of assets (procedural facade).
 
-    Equivalent to ``AssetSet(prices, method).analysis(weights, risk_free_rate,
-    n_points)`` — kept as the one-call entry point for the web view and for
-    tests that pin the numbers.
+    Equivalent to ``AssetSet(prices, method, metric=..., timeframe=...,
+    samp_int=..., basis=...).analysis(weights, risk_free_rate, n_points)`` —
+    kept as the one-call entry point for the web view and for tests that
+    pin the numbers.
 
     weights: optional {ticker: weight} for the user's current portfolio;
              defaults to equal weights. Weights are normalized to sum to 1.
+    metric / timeframe / samp_int / basis: return-calculation options,
+             documented on `AssetSet` and `stats.py`.
     """
     from .model import AssetSet  # local import: model builds on this module
 
-    return AssetSet(prices, method=method).analysis(
+    return AssetSet(prices, method=method, metric=metric, timeframe=timeframe,
+                    samp_int=samp_int, basis=basis).analysis(
         weights=weights, risk_free_rate=risk_free_rate, n_points=n_points
     )
