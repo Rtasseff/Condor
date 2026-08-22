@@ -43,17 +43,36 @@ and the sequence is still to be decided.
 
 ## Next
 
-- [ ] **Estimation uncertainty / sampling study** — revive the question
-  behind the legacy `202411_apa_*.ipynb` work (autocorrelation, sampling
-  interval, convergence), reframed: dispersion (Σ) converges fast and
-  daily sampling + shrinkage handle it; expected return (μ) does NOT —
-  its standard error depends only on the total time span (Merton 1980),
-  ≈ σ/√years regardless of sampling frequency, so no interval choice
-  rescues it. Deliverables: quantify standard errors for both estimators,
-  decide what honesty looks like in the UI (error bars / bands on the
-  frontier?), and document why robust stats + (later) Black-Litterman
-  views are the mitigation. Park: `sampInt`-style de-overlapping matters
-  only if we add monthly windows (see return-calculation options above).
+- [ ] **Estimation uncertainty / sampling / regimes** — revive the
+  question behind the legacy `202411_apa_*.ipynb` work (autocorrelation,
+  sampling interval, convergence), reframed after discussion (2026-08-22):
+  - *Sampling interval & independence.* Stats are computed on returns,
+    not prices: daily returns are near-uncorrelated serially, so RT's
+    "ensure AC≈0 before trusting n" rule is already satisfied for the Σ
+    point estimate — finer sampling genuinely helps Σ. It does NOT help
+    μ: μ's standard error depends only on total time span (Merton 1980),
+    ≈ σ/√years however you slice it.
+  - *But returns are uncorrelated, not independent*: volatility
+    clustering (r² autocorrelated) means the effective n < nominal n, so
+    naive error bars on Σ are too tight — use Newey-West or a block
+    bootstrap when quantifying Σ uncertainty. `sampInt`-style
+    de-overlapping matters only if monthly windows return (see
+    return-calculation options above).
+  - *Non-stationarity / regimes.* Piecewise-process view is sound
+    (market-wide: Gramm-Leach-Bliley 1999 repealing Glass-Steagall,
+    decimalization 2001, QE era 2008+; single names change even harder).
+    Window length is a bias-variance tradeoff: long window = stale-regime
+    bias, short window = variance explosion (fatal for μ: 3y ⇒ ±10%/yr
+    SE). Mitigations in order of establishment: exponentially-weighted
+    covariance for Σ (`pypfopt.risk_models.exp_cov`) as a third method —
+    recency weighting without a cliff; lookback stays a visible user
+    choice; structural-break detection (CUSUM / Bai-Perron) as part of
+    asset pre-assessment (breaks in vol are detectable, breaks in mean
+    mostly aren't); for μ, Black-Litterman equilibrium prior rather than
+    trusting any window.
+  - Deliverables: standard errors for both estimators (honest ones for
+    Σ), what calibrated uncertainty looks like in the UI (error bars /
+    bands on the frontier?), and the EWMA-covariance option.
 - [ ] **Forecaster** ("Forecast" button, deck slide 25): fan chart with 65%
   and 95% bands, backtest-from-2-years-ago vs project-2-years-forward.
   Start with geometric Brownian motion / bootstrap of historical returns
@@ -76,6 +95,9 @@ and the sequence is still to be decided.
   `Black-GlobalPortfolioOptimization-1992.pdf`.
 - [ ] **Asset pre-assessment / screening** (legacy `assetPreassess.py`,
   `202411_apa_*.ipynb`): trend fit, drawdown, per-asset stats page;
+  structural-break flags (CUSUM / Bai-Perron — see estimation-uncertainty
+  item) so a fundamentally-changed company is visible before it poisons
+  estimates;
   sector correlation matrix view (`analytics_workflow_v1` Part 1) to
   guide diversification.
 - [ ] **"Suggest" button** — propose additions that improve the frontier
