@@ -14,7 +14,7 @@ from django.shortcuts import render
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
-from condor import DataFetchError, compute_analysis, fetch_prices
+from condor import DataFetchError, compute_analysis, fetch_prices, risk_free_rate
 from condor.stats import METHODS
 
 log = logging.getLogger(__name__)
@@ -25,7 +25,16 @@ MAX_ASSETS = 15
 
 @ensure_csrf_cookie
 def index(request):
-    return render(request, "explorer/index.html")
+    """Page shell. Prefills the risk-free field from FRED (3-month
+    Treasury constant maturity); if FRED and the cache are both
+    unavailable, the template's hardcoded default stands."""
+    rf = None
+    try:
+        rf = risk_free_rate()  # cached ~12h next to the price store
+    except Exception:
+        log.warning("risk-free rate unavailable; using field default")
+    ctx = {"rf": rf, "rf_pct": round(rf["rate"] * 100, 2) if rf else 4.0}
+    return render(request, "explorer/index.html", ctx)
 
 
 def _bad(msg, status=400):

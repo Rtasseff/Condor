@@ -180,3 +180,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 footer {
   margin-top: 26px; color: var(--muted); font-size: 12px; text-align: center;
 }
+
+/* provenance hint under the risk-free input */
+.controls label small.sub { margin: 2px 0 0; font-size: 11px; }

@@ -36,7 +36,8 @@
       </select>
     </label>
     <label>Risk-free rate
-      <span class="pctwrap"><input id="rf" type="number" value="4.0" step="0.1" min="-5" max="25"> %</span>
+      <span class="pctwrap"><input id="rf" type="number" value="{{ rf_pct }}" step="0.1" min="-5" max="25"> %</span>
+      {% if rf %}<small class="sub">3-mo T-bill, {{ rf.as_of }}</small>{% endif %}
     </label>
     <button id="analyze" class="primary">Analyze</button>
     <span id="status" class="status" role="status"></span>

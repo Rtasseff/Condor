@@ -421,7 +421,7 @@ function renderTable() {
     tb.appendChild(tr);
   }
   $("datarange").textContent =
-    `Based on ${r.n_days.toLocaleString()} trading days, ${r.start} to ${r.end}` +
+    `Data as of ${r.end} · ${r.n_days.toLocaleString()} trading days from ${r.start}` +
     ` · ${r.method === "robust" ? "robust (median/CoMAD)" : "normal (mean/Ledoit-Wolf)"} statistics.`;
 }
 

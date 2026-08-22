@@ -24,10 +24,6 @@ and the sequence is still to be decided.
   beyond the price store — for personal use and one-off questions without
   starting Django. Doubles as a second consumer of `condor/` that keeps the
   layering honest. Optional `--html` to write a Plotly chart.
-- [ ] **Explorer: wire the data layer in** — prefill the risk-free field
-  from `risk_free_rate()` (show maturity + as-of), and show "data as of
-  <last trading day>" (`PriceStore.as_of`) next to results. Small; pairs
-  well with the UI review pass.
 - [ ] **Verification notebook** (`notebooks/01_verify_core.ipynb`): the same
   spot-check story as `202411_refact_optWF.ipynb` — hand-computed value next
   to function output, legacy vs v2 side by side, notebook golden numbers —
@@ -125,6 +121,12 @@ and the sequence is still to be decided.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Explorer: data layer wired in** — 2026-08-22. Risk-free field
+      prefilled from FRED (3-mo T-bill, with as-of date shown under the
+      input; silent fallback to the old default if FRED and cache are
+      both unreachable); results caption now leads with "Data as of
+      <last trading day>".
 
 - [x] **Data layer v2 — store + sources** (`condor/data/`) — 2026-08-22.
       `PriceStore`: one Parquet per ticker in `~/.condor/prices`
