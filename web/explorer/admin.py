@@ -2,8 +2,8 @@
 
 from django.contrib import admin
 
-from .models import (Account, AccountEvent, AccountTarget, Holding,
-                     SavedPortfolio)
+from .models import (Account, AccountEvent, AccountTarget,
+                     ContributionSchedule, Holding, SavedPortfolio)
 
 
 class HoldingInline(admin.TabularInline):
@@ -32,3 +32,8 @@ class EventInline(admin.TabularInline):
 class AccountAdmin(admin.ModelAdmin):
     list_display = ("name", "owner", "created_at")
     inlines = [TargetInline, EventInline]
+
+
+@admin.register(ContributionSchedule)
+class ContributionScheduleAdmin(admin.ModelAdmin):
+    list_display = ("account", "amount", "cadence", "next_due", "enabled")

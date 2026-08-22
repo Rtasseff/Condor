@@ -19,6 +19,11 @@
     <p class="sub" id="a-asof"></p>
   </section>
 
+  <div id="duebanner" class="card duebanner" hidden>
+    <span id="duetext"></span>
+    <button id="duego" class="primary small" type="button">Where should it go?</button>
+  </div>
+
   <div id="error" class="error card" hidden></div>
 
   <section class="card" id="chartcard2" hidden>
@@ -94,6 +99,83 @@
         <button id="plancancel" class="ghost small" type="button">Cancel</button>
       </div>
     </div>
+  </section>
+
+  <section class="card">
+    <h2>Regular contributions <span class="modeltag">dollar-cost averaging</span></h2>
+    <p class="sub">A fixed amount on a schedule. When it's due you get a reminder
+       on login and a whole-share plan for where to put it — new money goes to
+       whatever has drifted under its setpoint, so contributions do the
+       rebalancing and nothing needs to be sold.</p>
+    <div class="fcontrols">
+      <label>Amount
+        <span class="pctwrap">$ <input id="sc-amount" type="number" min="1" step="50"></span>
+      </label>
+      <label>Cadence
+        <select id="sc-cadence">
+          <option value="weekly">Weekly</option>
+          <option value="monthly" selected>Monthly</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      </label>
+      <label>Next due <input id="sc-due" type="date"></label>
+      <label class="checkline"><input id="sc-enabled" type="checkbox" checked> Remind me</label>
+      <button id="scsave" class="ghost small" type="button">Save schedule</button>
+      <button id="scplan" class="primary small" type="button">Contribution plan</button>
+      <span id="scstatus" class="status" role="status"></span>
+    </div>
+
+    <div id="contribpanel" class="subpanel" hidden>
+      <h3 id="contribtitle">Contribution plan</h3>
+      <p class="sub">Buys only — whole shares toward the setpoint; whatever can't
+         buy a whole share (or belongs to the setpoint's cash share) stays in
+         cash. Edit to match what you actually do, then confirm.</p>
+      <div class="tablewrap">
+        <table id="contribtable">
+          <thead><tr>
+            <th scope="col">Ticker</th>
+            <th scope="col" class="num">Price</th>
+            <th scope="col" class="num">Actual %</th>
+            <th scope="col" class="num">Setpoint %</th>
+            <th scope="col" class="num">Buy (shares)</th>
+            <th scope="col" class="num">≈ Value</th>
+            <th scope="col" class="num">New %</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="sub" id="contribcash"></p>
+      <div class="sideactions">
+        <button id="contribconfirm" class="primary small" type="button">Confirm — deposited &amp; bought</button>
+        <button id="contribcancel" class="ghost small" type="button">Cancel</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Forecast <span class="modeltag">model 1 — steady rates · whole account</span></h2>
+    <p class="sub">Projects the <b>complete</b> account — your holdings at their
+       current mix plus your cash share earning the T-bill rate. Same simplest
+       model as the Build page: shaded bands are market randomness, the dashed
+       band adds the return-estimate error.</p>
+    <div class="fcontrols">
+      <label>Horizon
+        <select id="af-horizon">
+          <option value="1">1 year</option>
+          <option value="2" selected>2 years</option>
+          <option value="5">5 years</option>
+          <option value="10">10 years</option>
+        </select>
+      </label>
+      <button id="aforecast" class="primary small" type="button">Project</button>
+      <span id="afstatus" class="status" role="status"></span>
+    </div>
+    <div id="afchart" hidden></div>
+    <p class="sub" id="afmu" hidden></p>
+    <p class="sub" id="afnote" hidden>Assumes the future resembles the lookback
+       window in kind and your mix stays as it is today. The middle line is an
+       estimate, not a promise.</p>
   </section>
 
   <section class="card">

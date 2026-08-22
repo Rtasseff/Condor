@@ -60,6 +60,12 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   "advanced" disclosure: metric, timeframe, basis) and the CLI (flags).
   Deliberately left out of the analysis payload so far — adding them is
   a payload change plus the key-set test in tests/test_model.py.
+- [ ] **Forecast a selected CAL point in Build** — the engine/model
+  side shipped 2026-08-22 (`blend_with_cash`, `Portfolio.forecast(
+  cash_weight=, risk_free_rate=)`, whole-account forecast on
+  /account); what remains is the Build-page UI: forecast the
+  "Considering" point (its cash share included) instead of only the
+  sidebar mix.
 - [ ] **Forecaster — rungs B and C** (rung A shipped 2026-08-22, see
   Done). Per `docs/research/forecast-methods-ladder.md` (summary PDF in
   the same folder): (B) stationary block bootstrap for path realism —
@@ -130,6 +136,23 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Regular contributions (DCA) + whole-account forecast** —
+      2026-08-22. Engine: `contribution_plan` (buys-only whole-share
+      routing of new money toward the setpoint — underweights first,
+      the setpoint's cash share respected, idle cash deployed, more
+      than half a share short before a buy; nothing is ever sold) and
+      `forecast.blend_with_cash` (constant-mix risky + cash at rf ⇒
+      dispersion scales by 1-cw; cw=1 pins to exact rf growth).
+      `ContributionSchedule` (amount, weekly/monthly/quarterly/yearly,
+      next_due; advancing steps from the due date so cadence never
+      drifts). Reminders: due dot on the "My account" nav link on
+      every page (context processor) + banner with "Where should it
+      go?" on the account page. Confirming books deposit + edited
+      buys and advances the schedule. "Forecast" card on /account
+      projects the complete account (holdings value-weighted + cash
+      share at the live T-bill rate) in dollars from current value.
+      9 new engine tests, 6 API tests; verified live in Chrome.
 
 - [x] **Account view — ledger, drift, rebalancing** — 2026-08-22 (ADR
       0004). `condor/accounting.py` engine (replay, daily valuation at

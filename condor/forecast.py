@@ -91,3 +91,21 @@ def lognormal_bands(m: float, s: float, n_obs: int, horizon_periods: int,
         out[f"lo{tag}_est"] = np.exp(drift - z * np.sqrt(var_est))
         out[f"hi{tag}_est"] = np.exp(drift + z * np.sqrt(var_est))
     return pd.DataFrame(out, index=pd.Index(h / periods_per_year, name="years"))
+
+
+def blend_with_cash(returns, cash_weight: float, risk_free_rate: float,
+                    periods_per_year: int):
+    """Per-period simple returns of a constant-mix blend: (1 - cw) in
+    the risky series, cw at the risk-free rate.
+
+    The cash sleeve is deterministic — per period it earns
+    (1 + rf)^(1/ppy) - 1 — so blending shifts the mean and scales the
+    dispersion by (1 - cw). cw = 1 is pure T-bills (zero-width bands);
+    cw = 0 returns the input unchanged. Constant-mix means the blend is
+    rebalanced every period, matching a fixed cash_weight assumption.
+    """
+    cw = float(cash_weight)
+    if not 0.0 <= cw <= 1.0:
+        raise ValueError("cash_weight must be in [0, 1]")
+    rf_p = (1.0 + float(risk_free_rate)) ** (1.0 / periods_per_year) - 1.0
+    return (1.0 - cw) * pd.Series(returns) + cw * rf_p

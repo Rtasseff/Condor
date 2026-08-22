@@ -268,3 +268,75 @@ def rebalance_plan(shares: dict | pd.Series, prices: pd.Series, cash: float,
     return {"rows": rows, "total": total, "cash_before": float(cash),
             "cash_after": cash_after(trade),
             "target_cash_weight": float(1.0 - tw.sum())}
+
+
+def contribution_plan(shares: dict | pd.Series, prices: pd.Series,
+                      cash: float, target_weights: pd.Series,
+                      amount: float) -> dict:
+    """Route a new contribution toward the setpoint — buys only (DCA).
+
+    The classic "where does this week's money go": after depositing
+    `amount`, keep the setpoint's cash share in cash and spend the rest
+    on whole shares, one share at a time to the asset with the largest
+    dollar deficit vs its target, while its deficit exceeds half a
+    share (never overshoot a target by half a unit or more).
+    Overweight assets simply receive nothing — nothing is ever sold,
+    so this is NOT the rebalance plan; it is the gentle version that
+    lets regular contributions do the rebalancing. Idle cash above the
+    setpoint's reserve is deployed along with the contribution.
+
+    -> {"rows": DataFrame[price, current_shares, current_value,
+        current_weight (of the pre-deposit total), target_weight,
+        buy_shares, buy_value, new_weight (of the post-deposit total)],
+        "amount", "spent", "total_after", "cash_after",
+        "target_cash_weight"}
+    """
+    if amount < 0:
+        raise ValueError("amount must be >= 0")
+    tw = pd.Series(target_weights, dtype=float)
+    if (tw < -1e-12).any():
+        raise ValueError("target weights must be non-negative")
+    if float(tw.sum()) > 1.0 + 1e-9:
+        raise ValueError("target weights must sum to at most 1")
+
+    tickers = sorted(set(pd.Series(dict(shares)).index) | set(tw.index))
+    sh = pd.Series(dict(shares), dtype=float).reindex(tickers).fillna(0.0)
+    tw = tw.reindex(tickers).fillna(0.0)
+    px = prices.reindex(tickers)
+    if px.isna().any():
+        raise KeyError(f"no price for {list(px.index[px.isna()])}")
+
+    cur_val = sh * px
+    total_before = float(cur_val.sum()) + float(cash)
+    total_after = total_before + float(amount)
+    target_val = tw * total_after
+    target_cash = (1.0 - float(tw.sum())) * total_after
+    budget = max(0.0, float(cash) + float(amount) - target_cash)
+
+    buy = pd.Series(0.0, index=pd.Index(tickers))
+    while True:
+        deficit = target_val - (cur_val + buy * px)
+        ok = (px <= budget + 1e-9) & (deficit > px / 2)
+        if not ok.any():
+            break
+        pick = deficit[ok].idxmax()      # ties: first alphabetically
+        buy[pick] += 1
+        budget -= float(px[pick])
+
+    spent = float((buy * px).sum())
+    new_val = cur_val + buy * px
+    rows = pd.DataFrame({
+        "price": px,
+        "current_shares": sh,
+        "current_value": cur_val,
+        "current_weight": (cur_val / total_before if total_before > 0
+                           else cur_val * 0.0),
+        "target_weight": tw,
+        "buy_shares": buy,
+        "buy_value": buy * px,
+        "new_weight": new_val / total_after if total_after > 0 else new_val * 0.0,
+    })
+    return {"rows": rows, "amount": float(amount), "spent": spent,
+            "total_after": total_after,
+            "cash_after": float(cash) + float(amount) - spent,
+            "target_cash_weight": float(1.0 - tw.sum())}

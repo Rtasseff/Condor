@@ -173,3 +173,53 @@ class AccountEvent(models.Model):
     def __str__(self):
         core = self.ticker or f"${self.amount}"
         return f"{self.date} {self.kind} {core}"
+
+
+class ContributionSchedule(models.Model):
+    """The regular-contribution plan for an account (DCA).
+
+    One per account: a fixed amount on a cadence. `next_due` in the
+    past means "due now" — surfaced as a login reminder; confirming a
+    contribution advances it cadence-by-cadence until it is in the
+    future (no drift: advancing starts from the due date, not today).
+    """
+
+    CADENCES = ["weekly", "monthly", "quarterly", "yearly"]
+
+    account = models.OneToOneField(Account, on_delete=models.CASCADE,
+                                   related_name="schedule")
+    amount = models.FloatField()
+    cadence = models.CharField(max_length=10,
+                               choices=[(c, c) for c in CADENCES],
+                               default="monthly")
+    next_due = models.DateField()
+    enabled = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        state = "on" if self.enabled else "off"
+        return f"${self.amount} {self.cadence} (next {self.next_due}, {state})"
+
+    @staticmethod
+    def _add_months(d, months):
+        import calendar
+        y, m = divmod(d.month - 1 + months, 12)
+        y, m = d.year + y, m + 1
+        return d.replace(year=y, month=m,
+                         day=min(d.day, calendar.monthrange(y, m)[1]))
+
+    def advance(self, past_date):
+        """Move next_due forward, one cadence at a time, until it is
+        after `past_date`. Call after a confirmed contribution."""
+        import datetime as _dt
+        step = {"weekly": lambda d: d + _dt.timedelta(days=7),
+                "monthly": lambda d: self._add_months(d, 1),
+                "quarterly": lambda d: self._add_months(d, 3),
+                "yearly": lambda d: self._add_months(d, 12)}[self.cadence]
+        while self.next_due <= past_date:
+            self.next_due = step(self.next_due)
+
+    @property
+    def due(self):
+        import datetime as _dt
+        return self.enabled and self.next_due <= _dt.date.today()

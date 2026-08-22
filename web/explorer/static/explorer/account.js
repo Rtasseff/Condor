@@ -25,7 +25,7 @@ function csrftoken() {
   return m ? m[1] : "";
 }
 
-const state = { data: null, plan: null };
+const state = { data: null, plan: null, contrib: null };
 
 function showError(msg) {
   const e = $("error");
@@ -51,6 +51,7 @@ function render(data) {
   renderChart();
   renderPositions();
   renderEvents();
+  renderSchedule();
 }
 
 function renderTiles() {
@@ -358,6 +359,195 @@ async function confirmPlan() {
   } catch (err) { showError(err.message); }
 }
 
+// ---------- regular contributions (DCA) ----------
+function renderSchedule() {
+  const sc = state.data.schedule;
+  if (sc) {
+    $("sc-amount").value = sc.amount;
+    $("sc-cadence").value = sc.cadence;
+    $("sc-due").value = sc.next_due;
+    $("sc-enabled").checked = sc.enabled;
+  }
+  const due = sc && sc.due;
+  $("duebanner").hidden = !due;
+  if (due) {
+    $("duetext").textContent =
+      `Your ${sc.cadence} contribution of ${money(sc.amount)} is due ` +
+      `(scheduled ${sc.next_due}).`;
+  }
+}
+
+async function saveSchedule() {
+  try {
+    render(await api("/api/account/schedule", {
+      method: "POST",
+      body: JSON.stringify({
+        amount: $("sc-amount").value,
+        cadence: $("sc-cadence").value,
+        next_due: $("sc-due").value || null,
+        enabled: $("sc-enabled").checked,
+      }),
+    }));
+    $("scstatus").textContent = "Saved.";
+    setTimeout(() => { $("scstatus").textContent = ""; }, 2000);
+  } catch (err) { showError(err.message); }
+}
+
+async function loadContribution() {
+  showError("");
+  const amt = $("sc-amount").value;
+  const q = amt ? `?amount=${encodeURIComponent(amt)}` : "";
+  try {
+    state.contrib = await api(`/api/account/contribution${q}`);
+    renderContribution();
+  } catch (err) { showError(err.message); }
+}
+
+function renderContribution() {
+  const plan = state.contrib;
+  $("contribtitle").textContent =
+    `Contribution plan — ${money(plan.amount)} in`;
+  const tb = $("contribtable").querySelector("tbody");
+  tb.replaceChildren();
+  for (const r of plan.rows) {
+    const tr = document.createElement("tr");
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.step = "any";
+    input.value = r.buy_shares;
+    input.className = "planshares";
+    input.dataset.ticker = r.ticker;
+    input.dataset.price = r.price;
+    input.addEventListener("input", contribCash);
+    const tdIn = document.createElement("td");
+    tdIn.className = "num";
+    tdIn.appendChild(input);
+    tr.append(
+      td(r.ticker),
+      td(money(r.price), "num"),
+      td(pct(r.current_weight), "num"),
+      td(pct(r.target_weight), "num"),
+      tdIn,
+      td(money(r.buy_value), "num"),
+      td(pct(r.new_weight), "num"),
+    );
+    tb.appendChild(tr);
+  }
+  contribCash();
+  $("contribpanel").hidden = false;
+}
+
+function contribCash() {
+  const plan = state.contrib;
+  let spend = 0;
+  for (const inp of document.querySelectorAll("#contribtable .planshares"))
+    spend += (parseFloat(inp.value) || 0) * parseFloat(inp.dataset.price);
+  const leftover = plan.amount + state.data.cash - spend;
+  $("contribcash").textContent =
+    `Prices as of ${plan.as_of}. ${money(plan.amount)} in, ` +
+    `${money(spend)} to buys, cash ends at ${money(leftover)} ` +
+    `(setpoint keeps ${pct(plan.target_cash_weight)} in cash).` +
+    (leftover < -0.005 ? " That overspends — trim a buy." : "");
+}
+
+async function confirmContribution() {
+  const plan = state.contrib;
+  const trades = [];
+  for (const inp of document.querySelectorAll("#contribtable .planshares")) {
+    const n = parseFloat(inp.value) || 0;
+    if (n > 0) trades.push({ ticker: inp.dataset.ticker, shares: n,
+                             price: parseFloat(inp.dataset.price) });
+  }
+  try {
+    render(await api("/api/account/contribution/confirm", {
+      method: "POST",
+      body: JSON.stringify({ amount: plan.amount, trades }),
+    }));
+    $("contribpanel").hidden = true;
+  } catch (err) { showError(err.message); }
+}
+
+// ---------- whole-account forecast ----------
+async function runAccountForecast() {
+  showError("");
+  const btn = $("aforecast");
+  btn.disabled = true;
+  $("afstatus").textContent = "Projecting…";
+  try {
+    const f = await api("/api/account/forecast", {
+      method: "POST",
+      body: JSON.stringify({
+        horizon_years: parseInt($("af-horizon").value, 10) }),
+    });
+    renderAccountForecast(f);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false;
+    $("afstatus").textContent = "";
+  }
+}
+
+function renderAccountForecast(f) {
+  const start = f.start_value;
+  const dollars = (mults) => mults.map((m) => start * m);
+  const t = f.t;
+  const traces = [];
+  const est95 = f.bands_est[f.bands_est.length - 1];
+  traces.push({
+    x: t, y: dollars(est95.hi), mode: "lines",
+    name: "95% + return-estimate error",
+    line: { color: C.you, width: 1.5, dash: "dash" },
+    hovertemplate: "$%{y:,.0f}<extra>95% high, incl. estimate error</extra>",
+  });
+  traces.push({
+    x: t, y: dollars(est95.lo), mode: "lines", showlegend: false,
+    line: { color: C.you, width: 1.5, dash: "dash" },
+    hovertemplate: "$%{y:,.0f}<extra>95% low, incl. estimate error</extra>",
+  });
+  const fills = ["rgba(57,135,229,0.16)", "rgba(57,135,229,0.34)"];
+  f.bands.forEach((b, i) => {
+    traces.push({ x: t, y: dollars(b.lo), mode: "lines", showlegend: false,
+                  line: { width: 0 }, hoverinfo: "skip" });
+    traces.push({
+      x: t, y: dollars(b.hi), mode: "lines",
+      name: `${b.level}% band (market randomness)`,
+      fill: "tonexty", fillcolor: fills[i] || fills[0],
+      line: { width: 0 },
+      hovertemplate: `$%{y:,.0f}<extra>${b.level}% high</extra>`,
+    });
+  });
+  traces.push({
+    x: t, y: dollars(f.median), mode: "lines",
+    name: "Median — if the past average holds",
+    line: { color: C.frontier, width: 2.5 },
+    hovertemplate: "$%{y:,.0f} at year %{x:.1f}<extra>median</extra>",
+  });
+  Plotly.react("afchart", traces, {
+    paper_bgcolor: C.surface, plot_bgcolor: C.surface,
+    font: { family: "system-ui, -apple-system, 'Segoe UI', sans-serif", color: C.ink2 },
+    margin: { l: 70, r: 20, t: 10, b: 45 },
+    xaxis: { title: { text: "Years from today", font: { color: C.muted } },
+             gridcolor: C.grid, zerolinecolor: C.axis },
+    yaxis: { tickprefix: "$", tickformat: ",.0f",
+             gridcolor: C.grid, zerolinecolor: C.axis },
+    legend: { orientation: "h", x: 0, y: 1.12, font: { color: C.ink2, size: 12 } },
+    hoverlabel: { bgcolor: "#182238", font: { color: C.ink, size: 13 } },
+  }, { displayModeBar: false, responsive: true });
+
+  const pctpt = (x) => (100 * x).toFixed(1);
+  $("afmu").textContent =
+    `Whole-account growth rate: ${pctpt(f.mu_annual)}%/yr ` +
+    `(${pct(f.cash_weight, 0)} of the account is cash at the ` +
+    `${pctpt(f.risk_free_rate)}% T-bill rate) from ` +
+    `${f.span_years.toFixed(1)} years of data — good to about ` +
+    `±${pctpt(f.mu_se_annual)} points; plausibly ` +
+    `${pctpt(f.mu_ci95[0])}% to ${pctpt(f.mu_ci95[1])}%. ` +
+    `Dispersion: ${pctpt(f.sigma_annual)}%/yr.`;
+  for (const id of ["afchart", "afmu", "afnote"]) $(id).hidden = false;
+}
+
 // ---------- wire up ----------
 $("ev-kind").addEventListener("change", syncEventForm);
 $("eventform").addEventListener("submit", addEvent);
@@ -375,6 +565,15 @@ $("targetadd").addEventListener("submit", (e) => {
   sumTargets();
 });
 $("planbtn").addEventListener("click", loadPlan);
+$("scsave").addEventListener("click", saveSchedule);
+$("scplan").addEventListener("click", loadContribution);
+$("duego").addEventListener("click", () => {
+  loadContribution();
+  $("contribpanel").scrollIntoView({ behavior: "smooth", block: "center" });
+});
+$("contribcancel").addEventListener("click", () => { $("contribpanel").hidden = true; });
+$("contribconfirm").addEventListener("click", confirmContribution);
+$("aforecast").addEventListener("click", runAccountForecast);
 $("plancancel").addEventListener("click", () => { $("planpanel").hidden = true; });
 $("planconfirm").addEventListener("click", confirmPlan);
 

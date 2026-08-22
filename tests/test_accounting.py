@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from condor.accounting import (allocation, daily_state, rebalance_plan,
-                               replay, time_weighted_return)
+from condor.accounting import (allocation, contribution_plan, daily_state,
+                               rebalance_plan, replay, time_weighted_return)
 
 
 def ev(date, kind, ticker=None, shares=None, price=None, amount=None):
@@ -196,3 +196,54 @@ class TestRebalancePlan:
                               cash=0.0,
                               target_weights=pd.Series({"AAA": 0.6, "BBB": 0.4}))
         assert (plan["rows"]["trade_shares"] == 0).all()
+
+
+# ----------------------------------------------------------------------
+# contribution_plan (DCA: buys only)
+# ----------------------------------------------------------------------
+class TestContributionPlan:
+    def test_fresh_account_splits_by_weights(self):
+        # $350 to a 50/50 target at prices 100/50: A2 (200) + B3 (150),
+        # every dollar deployed, deterministic greedy order.
+        plan = contribution_plan({}, pd.Series({"AAA": 100.0, "BBB": 50.0}),
+                                 cash=0.0,
+                                 target_weights=pd.Series({"AAA": 0.5, "BBB": 0.5}),
+                                 amount=350.0)
+        r = plan["rows"]
+        assert r.loc["AAA", "buy_shares"] == 2
+        assert r.loc["BBB", "buy_shares"] == 3
+        assert plan["spent"] == 350.0 and plan["cash_after"] == 0.0
+
+    def test_new_money_goes_to_the_underweight(self):
+        # A is rich (100 vs target 80), B is poor (20 vs 80): the whole
+        # $40 contribution goes to B, and nothing is ever sold.
+        plan = contribution_plan({"AAA": 10, "BBB": 2},
+                                 pd.Series({"AAA": 10.0, "BBB": 10.0}),
+                                 cash=0.0,
+                                 target_weights=pd.Series({"AAA": 0.5, "BBB": 0.5}),
+                                 amount=40.0)
+        r = plan["rows"]
+        assert r.loc["AAA", "buy_shares"] == 0
+        assert r.loc["BBB", "buy_shares"] == 4
+        assert (r["buy_shares"] >= 0).all()
+
+    def test_setpoint_cash_share_is_respected(self):
+        # CAL-style target: 60% AAA, 40% cash. $100 in + $100 already
+        # idle: total 200, cash reserve 80, so 120 is deployable.
+        plan = contribution_plan({}, pd.Series({"AAA": 30.0}), cash=100.0,
+                                 target_weights=pd.Series({"AAA": 0.6}),
+                                 amount=100.0)
+        assert plan["rows"].loc["AAA", "buy_shares"] == 4
+        assert plan["spent"] == 120.0
+        assert plan["cash_after"] == pytest.approx(80.0)   # the 40% reserve
+
+    def test_half_share_rule_and_budget(self):
+        # deficit 40 at price 100: less than half a share -> no buy
+        plan = contribution_plan({}, pd.Series({"AAA": 100.0}), cash=0.0,
+                                 target_weights=pd.Series({"AAA": 1.0}),
+                                 amount=40.0)
+        assert plan["rows"].loc["AAA", "buy_shares"] == 0
+        assert plan["cash_after"] == 40.0
+        with pytest.raises(ValueError):
+            contribution_plan({}, pd.Series({"AAA": 1.0}), 0.0,
+                              pd.Series({"AAA": 1.0}), amount=-5)

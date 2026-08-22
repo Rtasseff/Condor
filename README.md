@@ -33,8 +33,10 @@ login; add teammates at http://127.0.0.1:8000/admin (Users → Add).
 Portfolios can be saved and shared by URL (`/p/<id>` — readable by any
 logged-in user, editable only by the owner). "My account" (`/account`)
 tracks a pretend-or-mirrored real account as a ledger: deposits and
-trades in, value at last close out, drift vs your setpoint, and
-whole-share rebalancing plans (ADR 0004). Everything else recomputes
+trades in, value at last close out, drift vs your setpoint,
+whole-share rebalancing plans, scheduled contributions with a
+where-should-it-go DCA plan and login reminder, and a whole-account
+forecast (holdings + cash at the T-bill rate) (ADR 0004). Everything else recomputes
 live from market data.
 
 Core analytics can also be used directly:

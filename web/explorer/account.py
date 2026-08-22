@@ -16,10 +16,12 @@ from django.shortcuts import render
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods, require_POST
 
-from condor import DataFetchError, PriceStore
+from condor import AssetSet, DataFetchError, PriceStore, fetch_prices
 from condor import accounting as acct
+from condor.data import risk_free_rate
 
-from .models import Account, AccountEvent, AccountTarget
+from .models import (Account, AccountEvent, AccountTarget,
+                     ContributionSchedule)
 from .views import (MAX_ASSETS, TICKER_RE, _bad, _json_body,
                     api_login_required)
 
@@ -50,6 +52,15 @@ def _last_closes(closes: pd.DataFrame) -> pd.Series:
 
 def _round(x, nd=2):
     return round(float(x), nd)
+
+
+def _schedule_dict(account: Account):
+    sched = getattr(account, "schedule", None)
+    if sched is None:
+        return None
+    return {"amount": sched.amount, "cadence": sched.cadence,
+            "next_due": str(sched.next_due), "enabled": sched.enabled,
+            "due": sched.due}
 
 
 def _state(account: Account) -> dict:
@@ -104,6 +115,7 @@ def _state(account: Account) -> dict:
             "value": [_round(v) for v in daily["value"]],
             "contributions": [_round(v) for v in daily["contributions"]],
         },
+        "schedule": _schedule_dict(account),
         "events": [{
             "id": e.pk, "date": str(e.date), "kind": e.kind,
             "ticker": e.ticker or None, "shares": e.shares,
@@ -395,3 +407,206 @@ def api_account_plan_confirm(request):
                 kind="buy" if n > 0 else "sell", ticker=t,
                 shares=abs(n), price=p, note="rebalance")
     return _state_response(account)
+
+
+# ------------------------------------------------- regular contributions
+
+
+@api_login_required
+@require_POST
+def api_account_schedule(request):
+    """Save the DCA schedule: {amount, cadence, next_due?, enabled?}."""
+    account = _account_for(request.user)
+    body, err = _json_body(request)
+    if err:
+        return _bad(err)
+    amount, err = _positive(body, "amount")
+    if err:
+        return _bad(err)
+    cadence = body.get("cadence", "monthly")
+    if cadence not in ContributionSchedule.CADENCES:
+        return _bad(f"cadence must be one of {ContributionSchedule.CADENCES}.")
+    raw_due = body.get("next_due")
+    if raw_due in (None, ""):
+        next_due = dt.date.today()
+    else:
+        try:
+            next_due = dt.date.fromisoformat(str(raw_due))
+        except ValueError:
+            return _bad("next_due must be YYYY-MM-DD.")
+    enabled = bool(body.get("enabled", True))
+    ContributionSchedule.objects.update_or_create(
+        account=account, defaults={"amount": amount, "cadence": cadence,
+                                   "next_due": next_due, "enabled": enabled})
+    return _state_response(account)
+
+
+@api_login_required
+@require_http_methods(["GET"])
+def api_account_contribution(request):
+    """Where should this contribution go? Buys-only whole-share plan
+    that nudges the account toward its setpoint (engine:
+    contribution_plan). ?amount= overrides the scheduled amount."""
+    account = _account_for(request.user)
+    raw = request.GET.get("amount")
+    if raw in (None, ""):
+        sched = getattr(account, "schedule", None)
+        if sched is None:
+            return _bad("Give an amount (or save a schedule first).")
+        amount = sched.amount
+    else:
+        try:
+            amount = float(raw)
+        except ValueError:
+            return _bad("amount must be a number.")
+        if amount <= 0:
+            return _bad("amount must be > 0.")
+    targets = account.target_weights()
+    if not targets:
+        return _bad("Set a setpoint allocation first — the plan routes "
+                    "money toward it.")
+    shares, cash, _ = acct.replay(account.events_frame())
+    tickers = sorted(set(shares) | set(targets))
+    try:
+        closes = _close_history(
+            tickers, dt.date.today() - dt.timedelta(days=PRICE_BUFFER_DAYS))
+        plan = acct.contribution_plan(shares, _last_closes(closes), cash,
+                                      pd.Series(targets, dtype=float), amount)
+    except DataFetchError as e:
+        return _bad(str(e))
+    rows = plan["rows"]
+    return JsonResponse({
+        "as_of": str(closes.index[-1].date()),
+        "amount": plan["amount"],
+        "spent": _round(plan["spent"]),
+        "cash_after": _round(plan["cash_after"]),
+        "total_after": _round(plan["total_after"]),
+        "target_cash_weight": round(plan["target_cash_weight"], 6),
+        "rows": [{
+            "ticker": t,
+            "price": _round(r["price"], 4),
+            "current_weight": round(float(r["current_weight"]), 6),
+            "target_weight": round(float(r["target_weight"]), 6),
+            "buy_shares": _round(r["buy_shares"], 4),
+            "buy_value": _round(r["buy_value"]),
+            "new_weight": round(float(r["new_weight"]), 6),
+        } for t, r in rows.iterrows()],
+    })
+
+
+@api_login_required
+@require_POST
+def api_account_contribution_confirm(request):
+    """Book a contribution: one deposit + the (possibly edited) buys.
+    Advances the schedule when this covers a due date."""
+    account = _account_for(request.user)
+    body, err = _json_body(request)
+    if err:
+        return _bad(err)
+    date, err = _parse_date(body.get("date"))
+    if err:
+        return _bad(err)
+    amount, err = _positive(body, "amount")
+    if err:
+        return _bad(err)
+    raw = body.get("trades") or []
+    if not isinstance(raw, list):
+        return _bad("trades must be a list.")
+    buys = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return _bad("each trade must be an object.")
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not TICKER_RE.match(ticker):
+            return _bad(f"'{ticker}' does not look like a ticker symbol.")
+        try:
+            n = float(item.get("shares"))
+            price = float(item.get("price"))
+        except (TypeError, ValueError):
+            return _bad(f"shares and price for {ticker} must be numbers.")
+        if n < 0:
+            return _bad("a contribution only buys — use the rebalancing "
+                        "plan to sell.")
+        if n == 0:
+            continue
+        if price <= 0:
+            return _bad("price must be > 0.")
+        buys.append((ticker, n, price))
+
+    spend = sum(n * p_ for _, n, p_ in buys)
+    _, cash_now, _ = acct.replay(account.events_frame())
+    if spend > cash_now + amount + 1e-6:
+        return _bad("Those buys cost more than the contribution plus the "
+                    "cash on hand — trim a buy.")
+
+    with transaction.atomic():
+        AccountEvent.objects.create(account=account, date=date,
+                                    kind="deposit", amount=amount,
+                                    note="contribution")
+        for t, n, p_ in buys:
+            AccountEvent.objects.create(account=account, date=date,
+                                        kind="buy", ticker=t, shares=n,
+                                        price=p_, note="contribution")
+        sched = getattr(account, "schedule", None)
+        if sched is not None and sched.enabled and sched.next_due <= date:
+            sched.advance(date)
+            sched.save()
+    return _state_response(account)
+
+
+# ------------------------------------------------------ account forecast
+
+
+@api_login_required
+@require_POST
+def api_account_forecast(request):
+    """Forecast the COMPLETE account: current holdings (value-weighted)
+    constant-mixed with its cash share at the live risk-free rate.
+    Statistics use adjusted closes (fetch_prices); valuation weights
+    use raw last closes — same split as everywhere else."""
+    account = _account_for(request.user)
+    body, err = _json_body(request)
+    if err:
+        return _bad(err)
+    try:
+        horizon = float(body.get("horizon_years", 2))
+    except (TypeError, ValueError):
+        return _bad("horizon_years must be a number.")
+    if not 1 <= horizon <= 30:
+        return _bad("Forecast horizon must be between 1 and 30 years.")
+    try:
+        years = int(body.get("years", 10))
+    except (TypeError, ValueError):
+        return _bad("years must be a number.")
+    if not 1 <= years <= 25:
+        return _bad("Lookback must be between 1 and 25 years.")
+
+    shares, cash, _ = acct.replay(account.events_frame())
+    if not shares:
+        return _bad("Nothing to project yet — the account holds no assets. "
+                    "(All-cash grows at the T-bill rate by definition.)")
+    try:
+        closes = _close_history(
+            shares, dt.date.today() - dt.timedelta(days=PRICE_BUFFER_DAYS))
+        alloc = acct.allocation(shares, _last_closes(closes), cash)
+        total = float(alloc["value"].sum()) + cash
+        cw = cash / total if total > 0 else 0.0
+        try:
+            rf = risk_free_rate()["rate"]
+        except Exception:
+            log.warning("risk-free rate unavailable; forecasting cash at 4%")
+            rf = 0.04
+        prices = fetch_prices(sorted(shares), years=years)
+        aset = AssetSet(prices)
+        fc = aset.portfolio(alloc["value"].to_dict()).forecast(
+            horizon_years=horizon, cash_weight=max(0.0, min(1.0, cw)),
+            risk_free_rate=rf)
+    except DataFetchError as e:
+        return _bad(str(e))
+    except Exception:
+        log.exception("account forecast failed for %s", account.pk)
+        return _bad("Forecast failed unexpectedly; see server log.",
+                    status=500)
+    payload = fc.to_dict()
+    payload["start_value"] = _round(total)
+    return JsonResponse(payload)

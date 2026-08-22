@@ -14,8 +14,8 @@ import pytest
 from scipy.stats import lognorm, norm
 
 from condor import AssetSet, Forecast
-from condor.forecast import (DEFAULT_LEVELS, horizon_grid, log_moments,
-                             lognormal_bands, mu_standard_error)
+from condor.forecast import (DEFAULT_LEVELS, blend_with_cash, horizon_grid,
+                             log_moments, lognormal_bands, mu_standard_error)
 
 M, S, N = 0.0004, 0.011, 2520  # per-day log drift/dispersion, 10y of obs
 PPY = 252
@@ -121,7 +121,8 @@ class TestModel:
     def test_to_dict_shape(self, prices):
         fc = AssetSet(prices).portfolio().forecast(horizon_years=1)
         d = fc.to_dict()
-        assert set(d) == {"model", "horizon_years", "t", "median", "bands",
+        assert set(d) == {"model", "horizon_years", "cash_weight",
+                          "risk_free_rate", "t", "median", "bands",
                           "bands_est", "mu_annual", "mu_se_annual", "mu_ci95",
                           "sigma_annual", "n_obs", "span_years"}
         assert d["model"] == "constant-rate"
@@ -139,6 +140,44 @@ class TestModel:
         assert fc.table.index[-1] == pytest.approx(2.0)
         m, s, n = log_moments(aset.portfolio().returns)
         assert fc.mu_se_annual == mu_standard_error(s, n, 12)
+
+    def test_blend_with_cash_closed_form(self):
+        rng = np.random.default_rng(5)
+        r = pd.Series(0.0005 + 0.01 * rng.standard_normal(500))
+        rf = 0.04
+        rf_daily = (1 + rf) ** (1 / 252) - 1
+        half = blend_with_cash(r, 0.5, rf, 252)
+        pd.testing.assert_series_equal(half, 0.5 * r + 0.5 * rf_daily)
+        pd.testing.assert_series_equal(blend_with_cash(r, 0.0, rf, 252), r)
+        # pure cash: deterministic, zero dispersion
+        m, s, n = log_moments(blend_with_cash(r, 1.0, rf, 252))
+        assert s == pytest.approx(0.0, abs=1e-15)
+        assert (1 + rf) ** (1 / 252) == pytest.approx(np.exp(m))
+        with pytest.raises(ValueError):
+            blend_with_cash(r, 1.2, rf, 252)
+
+    def test_complete_portfolio_forecast(self, prices):
+        """cash_weight=1 grows exactly at rf with zero-width bands;
+        a 50% blend halves the dispersion and keeps band nesting."""
+        p = AssetSet(prices).portfolio()
+        rf = 0.04
+        allcash = p.forecast(horizon_years=2, cash_weight=1.0,
+                             risk_free_rate=rf)
+        t = allcash.table
+        assert t["median"].iloc[-1] == pytest.approx((1 + rf) ** 2, rel=1e-9)
+        assert t["lo95"].iloc[-1] == pytest.approx(t["hi95"].iloc[-1], rel=1e-12)
+        assert allcash.sigma_annual == pytest.approx(0.0, abs=1e-12)
+        assert allcash.mu_annual == pytest.approx(rf, rel=1e-9)
+
+        risky = p.forecast(horizon_years=2)
+        half = p.forecast(horizon_years=2, cash_weight=0.5,
+                          risk_free_rate=rf)
+        assert half.sigma_annual == pytest.approx(risky.sigma_annual / 2,
+                                                  rel=1e-3)
+        d = half.to_dict()
+        assert d["cash_weight"] == 0.5 and d["risk_free_rate"] == rf
+        with pytest.raises(ValueError):
+            p.forecast(cash_weight=1.5)
 
     def test_horizon_validation(self, prices):
         p = AssetSet(prices).portfolio()

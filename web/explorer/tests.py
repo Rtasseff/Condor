@@ -488,3 +488,147 @@ class AccountTests(TestCase):
         res = self.client.get("/account")
         self.assertEqual(res.status_code, 302)
         self.assertTrue(res.url.startswith("/login"))
+
+
+class ContributionTests(TestCase):
+    """DCA schedule + contribution routing + whole-account forecast."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+        import pandas as pd
+        idx = pd.bdate_range("2026-01-05", periods=4)
+        self.closes = {
+            "AAA": pd.DataFrame({"AAA": [100.0] * 4}, index=idx)["AAA"],
+            "BBB": pd.DataFrame({"BBB": [50.0] * 4}, index=idx)["BBB"],
+        }
+
+    def patched(self):
+        import pandas as pd
+        tests = self
+
+        def fake_history(tickers, start):
+            return pd.DataFrame({t: tests.closes[t] for t in sorted(tickers)})
+        return patch("explorer.account._close_history",
+                     side_effect=fake_history)
+
+    def api(self, method, url, body=None, expect=200):
+        with self.patched():
+            kwargs = {"content_type": "application/json"}
+            if body is not None:
+                kwargs["data"] = json.dumps(body)
+            res = getattr(self.client, method)(url, **kwargs)
+        self.assertEqual(res.status_code, expect, res.content)
+        return res.json()
+
+    def seed(self):
+        self.api("post", "/api/account/events",
+                 {"kind": "deposit", "date": "2026-01-05", "amount": 350})
+        self.api("post", "/api/account/target",
+                 {"weights": {"AAA": 0.5, "BBB": 0.5}})
+
+    def test_schedule_save_due_flag_and_reminder_context(self):
+        d = self.api("post", "/api/account/schedule",
+                     {"amount": 200, "cadence": "monthly",
+                      "next_due": "2026-01-01"})
+        self.assertTrue(d["schedule"]["due"])       # past due date
+        # the base template shows the dot on any page
+        with self.patched(), \
+             patch("explorer.views.risk_free_rate", side_effect=OSError):
+            page = self.client.get("/").content.decode()
+        self.assertIn("duedot", page)
+        # future due date -> not due, no dot
+        d = self.api("post", "/api/account/schedule",
+                     {"amount": 200, "cadence": "monthly",
+                      "next_due": "2099-01-01"})
+        self.assertFalse(d["schedule"]["due"])
+        self.api("post", "/api/account/schedule",
+                 {"amount": -5, "cadence": "monthly"}, expect=400)
+        self.api("post", "/api/account/schedule",
+                 {"amount": 5, "cadence": "sometimes"}, expect=400)
+
+    def test_contribution_plan_matches_hand_case(self):
+        self.seed()
+        plan = self.api("get", "/api/account/contribution?amount=350")
+        rows = {r["ticker"]: r for r in plan["rows"]}
+        # engine hand case: $350 to 50/50 at 100/50 -> A2 + B3... but
+        # here $350 idle cash ALSO deploys: budget 700 -> A3+B7? No:
+        # deposit was 350 and the plan amount is another 350 -> total
+        # 700, targets 350/350: A3 (300) + B7 (350)?? A deficit 350 ->
+        # 3 shares (300), B -> 7 shares (350), spend 650 <= 700. Hand:
+        self.assertEqual(rows["AAA"]["buy_shares"], 3)
+        self.assertEqual(rows["BBB"]["buy_shares"], 7)
+        self.assertEqual(plan["spent"], 650.0)
+        self.assertEqual(plan["cash_after"], 50.0)
+        # buys only
+        self.assertTrue(all(r["buy_shares"] >= 0 for r in plan["rows"]))
+
+    def test_confirm_writes_ledger_and_advances_schedule(self):
+        self.seed()
+        self.api("post", "/api/account/schedule",
+                 {"amount": 350, "cadence": "monthly",
+                  "next_due": "2026-01-31"})
+        d = self.api("post", "/api/account/contribution/confirm",
+                     {"amount": 350, "date": "2026-02-15",
+                      "trades": [{"ticker": "AAA", "shares": 3, "price": 100},
+                                 {"ticker": "BBB", "shares": 7, "price": 50}]})
+        kinds = [e["kind"] for e in d["events"]]
+        self.assertEqual(kinds.count("deposit"), 2)
+        self.assertEqual(kinds.count("buy"), 2)
+        # advanced from the DUE date, not the confirm date: Jan 31 ->
+        # Feb 28 (clamped), which is > Feb 15, so it stops there.
+        # (The `due` flag compares against the real today, so it is
+        # asserted with far dates in the schedule test instead.)
+        self.assertEqual(d["schedule"]["next_due"], "2026-02-28")
+        self.assertEqual(d["cash"], 50.0)
+
+    def test_confirm_rejects_sells_and_overspend(self):
+        self.seed()
+        self.api("post", "/api/account/contribution/confirm",
+                 {"amount": 100,
+                  "trades": [{"ticker": "AAA", "shares": -1, "price": 100}]},
+                 expect=400)
+        self.api("post", "/api/account/contribution/confirm",
+                 {"amount": 100,
+                  "trades": [{"ticker": "AAA", "shares": 50, "price": 100}]},
+                 expect=400)
+
+    def test_account_forecast_complete_portfolio(self):
+        self.seed()
+        self.api("post", "/api/account/events",
+                 {"kind": "buy", "ticker": "AAA", "date": "2026-01-06",
+                  "shares": 2, "price": 100})
+        import numpy as np
+        import pandas as pd
+
+        def fake_prices(tickers, years=10, **kw):
+            rng = np.random.default_rng(9)
+            idx = pd.bdate_range("2020-01-01", periods=756)
+            data = 100 * np.cumprod(
+                1 + 0.0004 + 0.01 * rng.standard_normal((756, len(tickers))),
+                axis=0)
+            return pd.DataFrame(data, index=idx, columns=list(tickers))
+
+        with self.patched(), \
+             patch("explorer.account.fetch_prices", side_effect=fake_prices), \
+             patch("explorer.account.risk_free_rate",
+                   return_value={"rate": 0.04}):
+            res = self.client.post(
+                "/api/account/forecast",
+                data=json.dumps({"horizon_years": 2}),
+                content_type="application/json")
+        self.assertEqual(res.status_code, 200, res.content)
+        f = res.json()
+        # $350 in, $200 in AAA -> cash weight 150/350
+        self.assertAlmostEqual(f["cash_weight"], 150 / 350, places=6)
+        self.assertEqual(f["risk_free_rate"], 0.04)
+        self.assertEqual(f["start_value"], 350.0)
+        self.assertEqual(f["median"][0], 1)
+
+    def test_account_forecast_needs_holdings(self):
+        self.api("post", "/api/account/events",
+                 {"kind": "deposit", "date": "2026-01-05", "amount": 100})
+        with self.patched():
+            res = self.client.post("/api/account/forecast", data="{}",
+                                   content_type="application/json")
+        self.assertEqual(res.status_code, 400)

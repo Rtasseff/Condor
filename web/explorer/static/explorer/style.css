@@ -316,3 +316,14 @@ td.drifted { color: var(--series-you); font-weight: 600; }
 .cashrow td { border-top: 1px solid var(--ring); color: var(--ink-2); }
 #eventlist .meta { margin-left: 10px; }
 #achart { min-height: 300px; }
+
+/* ---- contributions / reminders ---- */
+.duedot { color: var(--accent-hi); font-size: 10px; vertical-align: 3px; }
+.duebanner { display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; border-color: var(--accent); }
+.checkline { flex-direction: row !important; align-items: center; gap: 6px !important;
+  font-size: 13px !important; color: var(--ink-2) !important; }
+#contribtable .planshares { width: 90px; text-align: right;
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--accent); border-radius: 8px; padding: 5px 8px; }
+#afchart { min-height: 300px; }

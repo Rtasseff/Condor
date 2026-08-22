@@ -492,12 +492,19 @@ class Portfolio:
         return rets_idx.insert(0, idx[start])
 
     def forecast(self, horizon_years: float = 2,
-                 levels=_forecast_engine.DEFAULT_LEVELS) -> "Forecast":
+                 levels=_forecast_engine.DEFAULT_LEVELS, *,
+                 cash_weight: float = 0.0,
+                 risk_free_rate: float = 0.0) -> "Forecast":
         """Project this portfolio's wealth forward (research rung A):
         closed-form constant-rate ("GBM") bands, plus a second band set
-        with the drift's own estimation error folded in. Numbers come
-        from the engine (condor/forecast.py); this only gathers state."""
-        return Forecast(self, horizon_years=horizon_years, levels=levels)
+        with the drift's own estimation error folded in. A non-zero
+        `cash_weight` forecasts the *complete* portfolio — this risky
+        mix constant-mixed with cash earning `risk_free_rate` — so a
+        CAL point or a real account (holdings + cash) forecasts whole.
+        Numbers come from the engine (condor/forecast.py)."""
+        return Forecast(self, horizon_years=horizon_years, levels=levels,
+                        cash_weight=cash_weight,
+                        risk_free_rate=risk_free_rate)
 
     def as_asset(self) -> Asset:
         return Asset(self.label, self.label)
@@ -523,15 +530,22 @@ class Forecast:
     MODEL = "constant-rate"  # rung A; later rungs add "bootstrap", ...
 
     def __init__(self, portfolio: "Portfolio", horizon_years: float = 2,
-                 levels=_forecast_engine.DEFAULT_LEVELS):
+                 levels=_forecast_engine.DEFAULT_LEVELS,
+                 cash_weight: float = 0.0, risk_free_rate: float = 0.0):
         if not 0 < float(horizon_years) <= 50:
             raise ValueError("horizon_years must be in (0, 50]")
         self.portfolio = portfolio
         self.horizon_years = float(horizon_years)
         self.levels = tuple(levels)
+        self.cash_weight = float(cash_weight)
+        self.risk_free_rate = float(risk_free_rate)
         self.periods_per_year = annual_factor(portfolio.asset_set.timeframe)
-        self.m, self.s, self.n_obs = _forecast_engine.log_moments(
-            portfolio.returns)
+        returns = portfolio.returns
+        if self.cash_weight:   # complete portfolio: risky + cash sleeve
+            returns = _forecast_engine.blend_with_cash(
+                returns, self.cash_weight, self.risk_free_rate,
+                self.periods_per_year)
+        self.m, self.s, self.n_obs = _forecast_engine.log_moments(returns)
         step = 5 if self.periods_per_year >= 252 else 1
         self.table = _forecast_engine.lognormal_bands(
             self.m, self.s, self.n_obs,
@@ -588,6 +602,8 @@ class Forecast:
         return {
             "model": self.MODEL,
             "horizon_years": self.horizon_years,
+            "cash_weight": round(self.cash_weight, 6),
+            "risk_free_rate": round(self.risk_free_rate, 6),
             "t": r6(t.index),
             "median": r6(t["median"]),
             "bands": bands,          # market randomness only
