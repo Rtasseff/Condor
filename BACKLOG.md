@@ -28,11 +28,6 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   serving). Pre-flight done early (2026-08-22): PriceStore now takes
   per-ticker + manifest POSIX file locks, so multiple web workers can
   share the store. No auth for 0.1 (unguessable URLs); users/auth Later.
-- [ ] **Return-calculation options** matching legacy: `metric` (relative /
-  log), `timeFrame` (D / M with 21-day lag), sampling interval (`sampInt`,
-  legacy default 20 to de-overlap monthly windows), and geometric-vs-
-  arithmetic expected return as an explicit choice (pypfopt defaults to
-  geometric; v2 forces arithmetic to match legacy — see `stats.py`).
 ## Next
 
 - [ ] **Estimation uncertainty / sampling / regimes** — revive the
@@ -65,6 +60,10 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   - Deliverables: standard errors for both estimators (honest ones for
     Σ), what calibrated uncertainty looks like in the UI (error bars /
     bands on the frontier?), and the EWMA-covariance option.
+- [ ] **Expose return-calculation options** in the Explorer (an
+  "advanced" disclosure: metric, timeframe, basis) and the CLI (flags).
+  Deliberately left out of the analysis payload so far — adding them is
+  a payload change plus the key-set test in tests/test_model.py.
 - [ ] **Forecaster** ("Forecast" button, deck slide 25): fan chart with 65%
   and 95% bands, backtest-from-2-years-ago vs project-2-years-forward.
   Start with geometric Brownian motion / bootstrap of historical returns
@@ -117,6 +116,18 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Return-calculation options** — 2026-08-22. Engine (`stats.py`):
+      `metric` relative/log, `timeframe` D/M (21-day windows, ×12
+      annualization — factors pinned to legacy genFin), `samp_int`
+      de-overlap sampling (legacy default 20 for M, applied after
+      returns before estimators, exactly as CondorCoreObs sampled), and
+      explicit `basis` arithmetic/geometric for the normal method.
+      Threaded through `AssetSet` (keyword-only, immutable,
+      `with_options()`), `analysis()`, `compute_analysis`. Defaults are
+      byte-identical to prior behaviour. `Portfolio.value_index`
+      generalized to the set's return grid (byte-identical for daily).
+      77 new tests incl. legacy pins at 1e-12..1e-16 and mutation checks.
 
 - [x] **Save portfolios** — 2026-08-22. `SavedPortfolio` + `Holding`
       Django models (storage only; weights stored as fractions),
