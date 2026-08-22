@@ -12,6 +12,22 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   a list in this file (or a `UI-NOTES.md`) with each item tagged bug / UX /
   feature, so the polish work below can be prioritized from evidence
   rather than guesses. Precedes "UI polish" and "API/UX robustness".
+- [ ] **Branding & theming readiness** — make restyling a one-block edit
+  per docs/BRANDING.md (the contract) and ADR 0003 (stack decision:
+  Django templates + tokens, no build step). Implementation: add
+  `--font-body`/`--font-display` tokens; bridge the `app.js` chart
+  palette to read CSS custom properties via `getComputedStyle` (kill the
+  duplicated hex literals); fix the one hardcoded color (`#2a1520`
+  error bg); create `static/explorer/brand/` with placeholder logo.svg +
+  favicon wired into the template; extract `base.html` when a second
+  page appears. Then the branding pass = new token values + new SVGs.
+- [ ] **Release 0.1 to the old Condor team** (~5 trusted users) — after
+  RT's UI review and the branding pass: pick a small host (Fly.io /
+  Railway / small VPS + Docker), Postgres-or-sqlite decision at that
+  scale, `DEBUG=0` settings hygiene (SECRET_KEY, ALLOWED_HOSTS, static
+  serving), and one pre-flight: PriceStore assumes a single writer —
+  add a simple per-ticker file lock before multiple web workers share
+  the store. No auth for 0.1 (unguessable URLs); users/auth stays Later.
 - [ ] **Verification notebook** (`notebooks/01_verify_core.ipynb`): the same
   spot-check story as `202411_refact_optWF.ipynb` — hand-computed value next
   to function output, legacy vs v2 side by side, notebook golden numbers —

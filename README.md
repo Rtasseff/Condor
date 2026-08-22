@@ -54,7 +54,8 @@ uses; it returns the same numbers as a plain dict.
 
 ### CLI
 
-One-off questions without starting Django (uses the same store and engine):
+One-off questions without starting Django (uses the same store and engine).
+Cold start to first frontier: [`docs/CLI.md`](docs/CLI.md).
 
 ```bash
 python -m condor analyze MSFT NEE CVX            # stats + min-vol + tangency
