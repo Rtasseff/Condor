@@ -529,7 +529,7 @@ function renderTable() {
 // ---------- forecast (model 1: constant-rate closed form) ----------
 function clearForecast() {
   $("forecastcard").hidden = !state.result;
-  for (const id of ["fchart", "fmu", "fnote"]) $(id).hidden = true;
+  for (const id of ["fchart", "fmu", "fnote", "fguard"]) $(id).hidden = true;
 }
 
 async function runForecast() {
@@ -546,6 +546,7 @@ async function runForecast() {
       method: $("method").value,
       weights: Object.keys(state.weights).length ? state.weights : null,
       horizon_years: parseInt($("fhorizon").value, 10),
+      model: $("fmodel").value,
     };
     const res = await fetch("/api/forecast", {
       method: "POST",
@@ -618,6 +619,10 @@ function renderForecast(f) {
     hoverlabel: hoverStyle(),
   }, { displayModeBar: false, responsive: true });
 
+  $("fbadge").textContent = f.model === "block-bootstrap"
+    ? `model 2 of 3 — resampled history (${f.block}-day blocks)`
+    : "model 1 of 3 — simplest: steady rates";
+  $("fguard").hidden = !f.guarded;
   const pctpt = (x) => (100 * x).toFixed(1);
   $("fmu").textContent =
     `Estimated growth rate: ${pctpt(f.mu_annual)}%/yr from ` +
@@ -626,6 +631,7 @@ function renderForecast(f) {
     `${pctpt(f.mu_ci95[0])}% to ${pctpt(f.mu_ci95[1])}%. ` +
     `Dispersion: ${pctpt(f.sigma_annual)}%/yr.`;
   for (const id of ["fchart", "fmu", "fnote"]) $(id).hidden = false;
+  // (fguard visibility is set above from the payload)
 }
 
 // ---------- weight shortcuts ----------

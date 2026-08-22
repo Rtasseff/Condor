@@ -154,12 +154,19 @@
   </section>
 
   <section class="card">
-    <h2>Forecast <span class="modeltag">model 1 — steady rates · whole account</span></h2>
+    <h2>Forecast <span class="modeltag" id="afbadge">whole account</span></h2>
     <p class="sub">Projects the <b>complete</b> account — your holdings at their
-       current mix plus your cash share earning the T-bill rate. Same simplest
-       model as the Build page: shaded bands are market randomness, the dashed
+       current mix plus your cash share earning the T-bill rate. Same models as
+       the Build page (steady rates, or resampled history with the same
+       never-narrower guard): shaded bands are market randomness, the dashed
        band adds the return-estimate error.</p>
     <div class="fcontrols">
+      <label>Model
+        <select id="af-model">
+          <option value="steady" selected>1 — steady rates (simplest)</option>
+          <option value="bootstrap">2 — resampled history</option>
+        </select>
+      </label>
       <label>Horizon
         <select id="af-horizon">
           <option value="1">1 year</option>
@@ -172,6 +179,9 @@
       <span id="afstatus" class="status" role="status"></span>
     </div>
     <div id="afchart" hidden></div>
+    <p class="sub warn" id="afguard" hidden>Model 2's resampled bands came out
+       narrower than model 1 allows — one decade holds too few multi-year
+       stretches to trust that — so they were widened to model 1's floor.</p>
     <p class="sub" id="afmu" hidden></p>
     <p class="sub" id="afnote" hidden>Assumes the future resembles the lookback
        window in kind and your mix stays as it is today. The middle line is an

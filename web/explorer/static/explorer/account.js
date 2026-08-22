@@ -478,7 +478,8 @@ async function runAccountForecast() {
     const f = await api("/api/account/forecast", {
       method: "POST",
       body: JSON.stringify({
-        horizon_years: parseInt($("af-horizon").value, 10) }),
+        horizon_years: parseInt($("af-horizon").value, 10),
+        model: $("af-model").value }),
     });
     renderAccountForecast(f);
   } catch (err) {
@@ -536,6 +537,10 @@ function renderAccountForecast(f) {
     hoverlabel: { bgcolor: "#182238", font: { color: C.ink, size: 13 } },
   }, { displayModeBar: false, responsive: true });
 
+  $("afbadge").textContent = (f.model === "block-bootstrap"
+    ? `model 2 — resampled history (${f.block}-day blocks)`
+    : "model 1 — steady rates") + " · whole account";
+  $("afguard").hidden = !f.guarded;
   const pctpt = (x) => (100 * x).toFixed(1);
   $("afmu").textContent =
     `Whole-account growth rate: ${pctpt(f.mu_annual)}%/yr ` +

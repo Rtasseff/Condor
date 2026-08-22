@@ -101,14 +101,21 @@
   </section>
 
   <section class="card" id="forecastcard" hidden aria-label="Forecast">
-    <h2>Forecast <span class="modeltag">model 1 of 3 — simplest: steady rates</span></h2>
-    <p class="sub">Projects your current mix forward assuming the future behaves,
-       on average, like your lookback window: a constant expected return and
-       dispersion. The shaded bands are market randomness; the dashed outer band
-       adds the uncertainty in the return estimate itself — at multi-year horizons
-       that estimate is the biggest unknown. Path realism (model 2) and
-       return-assumption controls (model 3) come next.</p>
+    <h2>Forecast <span class="modeltag" id="fbadge">model 1 of 3 — simplest: steady rates</span></h2>
+    <p class="sub">Model 1 projects a constant expected return and dispersion —
+       the simplest honest model. Model 2 resamples 21-day stretches of your
+       actual history, so streaks and crashes look like they really did; its
+       bands are never allowed to come out narrower than model 1's. Shaded
+       bands are market randomness; the dashed outer band adds the uncertainty
+       in the return estimate itself — at multi-year horizons the biggest
+       unknown. A return-assumption control (model 3) comes next.</p>
     <div class="fcontrols">
+      <label>Model
+        <select id="fmodel">
+          <option value="steady" selected>1 — steady rates (simplest)</option>
+          <option value="bootstrap">2 — resampled history</option>
+        </select>
+      </label>
       <label>Horizon
         <select id="fhorizon">
           <option value="1">1 year</option>
@@ -124,6 +131,9 @@
       <span id="fstatus" class="status" role="status"></span>
     </div>
     <div id="fchart" hidden></div>
+    <p class="sub warn" id="fguard" hidden>Model 2's resampled bands came out
+       narrower than model 1 allows — one decade holds too few multi-year
+       stretches to trust that — so they were widened to model 1's floor.</p>
     <p class="sub" id="fmu" hidden></p>
     <p class="sub" id="fnote" hidden>These bands assume the future resembles your
        lookback window in kind, if not in detail — they can't anticipate a change

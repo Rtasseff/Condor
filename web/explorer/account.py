@@ -580,6 +580,9 @@ def api_account_forecast(request):
         return _bad("years must be a number.")
     if not 1 <= years <= 25:
         return _bad("Lookback must be between 1 and 25 years.")
+    model = body.get("model", "steady")
+    if model not in ("steady", "bootstrap"):
+        return _bad("model must be 'steady' or 'bootstrap'.")
 
     shares, cash, _ = acct.replay(account.events_frame())
     if not shares:
@@ -600,7 +603,7 @@ def api_account_forecast(request):
         aset = AssetSet(prices)
         fc = aset.portfolio(alloc["value"].to_dict()).forecast(
             horizon_years=horizon, cash_weight=max(0.0, min(1.0, cw)),
-            risk_free_rate=rf)
+            risk_free_rate=rf, model=model)
     except DataFetchError as e:
         return _bad(str(e))
     except Exception:

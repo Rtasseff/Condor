@@ -66,18 +66,15 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   /account); what remains is the Build-page UI: forecast the
   "Considering" point (its cash share included) instead of only the
   sidebar mix.
-- [ ] **Forecaster — rungs B and C** (rung A shipped 2026-08-22, see
-  Done). Per `docs/research/forecast-methods-ladder.md` (summary PDF in
-  the same folder): (B) stationary block bootstrap for path realism —
-  fixed 21-day blocks, disclosed, and guard-railed to never show
-  narrower bands than rung A; (C) a visible expected-return anchor
-  control (Historical / long-run anchor / custom) with Black-Litterman
-  underneath and CAPE/Damodaran-ERP as anchor sources (ties into the
-  B-L backlog item). Then the backtest view (project from 2y ago,
-  overlay reality, report the landed percentile with the
-  sample-of-one caveat) and the offline coverage notebook from
-  `forecast-validation.md`. Skip the ML tier — ~5 independent 2-year
-  observations to learn from. Data shortlist:
+- [ ] **Forecaster — rung C** (rungs A and B shipped 2026-08-22, see
+  Done). Per `docs/research/forecast-methods-ladder.md`: a visible
+  expected-return anchor control (Historical / long-run anchor /
+  custom) with Black-Litterman underneath and CAPE/Damodaran-ERP as
+  anchor sources (ties into the B-L backlog item). Then the backtest
+  view (project from 2y ago, overlay reality, report the landed
+  percentile with the sample-of-one caveat) and the offline coverage
+  notebook from `forecast-validation.md`. Skip the ML tier — ~5
+  independent 2-year observations to learn from. Data shortlist:
   `forecast-data-sources.md`. Legacy: `analytics_workflow_v1.ipynb`
   Part 3; RF/LSTM ideas deprioritized.
 - [ ] **Rebalancing rules & DCA** (drift-triggered vs calendar rules, DCA
@@ -136,6 +133,22 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Forecaster rung B — resampled history (block bootstrap)** —
+      2026-08-22. Engine `bootstrap_bands`: stationary bootstrap
+      (Politis-Romano, geometric blocks, mean 21 days, disclosed in
+      the UI badge) over the portfolio's own log returns, streaming
+      accumulation (no path matrix; 10y × 10k paths < 1s), Merton
+      per-path drift draw for the `_est` bands, seeded/deterministic.
+      `band_floor`: element-wise envelope against the closed form —
+      the research guard rail — flagged `guarded` only on material
+      (>5%) narrowing. "Model" select in both forecast cards (Build +
+      whole-account) with a plain-language note when the guard fires;
+      it DOES fire on real 2016-26 data, exactly as the research
+      measured (VR(2y) ≈ 0.06 on SPY). Verification: bootstrap
+      recovers the lognormal closed form on i.i.d. data; alternating
+      mean-reverting series triggers the guard; cw=1 collapses to
+      exact rf growth. 9 new engine/model tests + 1 API test.
 
 - [x] **Regular contributions (DCA) + whole-account forecast** —
       2026-08-22. Engine: `contribution_plan` (buys-only whole-share

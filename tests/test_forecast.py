@@ -14,8 +14,9 @@ import pytest
 from scipy.stats import lognorm, norm
 
 from condor import AssetSet, Forecast
-from condor.forecast import (DEFAULT_LEVELS, blend_with_cash, horizon_grid,
-                             log_moments, lognormal_bands, mu_standard_error)
+from condor.forecast import (DEFAULT_LEVELS, band_floor, blend_with_cash,
+                             bootstrap_bands, horizon_grid, log_moments,
+                             lognormal_bands, mu_standard_error)
 
 M, S, N = 0.0004, 0.011, 2520  # per-day log drift/dispersion, 10y of obs
 PPY = 252
@@ -121,10 +122,12 @@ class TestModel:
     def test_to_dict_shape(self, prices):
         fc = AssetSet(prices).portfolio().forecast(horizon_years=1)
         d = fc.to_dict()
-        assert set(d) == {"model", "horizon_years", "cash_weight",
+        assert set(d) == {"model", "block", "n_paths", "guarded",
+                          "horizon_years", "cash_weight",
                           "risk_free_rate", "t", "median", "bands",
                           "bands_est", "mu_annual", "mu_se_annual", "mu_ci95",
                           "sigma_annual", "n_obs", "span_years"}
+        assert d["block"] is None and d["n_paths"] is None   # steady model
         assert d["model"] == "constant-rate"
         assert d["t"][0] == 0 and d["median"][0] == 1
         assert [b["level"] for b in d["bands"]] == [65, 95]
@@ -184,3 +187,118 @@ class TestModel:
         for bad in (0, -1, 51):
             with pytest.raises(ValueError):
                 p.forecast(horizon_years=bad)
+
+
+# ----------------------------------------------------------------------
+# rung B: block bootstrap
+# ----------------------------------------------------------------------
+class TestBootstrap:
+    @pytest.fixture(scope="class")
+    def iid(self):
+        rng = np.random.default_rng(3)
+        return pd.Series(np.expm1(M + S * rng.standard_normal(2520)))
+
+    def test_matches_closed_form_on_iid_data(self, iid):
+        """Cross-method regression check from the research: on i.i.d.
+        data the bootstrap must recover the lognormal bands within
+        Monte-Carlo tolerance."""
+        m, s, n = log_moments(iid)
+        closed = lognormal_bands(m, s, n, 504, PPY, step=5)
+        boot = bootstrap_bands(iid, 504, PPY, step=5, block=21,
+                               n_paths=8000, seed=1)
+        assert boot.index.equals(closed.index)
+        assert list(boot.columns) == list(closed.columns)
+        last_b, last_c = boot.iloc[-1], closed.iloc[-1]
+        assert last_b["median"] == pytest.approx(last_c["median"], rel=0.02)
+        for tag in ("65", "95", "95_est"):
+            wb = np.log(last_b[f"hi{tag}"]) - np.log(last_b[f"lo{tag}"])
+            wc = np.log(last_c[f"hi{tag}"]) - np.log(last_c[f"lo{tag}"])
+            assert wb == pytest.approx(wc, rel=0.08)
+
+    def test_deterministic_per_seed(self, iid):
+        a = bootstrap_bands(iid, 126, PPY, n_paths=1000, seed=42)
+        b = bootstrap_bands(iid, 126, PPY, n_paths=1000, seed=42)
+        c = bootstrap_bands(iid, 126, PPY, n_paths=1000, seed=43)
+        pd.testing.assert_frame_equal(a, b)
+        assert not a.equals(c)
+
+    def test_row_zero_is_today(self, iid):
+        boot = bootstrap_bands(iid, 126, PPY, n_paths=500, seed=0)
+        assert set(boot.iloc[0]) == {1.0}
+
+    def test_validation(self, iid):
+        with pytest.raises(ValueError):
+            bootstrap_bands(iid, 126, PPY, block=0)
+        with pytest.raises(ValueError):
+            bootstrap_bands(iid, 126, PPY, n_paths=10)
+        with pytest.raises(ValueError):
+            bootstrap_bands(pd.Series([0.01]), 126, PPY)
+
+    def test_band_floor_envelope_and_material_flag(self, iid):
+        m, s, n = log_moments(iid)
+        closed = lognormal_bands(m, s, n, 504, PPY, step=5)
+        # an artificially narrowed table must be floored and flagged
+        narrow = closed.copy()
+        for col in narrow.columns:
+            if col.startswith("lo"):
+                narrow[col] = closed[col.replace("lo", "hi")] * 0.99
+            elif col.startswith("hi"):
+                narrow[col] = narrow[col]
+        floored, flagged = band_floor(narrow, closed)
+        assert flagged
+        for col in closed.columns:
+            if col.startswith("lo"):
+                assert (floored[col] <= closed[col] + 1e-12).all()
+            elif col.startswith("hi"):
+                assert (floored[col] >= closed[col] - 1e-12).all()
+        # a table identical to the floor is not flagged
+        same, flagged2 = band_floor(closed.copy(), closed)
+        assert not flagged2
+        with pytest.raises(ValueError):
+            band_floor(closed.iloc[:-1], closed)
+
+    def test_mean_reverting_sample_triggers_the_guard(self, prices):
+        """The research trap made executable: strictly alternating
+        returns have almost no long-horizon variance, so an unguarded
+        block bootstrap would report absurdly narrow bands. The model
+        must floor them at the closed form and say so."""
+        alt = pd.DataFrame(
+            {"AAA": 100 * np.cumprod(1 + np.tile([0.02, -0.02], 630))},
+            index=pd.bdate_range("2021-01-01", periods=1260))
+        fc = AssetSet(alt).portfolio().forecast(2, model="bootstrap",
+                                                n_paths=2000, seed=0)
+        assert fc.guarded
+        m, s, n = log_moments(AssetSet(alt).portfolio().returns)
+        closed = lognormal_bands(m, s, n, 504, 252, step=5)
+        assert (fc.table["lo95"] <= closed["lo95"] + 1e-12).all()
+        assert (fc.table["hi95"] >= closed["hi95"] - 1e-12).all()
+
+    def test_model_pins_to_engine(self, prices):
+        p = AssetSet(prices).portfolio({"AAA": 0.7, "BBB": 0.3})
+        fc = p.forecast(2, model="bootstrap", block=21, n_paths=2000, seed=5)
+        m, s, n = log_moments(p.returns)
+        closed = lognormal_bands(m, s, n, 504, 252, step=5)
+        boot = bootstrap_bands(p.returns, 504, 252, step=5, block=21,
+                               n_paths=2000, seed=5)
+        expected, guarded = band_floor(boot, closed)
+        pd.testing.assert_frame_equal(fc.table, expected)
+        assert fc.guarded == guarded
+        d = fc.to_dict()
+        assert d["model"] == "block-bootstrap"
+        assert d["block"] == 21 and d["n_paths"] == 2000
+        assert isinstance(d["guarded"], bool)
+
+    def test_all_cash_bootstrap_is_exact(self, prices):
+        """cw=1 makes every resampled path identical: zero width, rf
+        growth — and it can never be flagged narrower than closed."""
+        fc = AssetSet(prices).portfolio().forecast(
+            2, model="bootstrap", cash_weight=1.0, risk_free_rate=0.04,
+            n_paths=500, seed=0)
+        t = fc.table
+        assert t["median"].iloc[-1] == pytest.approx(1.04 ** 2, rel=1e-6)
+        assert t["lo95"].iloc[-1] == pytest.approx(t["hi95"].iloc[-1], rel=1e-9)
+        assert not fc.guarded
+
+    def test_unknown_model_rejected(self, prices):
+        with pytest.raises(ValueError):
+            AssetSet(prices).portfolio().forecast(2, model="oracle")

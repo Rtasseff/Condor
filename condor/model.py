@@ -494,17 +494,24 @@ class Portfolio:
     def forecast(self, horizon_years: float = 2,
                  levels=_forecast_engine.DEFAULT_LEVELS, *,
                  cash_weight: float = 0.0,
-                 risk_free_rate: float = 0.0) -> "Forecast":
+                 risk_free_rate: float = 0.0,
+                 model: str = "steady",
+                 block: int = 21, n_paths: int = 10_000,
+                 seed: int = 0) -> "Forecast":
         """Project this portfolio's wealth forward (research rung A):
         closed-form constant-rate ("GBM") bands, plus a second band set
         with the drift's own estimation error folded in. A non-zero
         `cash_weight` forecasts the *complete* portfolio — this risky
         mix constant-mixed with cash earning `risk_free_rate` — so a
         CAL point or a real account (holdings + cash) forecasts whole.
-        Numbers come from the engine (condor/forecast.py)."""
+        `model` picks the rung: "steady" (closed form) or "bootstrap"
+        (rung B — stationary 21-day-block resampling of the actual
+        history, guard-railed to never show narrower bands than the
+        closed form). Numbers come from the engine."""
         return Forecast(self, horizon_years=horizon_years, levels=levels,
                         cash_weight=cash_weight,
-                        risk_free_rate=risk_free_rate)
+                        risk_free_rate=risk_free_rate, model=model,
+                        block=block, n_paths=n_paths, seed=seed)
 
     def as_asset(self) -> Asset:
         return Asset(self.label, self.label)
@@ -527,18 +534,27 @@ class Forecast:
     of 1 (row 0 = today = 1.0). `to_dict()` is the UI payload.
     """
 
-    MODEL = "constant-rate"  # rung A; later rungs add "bootstrap", ...
+    MODELS = {"steady": "constant-rate", "bootstrap": "block-bootstrap"}
+    MODEL = "constant-rate"  # rung A's payload name (kept stable)
 
     def __init__(self, portfolio: "Portfolio", horizon_years: float = 2,
                  levels=_forecast_engine.DEFAULT_LEVELS,
-                 cash_weight: float = 0.0, risk_free_rate: float = 0.0):
+                 cash_weight: float = 0.0, risk_free_rate: float = 0.0,
+                 model: str = "steady", block: int = 21,
+                 n_paths: int = 10_000, seed: int = 0):
         if not 0 < float(horizon_years) <= 50:
             raise ValueError("horizon_years must be in (0, 50]")
+        if model not in self.MODELS:
+            raise ValueError(f"model must be one of {sorted(self.MODELS)}")
         self.portfolio = portfolio
         self.horizon_years = float(horizon_years)
         self.levels = tuple(levels)
         self.cash_weight = float(cash_weight)
         self.risk_free_rate = float(risk_free_rate)
+        self.model = self.MODELS[model]
+        self.block = int(block) if model == "bootstrap" else None
+        self.n_paths = int(n_paths) if model == "bootstrap" else None
+        self.guarded = False
         self.periods_per_year = annual_factor(portfolio.asset_set.timeframe)
         returns = portfolio.returns
         if self.cash_weight:   # complete portfolio: risky + cash sleeve
@@ -547,12 +563,23 @@ class Forecast:
                 self.periods_per_year)
         self.m, self.s, self.n_obs = _forecast_engine.log_moments(returns)
         step = 5 if self.periods_per_year >= 252 else 1
-        self.table = _forecast_engine.lognormal_bands(
-            self.m, self.s, self.n_obs,
-            horizon_periods=int(round(self.horizon_years
-                                      * self.periods_per_year)),
+        horizon = int(round(self.horizon_years * self.periods_per_year))
+        closed = _forecast_engine.lognormal_bands(
+            self.m, self.s, self.n_obs, horizon_periods=horizon,
             periods_per_year=self.periods_per_year,
             levels=self.levels, step=step)
+        if model == "bootstrap":
+            boot = _forecast_engine.bootstrap_bands(
+                returns, horizon_periods=horizon,
+                periods_per_year=self.periods_per_year,
+                levels=self.levels, step=step, block=self.block,
+                n_paths=self.n_paths, seed=int(seed))
+            # research guard rail: resampling one lucky decade must not
+            # present narrower uncertainty than the closed form admits
+            self.table, self.guarded = _forecast_engine.band_floor(
+                boot, closed)
+        else:
+            self.table = closed
 
     # -- annualized headline numbers (for honest labeling) --------------
     @property
@@ -600,7 +627,10 @@ class Forecast:
                               "hi": r6(t[f"hi{tag}_est"])})
         lo_ci, hi_ci = self.mu_ci95
         return {
-            "model": self.MODEL,
+            "model": self.model,
+            "block": self.block,
+            "n_paths": self.n_paths,
+            "guarded": self.guarded,
             "horizon_years": self.horizon_years,
             "cash_weight": round(self.cash_weight, 6),
             "risk_free_rate": round(self.risk_free_rate, 6),

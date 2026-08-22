@@ -341,6 +341,19 @@ class ForecastApiTests(TestCase):
             res = self.forecast({"tickers": ["AAA"], "horizon_years": bad})
             self.assertEqual(res.status_code, 400, bad)
 
+    def test_bootstrap_model_selected_and_validated(self):
+        res = self.forecast({"tickers": ["AAA", "BBB"],
+                             "horizon_years": 2, "model": "bootstrap"})
+        self.assertEqual(res.status_code, 200, res.content)
+        d = res.json()
+        self.assertEqual(d["model"], "block-bootstrap")
+        self.assertEqual(d["block"], 21)
+        self.assertIn("guarded", d)
+        # bands still nested and JSON-clean
+        self.assertLessEqual(d["bands"][0]["hi"][-1], d["bands"][1]["hi"][-1])
+        res = self.forecast({"tickers": ["AAA"], "model": "oracle"})
+        self.assertEqual(res.status_code, 400)
+
     def test_requires_login(self):
         self.client.logout()
         res = self.client.post("/api/forecast", data="{}",

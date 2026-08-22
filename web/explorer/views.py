@@ -221,6 +221,9 @@ def api_forecast(request):
     weights = body.get("weights") or None
     if weights is not None and not isinstance(weights, dict):
         return _bad("weights must be an object of ticker -> weight.")
+    model = body.get("model", "steady")
+    if model not in ("steady", "bootstrap"):
+        return _bad("model must be 'steady' or 'bootstrap'.")
 
     try:
         prices = fetch_prices(tickers, years=settings["years"])
@@ -231,7 +234,8 @@ def api_forecast(request):
                      for t in aset.tickers}
             if sum(clean.values()) <= 0:
                 clean = None
-        result = aset.portfolio(clean).forecast(horizon_years=horizon).to_dict()
+        result = aset.portfolio(clean).forecast(horizon_years=horizon,
+                                                model=model).to_dict()
     except DataFetchError as e:
         return _bad(str(e))
     except Exception:

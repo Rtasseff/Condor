@@ -109,3 +109,101 @@ def blend_with_cash(returns, cash_weight: float, risk_free_rate: float,
         raise ValueError("cash_weight must be in [0, 1]")
     rf_p = (1.0 + float(risk_free_rate)) ** (1.0 / periods_per_year) - 1.0
     return (1.0 - cw) * pd.Series(returns) + cw * rf_p
+
+
+def bootstrap_bands(returns, horizon_periods: int, periods_per_year: int,
+                    levels=DEFAULT_LEVELS, step: int = 5, block: int = 21,
+                    n_paths: int = 10_000, seed: int = 0) -> pd.DataFrame:
+    """Rung B: stationary-block-bootstrap fan-chart table.
+
+    Resamples the portfolio's own per-period log returns in contiguous
+    blocks (Politis-Romano stationary bootstrap: block lengths are
+    geometric with mean `block`), so volatility clustering and drawdown
+    sequences survive into the simulated paths. Same table shape as
+    `lognormal_bands`; the `_est` columns fold in the drift's sampling
+    error (a per-path N(0, s²/n) drift draw — same Merton overlay).
+
+    Deterministic for a given seed. The research pass (docs/research/)
+    warns this method inherits whatever mean-reversion happens to be in
+    the sample window — callers must apply `band_floor` against the
+    closed form so a lucky decade can never *narrow* the bands.
+    """
+    if block < 1:
+        raise ValueError("block must be >= 1")
+    if n_paths < 100:
+        raise ValueError("n_paths must be >= 100")
+    r = np.log1p(np.asarray(pd.Series(returns).dropna(), dtype=float))
+    n = r.size
+    if n < 2:
+        raise ValueError("need at least 2 returns to bootstrap")
+    h = horizon_grid(horizon_periods, step)
+    rng = np.random.default_rng(seed)
+    p_new = 1.0 / block
+
+    # accumulate log wealth path-by-period, storing only grid columns
+    grid_col = {int(hp): k for k, hp in enumerate(h)}
+    out = np.zeros((n_paths, len(h)))
+    acc = np.zeros(n_paths)
+    idx = rng.integers(0, n, n_paths)
+    for t in range(1, int(horizon_periods) + 1):
+        if t > 1:
+            restart = rng.random(n_paths) < p_new
+            idx = np.where(restart, rng.integers(0, n, n_paths),
+                           (idx + 1) % n)
+        acc += r[idx]
+        k = grid_col.get(t)
+        if k is not None:
+            out[:, k] = acc
+
+    # Merton overlay: an uncertain drift shifts each whole path
+    delta = rng.normal(0.0, r.std(ddof=1) / np.sqrt(n), n_paths)
+    est = out + delta[:, None] * h[None, :]
+
+    cols = {"median": np.exp(np.quantile(out, 0.5, axis=0))}
+    for lvl in levels:
+        if not 0 < lvl < 1:
+            raise ValueError(f"levels must be in (0, 1), got {lvl}")
+        qlo, qhi = 0.5 - lvl / 2, 0.5 + lvl / 2
+        tag = str(int(round(100 * lvl)))
+        cols[f"lo{tag}"] = np.exp(np.quantile(out, qlo, axis=0))
+        cols[f"hi{tag}"] = np.exp(np.quantile(out, qhi, axis=0))
+        cols[f"lo{tag}_est"] = np.exp(np.quantile(est, qlo, axis=0))
+        cols[f"hi{tag}_est"] = np.exp(np.quantile(est, qhi, axis=0))
+    table = pd.DataFrame(cols, index=pd.Index(h.astype(float)
+                                              / periods_per_year,
+                                              name="years"))
+    # row 0 is "today" exactly (quantiles of zeros are already 1.0)
+    return table
+
+
+def band_floor(table: pd.DataFrame, floor: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    """Widen `table`'s bands wherever they are narrower than `floor`'s.
+
+    Element-wise envelope on every lo*/hi* column (medians untouched):
+    lo = min(lo, floor_lo), hi = max(hi, floor_hi). The returned flag
+    is True only when a band was MATERIALLY narrower than the floor
+    (final-horizon log-width more than 5% under it) — Monte-Carlo
+    jitter alone doesn't count. This is the research guard rail: a
+    bootstrap fed one recovered-every-dip decade must not present
+    narrower uncertainty than the closed form admits.
+    """
+    if not table.index.equals(floor.index):
+        raise ValueError("table and floor must share the same horizon grid")
+    guarded = table.copy()
+    for col in table.columns:
+        if col.startswith("lo"):
+            guarded[col] = np.minimum(table[col], floor[col])
+        elif col.startswith("hi"):
+            guarded[col] = np.maximum(table[col], floor[col])
+
+    materially = False
+    last = table.index[-1]
+    for hi_col in table.columns:
+        if not hi_col.startswith("hi"):
+            continue
+        lo_col = "lo" + hi_col[2:]
+        w_table = np.log(table.loc[last, hi_col]) - np.log(table.loc[last, lo_col])
+        w_floor = np.log(floor.loc[last, hi_col]) - np.log(floor.loc[last, lo_col])
+        if w_table < 0.95 * w_floor:
+            materially = True
+    return guarded, materially
