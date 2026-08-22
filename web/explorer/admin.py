@@ -2,7 +2,8 @@
 
 from django.contrib import admin
 
-from .models import Holding, SavedPortfolio
+from .models import (Account, AccountEvent, AccountTarget, Holding,
+                     SavedPortfolio)
 
 
 class HoldingInline(admin.TabularInline):
@@ -15,3 +16,19 @@ class SavedPortfolioAdmin(admin.ModelAdmin):
     list_display = ("name", "owner", "method", "years", "updated_at")
     list_filter = ("owner", "method")
     inlines = [HoldingInline]
+
+
+class TargetInline(admin.TabularInline):
+    model = AccountTarget
+    extra = 0
+
+
+class EventInline(admin.TabularInline):
+    model = AccountEvent
+    extra = 0
+
+
+@admin.register(Account)
+class AccountAdmin(admin.ModelAdmin):
+    list_display = ("name", "owner", "created_at")
+    inlines = [TargetInline, EventInline]

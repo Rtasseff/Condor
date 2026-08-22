@@ -346,3 +346,145 @@ class ForecastApiTests(TestCase):
         res = self.client.post("/api/forecast", data="{}",
                                content_type="application/json")
         self.assertEqual(res.status_code, 401)
+
+
+class AccountTests(TestCase):
+    """Account ledger APIs — engine math is pinned in tests/test_accounting;
+    here we test the boundary: validation, derivation, ownership."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+        import numpy as np
+        import pandas as pd
+        idx = pd.bdate_range("2026-01-05", periods=4)
+        self.closes = {"AAA": pd.DataFrame({"AAA": [50.0, 50.0, 60.0, 60.0]},
+                                           index=idx)["AAA"]}
+        self.closes["BBB"] = pd.DataFrame({"BBB": [10.0] * 4}, index=idx)["BBB"]
+
+    def patched(self):
+        import pandas as pd
+        tests = self
+
+        def fake_history(tickers, start):
+            return pd.DataFrame({t: tests.closes[t] for t in sorted(tickers)})
+        return patch("explorer.account._close_history",
+                     side_effect=fake_history)
+
+    def post_event(self, body, expect=200):
+        with self.patched():
+            res = self.client.post("/api/account/events",
+                                   data=json.dumps(body),
+                                   content_type="application/json")
+        self.assertEqual(res.status_code, expect, res.content)
+        return res.json()
+
+    def test_state_derives_from_ledger(self):
+        self.post_event({"kind": "deposit", "date": "2026-01-05",
+                         "amount": 1000})
+        self.post_event({"kind": "buy", "ticker": "AAA", "date": "2026-01-06",
+                         "shares": 10, "price": 50})
+        d = self.post_event({"kind": "deposit", "date": "2026-01-08",
+                             "amount": 1100})
+        self.assertEqual(d["total_value"], 2200.0)
+        self.assertEqual(d["net_contributions"], 2100.0)
+        self.assertEqual(d["gain"], 100.0)
+        self.assertAlmostEqual(d["twr"], 0.10, places=6)   # deposit != return
+        pos = {p["ticker"]: p for p in d["positions"]}
+        self.assertEqual(pos["AAA"]["shares"], 10)
+        self.assertEqual(pos["AAA"]["value"], 600.0)
+        self.assertEqual(len(d["series"]["dates"]), 4)
+
+    def test_price_defaults_to_that_days_close(self):
+        self.post_event({"kind": "deposit", "date": "2026-01-05",
+                         "amount": 1000})
+        d = self.post_event({"kind": "buy", "ticker": "AAA",
+                             "date": "2026-01-07", "shares": 2})
+        buy = [e for e in d["events"] if e["kind"] == "buy"][0]
+        self.assertEqual(buy["price"], 60.0)
+
+    def test_guards_cash_shares_and_kind(self):
+        self.post_event({"kind": "buy", "ticker": "AAA", "shares": 1,
+                         "date": "2026-01-06", "price": 50}, expect=400)
+        self.post_event({"kind": "deposit", "amount": 100,
+                         "date": "2026-01-05"})
+        self.post_event({"kind": "sell", "ticker": "AAA", "shares": 1,
+                         "date": "2026-01-06", "price": 50}, expect=400)
+        self.post_event({"kind": "bribe", "amount": 5}, expect=400)
+        self.post_event({"kind": "deposit", "amount": -3}, expect=400)
+        self.post_event({"kind": "deposit", "amount": 10,
+                         "date": "2199-01-01"}, expect=400)
+
+    def test_forces_are_allowed_and_book_contributions(self):
+        d = self.post_event({"kind": "set_shares", "ticker": "AAA",
+                             "date": "2026-01-05", "shares": 10, "price": 50})
+        self.assertEqual(d["net_contributions"], 500.0)
+        self.assertEqual(d["total_value"], 600.0)   # valued at last close 60
+
+    def test_target_and_plan_round_trip(self):
+        self.post_event({"kind": "deposit", "date": "2026-01-05",
+                         "amount": 1000})
+        with self.patched():
+            res = self.client.post(
+                "/api/account/target",
+                data=json.dumps({"weights": {"AAA": 0.6, "BBB": 0.3}}),
+                content_type="application/json")
+            self.assertEqual(res.status_code, 200, res.content)
+            self.assertAlmostEqual(res.json()["target_cash_weight"], 0.1)
+            plan = self.client.get("/api/account/plan").json()
+        rows = {r["ticker"]: r for r in plan["rows"]}
+        self.assertEqual(rows["AAA"]["trade_shares"], 10)   # 600/60
+        self.assertEqual(rows["BBB"]["trade_shares"], 30)   # 300/10
+        self.assertEqual(plan["cash_after"], 100.0)
+        with self.patched():
+            res = self.client.post(
+                "/api/account/plan/confirm",
+                data=json.dumps({"trades": [
+                    {"ticker": "AAA", "shares": 10, "price": 60},
+                    {"ticker": "BBB", "shares": 30, "price": 10},
+                ], "date": "2026-01-08"}),
+                content_type="application/json")
+        d = res.json()
+        self.assertEqual(res.status_code, 200, res.content)
+        pos = {p["ticker"]: p for p in d["positions"]}
+        self.assertEqual(pos["AAA"]["shares"], 10)
+        self.assertEqual(d["cash"], 100.0)
+        kinds = [e["kind"] for e in d["events"]]
+        self.assertEqual(kinds.count("buy"), 2)
+
+    def test_target_validation(self):
+        for weights, code in (
+            ({"AAA": 0.9, "BBB": 0.3}, 400),   # sums past 1
+            ({"AAA": -0.1}, 400),
+            ({"$$$": 0.5}, 400),
+            ("nope", 400),
+        ):
+            res = self.client.post("/api/account/target",
+                                   data=json.dumps({"weights": weights}),
+                                   content_type="application/json")
+            self.assertEqual(res.status_code, code, weights)
+
+    def test_delete_event_and_ownership(self):
+        d = self.post_event({"kind": "deposit", "date": "2026-01-05",
+                             "amount": 100})
+        eid = d["events"][0]["id"]
+        other = make_user("intruder")
+        self.client.force_login(other)
+        with self.patched():
+            res = self.client.delete(f"/api/account/events/{eid}")
+        self.assertEqual(res.status_code, 404)   # not their ledger
+        with self.patched():
+            other_state = self.client.get("/api/account").json()
+        self.assertEqual(other_state["events"], [])   # accounts are private
+        self.client.force_login(self.user)
+        with self.patched():
+            res = self.client.delete(f"/api/account/events/{eid}")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["events"], [])
+
+    def test_anonymous_gets_401_and_page_redirects(self):
+        self.client.logout()
+        self.assertEqual(self.client.get("/api/account").status_code, 401)
+        res = self.client.get("/account")
+        self.assertEqual(res.status_code, 302)
+        self.assertTrue(res.url.startswith("/login"))

@@ -74,10 +74,18 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   observations to learn from. Data shortlist:
   `forecast-data-sources.md`. Legacy: `analytics_workflow_v1.ipynb`
   Part 3; RF/LSTM ideas deprioritized.
-- [ ] **Rebalancing & dollar-cost-averaging recommendations.** Drift from
-  target weights, calendar vs threshold rules, DCA schedule simulator.
+- [ ] **Rebalancing rules & DCA** (drift-triggered vs calendar rules, DCA
+  schedule simulator) — the *mechanics* shipped 2026-08-22 with the
+  account view (drift display, whole-share plans, confirm-to-ledger);
+  what remains is advice about *when*: threshold vs calendar policy,
+  and dollar-cost-averaging plans for new money.
   References: `reference materials/Portfolio-ManagementProcess/
   Kritzman2008-Portfolio_Rebalancing…`, `MRebalancing.pdf`.
+- [ ] **Account follow-ons:** multiple accounts per user (schema already
+  allows it — needs a selector UI); dividends/splits at the account
+  level (ledger kinds + replay rules, ADR 0004 "reopens if");
+  benchmark overlay on the value chart (SPY / your setpoint held
+  passively); CSV export of the ledger.
 - [ ] **Scenario simulators** — "what if 2008 / 2020 / rates +3%" replay on
   the current portfolio; Monte Carlo on the estimated μ/Σ.
 - [ ] **Optimization constraints:** per-asset max weight, min position,
@@ -122,6 +130,21 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Account view — ledger, drift, rebalancing** — 2026-08-22 (ADR
+      0004). `condor/accounting.py` engine (replay, daily valuation at
+      raw closes, time-weighted return where deposits are flows not
+      gains, whole-share `rebalance_plan` with cheapest-buy trimming;
+      16 hand-computed tests) + `Account`/`AccountTarget`/
+      `AccountEvent` models + `/account` page (tiles, value-vs-
+      contributions chart, holdings with actual-vs-setpoint drift,
+      setpoint editor, plan panel with editable executed trades,
+      ledger form incl. set_shares/set_cash force kinds). Explorer
+      point card gained "Use as account setpoint →" — any frontier or
+      CAL point becomes the target and lands on the transition report
+      (CAL cash share carries through as the setpoint's cash). Also:
+      base.html extracted (trigger met: second page), working topbar
+      nav. 8 API tests; full flow verified live in Chrome.
 
 - [x] **Forecaster rung A — the simplest honest fan chart** — 2026-08-22.
       `condor/forecast.py` (engine: `log_moments`, `mu_standard_error`,

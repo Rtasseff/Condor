@@ -1,0 +1,38 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Condor Funds{% endblock %}</title>
+<link rel="icon" type="image/svg+xml" href="{% static 'explorer/brand/favicon.svg' %}">
+<link rel="stylesheet" href="{% static 'explorer/style.css' %}">
+<script src="{% static 'explorer/plotly.min.js' %}"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wordmark">
+    <img class="logo" src="{% static 'explorer/brand/logo.svg' %}" alt="" height="26">
+    <span class="condor">CONDOR</span><span class="funds">FUNDS</span>
+    <span class="proto">v2 prototype</span>
+  </div>
+  <nav class="pillars">
+    <span>Learn</span>
+    <a href="{% url 'index' %}" class="{% block nav_build %}{% endblock %}">Build</a>
+    <a href="{% url 'account' %}" class="{% block nav_account %}{% endblock %}">My account</a>
+    <span>Compete</span><span>Develop</span>
+  </nav>
+  {% if user.is_authenticated %}
+  <div class="userbox">
+    <span class="username">{{ user.username }}</span>
+    <form method="post" action="{% url 'logout' %}">
+      {% csrf_token %}
+      <button type="submit" class="ghost small">Log out</button>
+    </form>
+  </div>
+  {% endif %}
+</header>
+
+{% block content %}{% endblock %}
+</body>
+</html>

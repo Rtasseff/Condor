@@ -1,33 +1,8 @@
-{% load static %}<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Condor Funds — Portfolio Explorer</title>
-<link rel="icon" type="image/svg+xml" href="{% static 'explorer/brand/favicon.svg' %}">
-<link rel="stylesheet" href="{% static 'explorer/style.css' %}">
-<script src="{% static 'explorer/plotly.min.js' %}"></script>
-</head>
-<body>
-
-<header class="topbar">
-  <div class="wordmark">
-    <img class="logo" src="{% static 'explorer/brand/logo.svg' %}" alt="" height="26">
-    <span class="condor">CONDOR</span><span class="funds">FUNDS</span>
-    <span class="proto">v2 prototype</span>
-  </div>
-  <nav class="pillars" aria-hidden="true">
-    <span>Learn</span><span class="active">Build</span><span>Compete</span><span>Develop</span>
-  </nav>
-  <div class="userbox">
-    <span class="username">{{ user.username }}</span>
-    <form method="post" action="{% url 'logout' %}">
-      {% csrf_token %}
-      <button type="submit" class="ghost small">Log out</button>
-    </form>
-  </div>
-</header>
-
+{% extends "explorer/base.html" %}
+{% load static %}
+{% block title %}Condor Funds — Portfolio Explorer{% endblock %}
+{% block nav_build %}active{% endblock %}
+{% block content %}
 <main>
   <section class="controls card" aria-label="Analysis settings">
     <label>Method
@@ -95,6 +70,9 @@
         <div id="pointweights" class="wbars"></div>
         <p class="sub" id="calnote" hidden></p>
         <button id="adoptpoint" class="primary small">Make this my portfolio</button>
+        <button id="settarget" class="ghost small" type="button"
+                title="Copy this mix to your account's setpoint and open the transition plan">
+          Use as account setpoint →</button>
       </section>
     </section>
 
@@ -177,5 +155,4 @@
 
 {% if preset %}{{ preset|json_script:"preset" }}{% endif %}
 <script src="{% static 'explorer/app.js' %}"></script>
-</body>
-</html>
+{% endblock %}

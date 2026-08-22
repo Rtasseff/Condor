@@ -39,7 +39,7 @@ body {
 
 .topbar {
   display: flex; align-items: baseline; justify-content: space-between;
-  padding: 18px 28px 10px;
+  padding: 18px 28px 10px; gap: 18px; flex-wrap: wrap;
 }
 .wordmark { display: flex; align-items: center; gap: 8px;
   font-family: var(--font-display); font-weight: 800; font-size: 22px; letter-spacing: 0.04em; }
@@ -50,7 +50,9 @@ body {
   margin-left: 10px; letter-spacing: 0.02em;
 }
 .pillars { display: flex; gap: 18px; font-size: 13px; color: var(--muted); }
-.pillars .active {
+.pillars a { color: var(--ink-2); text-decoration: none; }
+.pillars a:hover { color: var(--ink); }
+.pillars .active, .pillars a.active {
   color: var(--accent-hi); font-weight: 700;
   border-bottom: 2px solid var(--accent-hi); padding-bottom: 2px;
 }
@@ -283,3 +285,34 @@ footer {
   padding: 7px 10px; font-size: 14px;
 }
 .fcontrols input { width: 110px; }
+
+/* ---- account page ---- */
+.atiles { margin-top: 12px; }
+.tile .value.neg, td .neg { color: var(--danger); }
+.subpanel { border-top: 1px solid var(--ring); margin-top: 14px; padding-top: 12px; }
+.subpanel h3 { margin: 0 0 4px; font-size: 14px; }
+.eventform { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; margin-bottom: 8px; }
+.eventform label { display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; color: var(--muted); }
+.eventform select, .eventform input {
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 8px;
+  padding: 7px 10px; font-size: 14px; }
+.eventform input { width: 110px; }
+.eventform .grow { flex: 1; }
+.eventform .grow input { width: 100%; }
+.targetrows { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.targetrow { display: flex; align-items: center; gap: 8px; }
+.targetrow .tick { width: 64px; font-weight: 600; font-size: 13px; }
+.targetrow input { width: 90px; background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 8px; padding: 6px 8px; }
+form.inline { display: flex; gap: 8px; margin: 6px 0; }
+form.inline input { background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 8px; padding: 6px 10px; width: 140px; }
+#plantable .planshares { width: 90px; text-align: right;
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--accent); border-radius: 8px; padding: 5px 8px; }
+td.drifted { color: var(--series-you); font-weight: 600; }
+.cashrow td { border-top: 1px solid var(--ring); color: var(--ink-2); }
+#eventlist .meta { margin-left: 10px; }
+#achart { min-height: 300px; }

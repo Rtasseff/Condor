@@ -17,6 +17,7 @@ condor/model.py            DOMAIN MODEL: Asset → AssetSet → Portfolio, Front
 condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns
 condor/frontier.py         OPTIMIZATION ENGINE: _perf, _solve, _weights_dict
 condor/forecast.py         FORECAST ENGINE: closed-form fan-chart bands (rung A)
+condor/accounting.py       ACCOUNT ENGINE: ledger replay, valuation/TWR, rebalance plans
         │
 condor/data/               DATA LAYER: PriceStore (~/.condor/prices) + sources + FRED rf
 ```

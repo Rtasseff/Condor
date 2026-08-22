@@ -1,0 +1,134 @@
+{% extends "explorer/base.html" %}
+{% load static %}
+{% block title %}Condor Funds — My account{% endblock %}
+{% block nav_account %}active{% endblock %}
+{% block content %}
+<main>
+  <section class="card">
+    <h2 id="acctname">My account</h2>
+    <p class="sub">A ledger-tracked account — pretend money, or a mirror of a real
+       one. Value comes from the last close; putting money in moves the value but
+       never the return. The Build page works fine without this — this is just
+       the tracking.</p>
+    <div class="tiles atiles">
+      <div class="tile"><span class="label">Total value</span><span class="value" id="a-value">–</span></div>
+      <div class="tile"><span class="label">Net contributions</span><span class="value" id="a-contrib">–</span></div>
+      <div class="tile"><span class="label">Gain</span><span class="value" id="a-gain">–</span></div>
+      <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="a-twr">–</span></div>
+    </div>
+    <p class="sub" id="a-asof"></p>
+  </section>
+
+  <div id="error" class="error card" hidden></div>
+
+  <section class="card" id="chartcard2" hidden>
+    <h2>Value over time</h2>
+    <p class="sub">Solid line: what the account is worth. Dashed line: money you
+       put in. The space between them is your actual gain.</p>
+    <div id="achart"></div>
+  </section>
+
+  <section class="card">
+    <h2>Holdings &amp; setpoint</h2>
+    <p class="sub">Actual % drifts as prices move; setpoint % is where you want
+       it. Ask for a plan to get back — whole shares at the last close.</p>
+    <div class="tablewrap">
+      <table id="postable">
+        <thead><tr>
+          <th scope="col">Ticker</th>
+          <th scope="col" class="num">Shares</th>
+          <th scope="col" class="num">Last close</th>
+          <th scope="col" class="num">Value</th>
+          <th scope="col" class="num">Actual %</th>
+          <th scope="col" class="num">Setpoint %</th>
+          <th scope="col" class="num">Drift</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="sideactions">
+      <button id="planbtn" class="primary small" type="button">Rebalancing plan</button>
+      <button id="edittarget" class="ghost small" type="button">Edit setpoint…</button>
+      <span class="sub" id="targethint"></span>
+    </div>
+
+    <div id="targetpanel" class="subpanel" hidden>
+      <h3>Setpoint allocation (%)</h3>
+      <p class="sub">Percent of total account value per asset; whatever is left
+         is cash/T-bills. You can also send any point from the Build page here
+         ("Use as account setpoint").</p>
+      <div id="targetrows" class="targetrows"></div>
+      <form id="targetadd" class="inline" autocomplete="off">
+        <input id="targetticker" placeholder="Add ticker" spellcheck="false">
+        <button type="submit" class="ghost small">Add</button>
+      </form>
+      <div class="sideactions">
+        <button id="targetsave" class="primary small" type="button">Save setpoint</button>
+        <button id="targetcancel" class="ghost small" type="button">Cancel</button>
+        <span class="sub" id="targetsum"></span>
+      </div>
+    </div>
+
+    <div id="planpanel" class="subpanel" hidden>
+      <h3 id="plantitle">Rebalancing plan</h3>
+      <p class="sub">Whole shares at the last close, as close to the setpoint as
+         one-share steps allow. Edit the numbers to match what you actually did,
+         then confirm to write them into the ledger.</p>
+      <div class="tablewrap">
+        <table id="plantable">
+          <thead><tr>
+            <th scope="col">Ticker</th>
+            <th scope="col" class="num">Price</th>
+            <th scope="col" class="num">Now</th>
+            <th scope="col" class="num">Trade (shares)</th>
+            <th scope="col" class="num">≈ Value</th>
+            <th scope="col" class="num">New %</th>
+            <th scope="col" class="num">Setpoint %</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="sub" id="plancash"></p>
+      <div class="sideactions">
+        <button id="planconfirm" class="primary small" type="button">Confirm — I made these trades</button>
+        <button id="plancancel" class="ghost small" type="button">Cancel</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Ledger</h2>
+    <form id="eventform" class="eventform" autocomplete="off">
+      <label>Type
+        <select id="ev-kind">
+          <option value="deposit">Deposit cash</option>
+          <option value="withdraw">Withdraw cash</option>
+          <option value="buy">Buy shares</option>
+          <option value="sell">Sell shares</option>
+          <option value="set_shares">Force share count</option>
+          <option value="set_cash">Force cash</option>
+        </select>
+      </label>
+      <label>Date <input id="ev-date" type="date"></label>
+      <label data-for="ticker">Ticker <input id="ev-ticker" spellcheck="false"></label>
+      <label data-for="shares">Shares <input id="ev-shares" type="number" min="0" step="any"></label>
+      <label data-for="price">Price <input id="ev-price" type="number" min="0" step="any" placeholder="last close"></label>
+      <label data-for="amount">Amount $ <input id="ev-amount" type="number" min="0" step="any"></label>
+      <label class="grow">Note <input id="ev-note" maxlength="120"></label>
+      <button type="submit" class="primary small">Add</button>
+    </form>
+    <p class="sub">Deposits and withdrawals move cash (contributions, not
+       returns). Buys/sells move shares against cash — price defaults to that
+       day's close. The force types overwrite state when reality and the ledger
+       disagree; the difference is booked as money in/out, not as return.</p>
+    <ul id="eventlist" class="savedlist"></ul>
+  </section>
+
+  <footer>
+    Prices via the shared store (last close). Educational prototype — not
+    investment advice.
+  </footer>
+</main>
+
+<script src="{% static 'explorer/account.js' %}"></script>
+{% endblock %}

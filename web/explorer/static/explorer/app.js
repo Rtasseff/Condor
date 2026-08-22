@@ -475,6 +475,7 @@ function renderPoint(sel) {
   // explain the split instead — with a warning in the borrowing region.
   const note = $("calnote");
   const adopt = $("adoptpoint");
+  $("settarget").hidden = false;
   if (sel.kind === "cal") {
     adopt.hidden = true;
     note.hidden = false;
@@ -845,6 +846,24 @@ $("tangentw").addEventListener("click", () => {
   }
 });
 $("forecast").addEventListener("click", runForecast);
+$("settarget").addEventListener("click", async () => {
+  // Send the considered mix to the account as its new setpoint, then
+  // open the transition plan there. Weights are total-wealth fractions,
+  // so a CAL mix carries its cash share implicitly.
+  if (!state.selected) return;
+  try {
+    const res = await fetch("/api/account/target", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
+      body: JSON.stringify({ weights: state.selected.weights }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+    window.location.href = "/account?plan=1";
+  } catch (err) {
+    showError(err.message);
+  }
+});
 $("adoptpoint").addEventListener("click", () => {
   if (state.selected) useWeights(state.selected.weights);
 });

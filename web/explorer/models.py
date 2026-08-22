@@ -89,3 +89,87 @@ class Holding(models.Model):
 
     def __str__(self):
         return f"{self.ticker} {self.weight:.3f}"
+
+
+# ---------------------------------------------------------------- accounts
+# ADR 0004: an Account is MONEY — an append-only ledger of events plus a
+# setpoint. SavedPortfolio stays configuration (the "draft"). All derived
+# numbers (positions, value, contributions vs return, drift, plans) come
+# from condor.accounting over `events_frame()`; nothing derived is stored.
+
+
+class Account(models.Model):
+    """One tracked (pretend or mirrored-real) account."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL,
+                              on_delete=models.CASCADE,
+                              related_name="accounts")
+    name = models.CharField(max_length=80, default="My account")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.name} ({self.owner})"
+
+    def events_frame(self):
+        """Ledger -> the engine's event-table shape (condor.accounting)."""
+        import pandas as pd
+        rows = [{"date": e.date, "kind": e.kind,
+                 "ticker": e.ticker or None, "shares": e.shares,
+                 "price": e.price, "amount": e.amount}
+                for e in self.events.order_by("date", "created_at", "pk")]
+        return pd.DataFrame(rows, columns=["date", "kind", "ticker",
+                                           "shares", "price", "amount"])
+
+    def target_weights(self):
+        return {t.ticker: t.weight for t in self.targets.all()}
+
+
+class AccountTarget(models.Model):
+    """Setpoint allocation: fraction of total value per ticker.
+
+    Cash is the implicit remainder (1 - sum), which is exactly what a
+    CAL draft produces. Replaced wholesale when a draft is adopted."""
+
+    account = models.ForeignKey(Account, on_delete=models.CASCADE,
+                                related_name="targets")
+    ticker = models.CharField(max_length=10)
+    weight = models.FloatField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["account", "ticker"], name="unique_target_per_account")]
+        ordering = ["-weight", "ticker"]
+
+    def __str__(self):
+        return f"{self.ticker} {self.weight:.1%}"
+
+
+class AccountEvent(models.Model):
+    """One ledger entry. Append-only in spirit: rows are added by the
+    user (or by confirming a rebalance plan) and may be deleted to fix
+    mistakes, never silently rewritten."""
+
+    KINDS = ["deposit", "withdraw", "buy", "sell", "set_shares", "set_cash"]
+
+    account = models.ForeignKey(Account, on_delete=models.CASCADE,
+                                related_name="events")
+    date = models.DateField()
+    kind = models.CharField(max_length=12,
+                            choices=[(k, k) for k in KINDS])
+    ticker = models.CharField(max_length=10, blank=True, default="")
+    shares = models.FloatField(null=True, blank=True)
+    price = models.FloatField(null=True, blank=True)
+    amount = models.FloatField(null=True, blank=True)
+    note = models.CharField(max_length=120, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["date", "created_at", "pk"]
+
+    def __str__(self):
+        core = self.ticker or f"${self.amount}"
+        return f"{self.date} {self.kind} {core}"

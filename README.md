@@ -31,7 +31,10 @@ python web/manage.py runserver
 Then open http://127.0.0.1:8000/ and sign in. Every page requires a
 login; add teammates at http://127.0.0.1:8000/admin (Users → Add).
 Portfolios can be saved and shared by URL (`/p/<id>` — readable by any
-logged-in user, editable only by the owner); everything else recomputes
+logged-in user, editable only by the owner). "My account" (`/account`)
+tracks a pretend-or-mirrored real account as a ledger: deposits and
+trades in, value at last close out, drift vs your setpoint, and
+whole-share rebalancing plans (ADR 0004). Everything else recomputes
 live from market data.
 
 Core analytics can also be used directly:
@@ -82,6 +85,7 @@ or `--rf 0.04` to override. `--method robust|normal`, `--json` everywhere.
 | `condor/stats.py` | Estimation engine: expected returns, risk matrix (normal / robust) |
 | `condor/frontier.py` | Optimization engine (`_perf`, `_solve`) + `compute_analysis` facade |
 | `condor/forecast.py` | Forecast engine: closed-form fan-chart bands with estimation-error overlay |
+| `condor/accounting.py` | Account engine: ledger replay, valuation/TWR, whole-share rebalance plans |
 | `condor/cli.py` | CLI: `python -m condor analyze/portfolio/frontier/data` |
 | `condor/data/` | Price store (`~/.condor/prices`, Parquet) + sources (yfinance, Tiingo) + FRED risk-free rate |
 
