@@ -8,6 +8,7 @@ next; `context/CONTEXT.md` = where the project came from.)
 
 ```
 web/explorer/views.py      HTTP boundary: validate input, call the facade, return JSON
+condor/cli.py              CLI boundary: parse args, call the model, print tables/CSV/JSON
         │
 condor/frontier.py         compute_analysis(...)  — procedural facade, one dict out
         │
@@ -93,7 +94,7 @@ portfolio, calls `.forecast()`, returns `to_dict()`. Nothing else changes.
   the slow, inconsistent part of the 2023 code.
 - Don't add new keys to `compute_analysis` by reaching around the model.
   Extend `AssetSet.analysis()` / `Frontier.to_dict()` / `Portfolio.to_dict()`.
-- Don't put numerics in `views.py` or in JavaScript.
+- Don't put numerics in `views.py`, `cli.py`, or JavaScript.
 - Don't let a domain method grow its own math. If it's more than gathering
   state and calling a function, the function belongs in an engine module.
 - Don't inherit `Portfolio` from `AssetSet`. A portfolio *has* an asset set

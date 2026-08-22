@@ -59,6 +59,21 @@ class PriceStore:
         rows = {t: [e.get(c) for c in cols] for t, e in sorted(m.items())}
         return pd.DataFrame.from_dict(rows, orient="index", columns=cols)
 
+    def tickers(self) -> list[str]:
+        """Tickers currently held in the store."""
+        return sorted(self._manifest())
+
+    def remove(self, ticker: str) -> bool:
+        """Delete a ticker's file and manifest entry. True if it existed."""
+        ticker = ticker.upper()
+        m = self._manifest()
+        existed = ticker in m
+        if existed:
+            del m[ticker]
+            self._write_manifest(m)
+        self._path(ticker).unlink(missing_ok=True)
+        return existed
+
     def as_of(self, ticker: str) -> str | None:
         """Last stored trading date for a ticker (the honest 'data as of')."""
         entry = self._manifest().get(ticker.upper())

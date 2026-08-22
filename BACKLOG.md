@@ -6,24 +6,12 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Now
 
-Not yet ordered — the newest items (UI review, CLI) were added 2026-08-19
-and the sequence is still to be decided.
-
 - [ ] **UI review pass** — RT navigates the current prototype end to end and
   writes down everything that is off: bugs (wrong/missing behaviour), rough
   edges (things that work but feel wrong), and missing features. Output is
   a list in this file (or a `UI-NOTES.md`) with each item tagged bug / UX /
   feature, so the polish work below can be prioritized from evidence
   rather than guesses. Precedes "UI polish" and "API/UX robustness".
-- [ ] **CLI** (`python -m condor …`, later a `condor` console script):
-  thin boundary over the object API — argument parsing and table/CSV
-  output only, no numerics (same rule as `views.py`, see ARCHITECTURE.md).
-  Commands: `analyze TICKERS [--method --rf --years]` (summary table,
-  min-vol and tangency weights), `portfolio T=w T=w …` (perf of a given
-  mix), `frontier … [--csv|--json]`, `data update|ls|purge`. No database
-  beyond the price store — for personal use and one-off questions without
-  starting Django. Doubles as a second consumer of `condor/` that keeps the
-  layering honest. Optional `--html` to write a Plotly chart.
 - [ ] **Verification notebook** (`notebooks/01_verify_core.ipynb`): the same
   spot-check story as `202411_refact_optWF.ipynb` — hand-computed value next
   to function output, legacy vs v2 side by side, notebook golden numbers —
@@ -121,6 +109,12 @@ and the sequence is still to be decided.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **CLI** (`condor/cli.py`, `python -m condor`) — 2026-08-22. Thin
+      boundary over the object API (no numerics, same rule as views):
+      `analyze`, `portfolio T=w…`, `frontier` (table / `--csv` /
+      `--json` / `--html` Plotly chart), `data ls|update|purge`.
+      `--rf` defaults to live FRED 3-mo T-bill. 9 offline tests.
 
 - [x] **Explorer: data layer wired in** — 2026-08-22. Risk-free field
       prefilled from FRED (3-mo T-bill, with as-of date shown under the
