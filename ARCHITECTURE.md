@@ -16,7 +16,7 @@ condor/model.py            DOMAIN MODEL: Asset → AssetSet → Portfolio, Front
 condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns
 condor/frontier.py         OPTIMIZATION ENGINE: _perf, _solve, _weights_dict
         │
-condor/data.py             prices in (yfinance + cache)
+condor/data/               DATA LAYER: PriceStore (~/.condor/prices) + sources + FRED rf
 ```
 
 Two kinds of code live in `condor/`, on purpose:
@@ -44,7 +44,7 @@ that gather the object's state and hand it to an engine function.
 | A new capability **of a portfolio** (forecast, rebalance, DCA schedule, drawdown, scenario replay) | `model.py` → method on `Portfolio` (numerics in a new engine module, e.g. `forecast.py`) | `portfolio.forecast(horizon, ...)` returns a small result object or DataFrame; `to_dict()` for the UI |
 | A new capability **of a set of assets** (screening, correlation view, "suggest an addition") | `AssetSet` method (+ engine function) | same pattern |
 | A new curve / chart object (e.g. CAL as its own thing, backtest path) | `model.py` class, or a sibling module | has an `AssetSet` or `Portfolio`, exposes `to_dict()` |
-| A new data source (Polygon CSVs, Tiingo…) | `data.py` | another `fetch_*` / loader returning the same aligned prices DataFrame |
+| A new data source | `condor/data/sources.py` | a class with `name` and `fetch(ticker, start) -> DataFrame[close, adj_close]`; register in `_REGISTRY` |
 | A new HTTP endpoint | `web/explorer/views.py` + `urls.py` | validate → build `AssetSet` → call model → `to_dict()` → `JsonResponse`. No numerics in views. |
 | Persistence (saved portfolios) | `web/explorer/models.py` (Django) | store tickers/weights/method/rf; rebuild a `Portfolio` from them — Django models are storage, `condor` objects are behaviour |
 
@@ -99,6 +99,13 @@ portfolio, calls `.forecast()`, returns `to_dict()`. Nothing else changes.
 - Don't inherit `Portfolio` from `AssetSet`. A portfolio *has* an asset set
   and *behaves like* an asset (via `returns` / `value_index`); that is the
   "asset of assets" idea from the legacy design, done by composition.
+
+## Recorded decisions
+
+Significant design choices, with the alternatives that lost and the
+conditions that would reopen them, live in `docs/decisions/` (ADRs).
+Read them before redesigning something they cover; add one when you make
+a choice future-you will question.
 
 ## Tests are the contract
 

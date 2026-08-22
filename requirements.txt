@@ -1,6 +1,8 @@
 django>=5.0
 yfinance>=1.0
 PyPortfolioOpt>=1.5
+pyarrow
+requests
 packaging
 
 # tests (legacy-code comparison imports these)

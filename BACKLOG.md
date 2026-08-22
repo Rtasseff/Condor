@@ -6,8 +6,8 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Now
 
-Not yet ordered — the three newest items (UI review, data layer, CLI) were
-added 2026-08-19 and the sequence is still to be decided.
+Not yet ordered — the newest items (UI review, CLI) were added 2026-08-19
+and the sequence is still to be decided.
 
 - [ ] **UI review pass** — RT navigates the current prototype end to end and
   writes down everything that is off: bugs (wrong/missing behaviour), rough
@@ -15,25 +15,6 @@ added 2026-08-19 and the sequence is still to be decided.
   a list in this file (or a `UI-NOTES.md`) with each item tagged bug / UX /
   feature, so the polish work below can be prioritized from evidence
   rather than guesses. Precedes "UI polish" and "API/UX robustness".
-- [ ] **Data layer v2 — store + sources.** Current state (`condor/data.py`):
-  yfinance per ticker, adjusted close, one CSV per (ticker, lookback) in
-  `.condor_cache/` with a 24h TTL; no incremental updates, no "as of",
-  risk-free rate hardcoded. Proposal, open for discussion:
-  - *Store*: one Parquet file per ticker, append-only, incremental
-    ("fetch since last date"); any lookback is a slice. `condor data
-    update / ls / purge` commands. Explicit total-return vs price basis.
-  - *Sources* behind one small `PriceSource` protocol
-    (`fetch(ticker, start, end) -> Series`): yfinance (default, free,
-    unofficial), Stooq (free, no key, fallback), Tiingo (official EOD
-    API, free tier ≈500 symbols/month — enough for personal use), and an
-    offline loader for the legacy Polygon.io JSON/CSV pulls in
-    `drive_export/files/Data from Polygon.io/` (234 MB, Apr 2024) and
-    `data_analytics_v1/` for backtests. Paid tiers only matter later for
-    survivorship-free universes (screening, "Suggest").
-  - *Risk-free rate* from FRED (`DTB3` / `DGS3MO`, free, official)
-    instead of a constant; surface "data as of" in the UI.
-  - Keep all of this Django-free so the CLI and notebooks use it too.
-  (Absorbs the earlier "Data source hardening" item.)
 - [ ] **CLI** (`python -m condor …`, later a `condor` console script):
   thin boundary over the object API — argument parsing and table/CSV
   output only, no numerics (same rule as `views.py`, see ARCHITECTURE.md).
@@ -43,6 +24,10 @@ added 2026-08-19 and the sequence is still to be decided.
   beyond the price store — for personal use and one-off questions without
   starting Django. Doubles as a second consumer of `condor/` that keeps the
   layering honest. Optional `--html` to write a Plotly chart.
+- [ ] **Explorer: wire the data layer in** — prefill the risk-free field
+  from `risk_free_rate()` (show maturity + as-of), and show "data as of
+  <last trading day>" (`PriceStore.as_of`) next to results. Small; pairs
+  well with the UI review pass.
 - [ ] **Verification notebook** (`notebooks/01_verify_core.ipynb`): the same
   spot-check story as `202411_refact_optWF.ipynb` — hand-computed value next
   to function output, legacy vs v2 side by side, notebook golden numbers —
@@ -58,6 +43,17 @@ added 2026-08-19 and the sequence is still to be decided.
 
 ## Next
 
+- [ ] **Estimation uncertainty / sampling study** — revive the question
+  behind the legacy `202411_apa_*.ipynb` work (autocorrelation, sampling
+  interval, convergence), reframed: dispersion (Σ) converges fast and
+  daily sampling + shrinkage handle it; expected return (μ) does NOT —
+  its standard error depends only on the total time span (Merton 1980),
+  ≈ σ/√years regardless of sampling frequency, so no interval choice
+  rescues it. Deliverables: quantify standard errors for both estimators,
+  decide what honesty looks like in the UI (error bars / bands on the
+  frontier?), and document why robust stats + (later) Black-Litterman
+  views are the mitigation. Park: `sampInt`-style de-overlapping matters
+  only if we add monthly windows (see return-calculation options above).
 - [ ] **Forecaster** ("Forecast" button, deck slide 25): fan chart with 65%
   and 95% bands, backtest-from-2-years-ago vs project-2-years-forward.
   Start with geometric Brownian motion / bootstrap of historical returns
@@ -108,6 +104,20 @@ added 2026-08-19 and the sequence is still to be decided.
 
 ## Done
 
+- [x] **Data layer v2 — store + sources** (`condor/data/`) — 2026-08-22.
+      `PriceStore`: one Parquet per ticker in `~/.condor/prices`
+      (`CONDOR_DATA_DIR` to move), incremental updates with a
+      corporate-action seam check (ADR 0001), provenance manifest,
+      `as_of()`; flat files not a DB (ADR 0002). Sources behind one
+      protocol: yfinance default, Tiingo failover when `TIINGO_API_KEY`
+      is set (primary by request). `risk_free_rate()` from FRED Treasury
+      constant-maturity yields (3m default; 1m/1y/10y). `fetch_prices`
+      contract unchanged — web app untouched. Dropped along the way:
+      Polygon loader (never really used; snapshot in `drive_export/` is
+      2yr/Apr-2024, worse than free sources) and Stooq (now fronts its
+      CSV endpoint with a JS proof-of-work challenge — not scriptable).
+      +12 tests offline via a scripted fake source, live smoke tests
+      behind `CONDOR_NET_TESTS=1`.
 - [x] **Domain model** `Asset` → `AssetSet` → `Portfolio`, plus `Frontier`
       (`condor/model.py`) — 2026-08-19. Thin object layer over the unchanged
       engine; `compute_analysis` is now a facade over `AssetSet.analysis()`.

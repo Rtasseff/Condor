@@ -59,7 +59,7 @@ uses; it returns the same numbers as a plain dict.
 | `condor/model.py` | Domain objects: `Asset`, `AssetSet`, `Portfolio`, `Frontier` |
 | `condor/stats.py` | Estimation engine: expected returns, risk matrix (normal / robust) |
 | `condor/frontier.py` | Optimization engine (`_perf`, `_solve`) + `compute_analysis` facade |
-| `condor/data.py` | Price fetch + cache |
+| `condor/data/` | Price store (`~/.condor/prices`, Parquet) + sources (yfinance, Tiingo) + FRED risk-free rate |
 
 Run tests with `python -m pytest tests/` — `test_verification.py` pins the
 engine to the legacy code, closed-form Markowitz, and the 2024 notebook's
