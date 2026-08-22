@@ -33,9 +33,6 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   legacy default 20 to de-overlap monthly windows), and geometric-vs-
   arithmetic expected return as an explicit choice (pypfopt defaults to
   geometric; v2 forces arithmetic to match legacy — see `stats.py`).
-- [ ] **Save portfolios** — first real DB models (Portfolio, Holding,
-  AnalysisSnapshot), shareable URL per portfolio; users/auth later.
-
 ## Next
 
 - [ ] **Estimation uncertainty / sampling / regimes** — revive the
@@ -120,6 +117,16 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Save portfolios** — 2026-08-22. `SavedPortfolio` + `Holding`
+      Django models (storage only; weights stored as fractions),
+      `POST/GET/DELETE /api/portfolios[/<uuid>]` sharing api_analyze's
+      validation, shareable `/p/<uuid>` page that preloads the Explorer
+      and auto-analyzes. UI: Save panel with name + copy-link, Saved
+      list with load and two-step delete. No auth (unguessable uuid4 =
+      access control for the 5-user release). 17 Django tests.
+      AnalysisSnapshot deferred: analyses recompute live; a stored
+      snapshot earns its place only when results must be citable.
 
 - [x] **Verification notebook** (`notebooks/01_verify_core.ipynb`) —
       2026-08-22. The readable twin of `tests/test_verification.py`:
