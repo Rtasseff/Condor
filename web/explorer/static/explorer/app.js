@@ -1,17 +1,22 @@
 /* Condor Funds v2 — Portfolio Explorer front end. */
 "use strict";
 
-// ---------- palette (validated for CVD on this surface) ----------
+// ---------- palette ----------
+// Read from the CSS theme block (docs/BRANDING.md): restyling the app is
+// an edit to style.css :root only — the chart follows automatically.
+// Current values were validated for CVD on the dark surface.
+const cssVar = (name) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const C = {
-  surface: "#121a2b",
-  ink: "#f2f5fa",
-  ink2: "#b7c0d0",
-  muted: "#8791a5",
-  grid: "#1e2a44",
-  axis: "#2c3a5c",
-  frontier: "#3987e5",
-  cal: "#d55181",
-  you: "#c98500",
+  surface: cssVar("--surface"),
+  ink: cssVar("--ink"),
+  ink2: cssVar("--ink-2"),
+  muted: cssVar("--muted"),
+  grid: cssVar("--grid"),
+  axis: cssVar("--axis"),
+  frontier: cssVar("--series-frontier"),
+  cal: cssVar("--series-cal"),
+  you: cssVar("--series-you"),
 };
 
 // ---------- state ----------

@@ -19,10 +19,17 @@
   --series-cal:      #d55181;
   --series-you:      #c98500;
   --danger:       #e66767;
+  --danger-bg:    #2a1520;
+
+  /* Fonts (docs/BRANDING.md): brand fonts land by changing these two
+     tokens + @font-face rules; self-hosted woff2 in fonts/. */
+  --font-body:    system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: var(--font-body);
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+html, body {
+  font-family: var(--font-body); margin: 0; padding: 0; }
 body {
   background: var(--plane);
   color: var(--ink);
@@ -33,7 +40,8 @@ body {
   display: flex; align-items: baseline; justify-content: space-between;
   padding: 18px 28px 10px;
 }
-.wordmark { font-weight: 800; font-size: 22px; letter-spacing: 0.04em; }
+.wordmark { display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-display); font-weight: 800; font-size: 22px; letter-spacing: 0.04em; }
 .wordmark .condor { color: var(--ink); }
 .wordmark .funds  { color: var(--accent-hi); }
 .wordmark .proto  {
@@ -94,7 +102,7 @@ button.small { padding: 6px 12px; font-size: 13px; }
 
 .error {
   border-color: var(--danger); color: #ffd9d9;
-  background: #2a1520;
+  background: var(--danger-bg);
 }
 
 /* save & share */

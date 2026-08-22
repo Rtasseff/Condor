@@ -12,15 +12,6 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   a list in this file (or a `UI-NOTES.md`) with each item tagged bug / UX /
   feature, so the polish work below can be prioritized from evidence
   rather than guesses. Precedes "UI polish" and "API/UX robustness".
-- [ ] **Branding & theming readiness** — make restyling a one-block edit
-  per docs/BRANDING.md (the contract) and ADR 0003 (stack decision:
-  Django templates + tokens, no build step). Implementation: add
-  `--font-body`/`--font-display` tokens; bridge the `app.js` chart
-  palette to read CSS custom properties via `getComputedStyle` (kill the
-  duplicated hex literals); fix the one hardcoded color (`#2a1520`
-  error bg); create `static/explorer/brand/` with placeholder logo.svg +
-  favicon wired into the template; extract `base.html` when a second
-  page appears. Then the branding pass = new token values + new SVGs.
 - [ ] **Release 0.1 to the old Condor team** (~5 trusted users) — after
   RT's UI review and the branding pass: pick a small host (Fly.io /
   Railway / small VPS + Docker), Postgres-or-sqlite decision at that
@@ -116,6 +107,15 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Branding & theming readiness** — 2026-08-22. Per docs/BRANDING.md
+      + ADR 0003: `--font-body`/`--font-display` tokens (body/wordmark
+      wired), `--danger-bg` replaces the last hardcoded color, `app.js`
+      chart palette now reads the CSS theme block via getComputedStyle
+      (hex literals gone), `static/explorer/brand/` with placeholder
+      logo.svg + favicon.svg wired into the template. The branding pass
+      is now: new token values + new SVGs, nothing else. `base.html`
+      extraction deferred until a second page exists.
 
 - [x] **Return-calculation options** — 2026-08-22. Engine (`stats.py`):
       `metric` relative/log, `timeframe` D/M (21-day windows, ×12
