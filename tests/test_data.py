@@ -188,3 +188,48 @@ class TestLive:
         from condor.data import risk_free_rate
         r = risk_free_rate("3m", store=PriceStore(tmp_path))
         assert 0.0 < r["rate"] < 0.15 and r["series"] == "DGS3MO"
+
+
+class TestConcurrency:
+    """Several web workers / CLI runs may share one store (ADR 0002)."""
+
+    def test_same_ticker_fetched_once(self, store, monkeypatch):
+        import threading, time as _t
+        history = make_history()
+
+        class SlowSrc:
+            name = "slow"
+            calls = 0
+            def fetch(self, ticker, start=None):
+                SlowSrc.calls += 1
+                _t.sleep(0.05)
+                return history.copy()
+        monkeypatch.setattr("condor.data.store.get_sources",
+                            lambda source=None: [SlowSrc()])
+        results = []
+        def worker():
+            results.append(store.get("AAA", start=START))
+        threads = [threading.Thread(target=worker) for _ in range(5)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        assert SlowSrc.calls == 1                 # waiters reused the download
+        assert len(results) == 5
+        assert all(len(r) == len(results[0]) for r in results)
+
+    def test_manifest_survives_parallel_tickers(self, store, monkeypatch):
+        import threading
+        history = make_history()
+
+        class Src:
+            name = "fake"
+            def fetch(self, ticker, start=None):
+                return history.copy()
+        monkeypatch.setattr("condor.data.store.get_sources",
+                            lambda source=None: [Src()])
+        tickers = [f"T{i}" for i in range(8)]
+        threads = [threading.Thread(target=store.get,
+                                    kwargs={"ticker": t, "start": START})
+                   for t in tickers]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        assert store.tickers() == sorted(tickers)  # no lost manifest entries

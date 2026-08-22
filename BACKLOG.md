@@ -25,9 +25,9 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   RT's UI review and the branding pass: pick a small host (Fly.io /
   Railway / small VPS + Docker), Postgres-or-sqlite decision at that
   scale, `DEBUG=0` settings hygiene (SECRET_KEY, ALLOWED_HOSTS, static
-  serving), and one pre-flight: PriceStore assumes a single writer —
-  add a simple per-ticker file lock before multiple web workers share
-  the store. No auth for 0.1 (unguessable URLs); users/auth stays Later.
+  serving). Pre-flight done early (2026-08-22): PriceStore now takes
+  per-ticker + manifest POSIX file locks, so multiple web workers can
+  share the store. No auth for 0.1 (unguessable URLs); users/auth Later.
 - [ ] **Verification notebook** (`notebooks/01_verify_core.ipynb`): the same
   spot-check story as `202411_refact_optWF.ipynb` — hand-computed value next
   to function output, legacy vs v2 side by side, notebook golden numbers —

@@ -19,11 +19,16 @@ from __future__ import annotations
 
 import json
 import os
-import time
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+
+try:  # POSIX file locks; on Windows dev boxes we degrade to no locking
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 from .sources import DataFetchError, get_sources
 
@@ -52,6 +57,25 @@ class PriceStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self._manifest_path.write_text(json.dumps(m, indent=1, sort_keys=True))
 
+    @contextmanager
+    def _lock(self, name: str):
+        """Exclusive advisory lock (multi-process safe on POSIX).
+
+        Web workers, the CLI, and notebooks may share one store; see
+        docs/decisions/0002. `name` is a ticker (serialize downloads of
+        one ticker) or 'manifest' (serialize read-modify-write of the
+        shared manifest)."""
+        if fcntl is None:  # pragma: no cover
+            yield
+            return
+        self.root.mkdir(parents=True, exist_ok=True)
+        with open(self.root / f".{name}.lock", "w") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def info(self) -> pd.DataFrame:
         """One row per stored ticker: dates covered, source, fetched-at."""
         m = self._manifest()
@@ -66,11 +90,12 @@ class PriceStore:
     def remove(self, ticker: str) -> bool:
         """Delete a ticker's file and manifest entry. True if it existed."""
         ticker = ticker.upper()
-        m = self._manifest()
-        existed = ticker in m
-        if existed:
-            del m[ticker]
-            self._write_manifest(m)
+        with self._lock("manifest"):
+            m = self._manifest()
+            existed = ticker in m
+            if existed:
+                del m[ticker]
+                self._write_manifest(m)
         self._path(ticker).unlink(missing_ok=True)
         return existed
 
@@ -92,18 +117,19 @@ class PriceStore:
               requested_start: date) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         frame.to_parquet(self._path(ticker))
-        m = self._manifest()
-        prev = m.get(ticker.upper(), {})
-        old_req = prev.get("requested_start")
-        req = min(str(requested_start), old_req) if old_req else str(requested_start)
-        m[ticker.upper()] = {
-            "source": source,
-            "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "first": str(frame.index[0].date()),
-            "last": str(frame.index[-1].date()),
-            "requested_start": req,
-        }
-        self._write_manifest(m)
+        with self._lock("manifest"):
+            m = self._manifest()
+            prev = m.get(ticker.upper(), {})
+            old_req = prev.get("requested_start")
+            req = min(str(requested_start), old_req) if old_req else str(requested_start)
+            m[ticker.upper()] = {
+                "source": source,
+                "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "first": str(frame.index[0].date()),
+                "last": str(frame.index[-1].date()),
+                "requested_start": req,
+            }
+            self._write_manifest(m)
 
     # -- fetch/update ------------------------------------------------
     def _fetch(self, ticker: str, start: date | None, sources) -> tuple:
@@ -119,6 +145,27 @@ class PriceStore:
             max_age_hours: float = MAX_AGE_HOURS) -> pd.DataFrame:
         """Daily [close, adj_close] for ticker from `start`, updating if due."""
         ticker = ticker.upper()
+        if self._fresh_enough(ticker, start, source, max_age_hours):
+            return self.read(ticker).loc[str(start):]  # no lock needed
+        with self._lock(ticker):
+            # another process may have fetched while we waited for the lock
+            if self._fresh_enough(ticker, start, source, max_age_hours):
+                return self.read(ticker).loc[str(start):]
+            return self._refresh(ticker, start, source, max_age_hours)
+
+    def _fresh_enough(self, ticker: str, start: date, source: str | None,
+                      max_age_hours: float) -> bool:
+        entry = self._manifest().get(ticker)
+        if entry is None or not self._path(ticker).exists():
+            return False
+        if source is not None and entry["source"] != source:
+            return False
+        if str(start) < entry["requested_start"] and str(start) < entry["first"]:
+            return False
+        return _age_hours(entry["fetched_at"]) < max_age_hours
+
+    def _refresh(self, ticker: str, start: date, source: str | None,
+                 max_age_hours: float) -> pd.DataFrame:
         sources = get_sources(source)
         entry = self._manifest().get(ticker)
         stored = self.read(ticker)
@@ -134,10 +181,6 @@ class PriceStore:
             frame, name = self._fetch(ticker, start, sources)
             self._save(ticker, frame, name, start)
             return frame.loc[str(start):]
-
-        age_h = _age_hours(entry["fetched_at"])
-        if age_h < max_age_hours:
-            return stored.loc[str(start):]
 
         # Incremental update with seam check
         seam = stored.tail(SEAM_ROWS)
