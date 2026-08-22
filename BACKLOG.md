@@ -28,11 +28,6 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   serving). Pre-flight done early (2026-08-22): PriceStore now takes
   per-ticker + manifest POSIX file locks, so multiple web workers can
   share the store. No auth for 0.1 (unguessable URLs); users/auth Later.
-- [ ] **Verification notebook** (`notebooks/01_verify_core.ipynb`): the same
-  spot-check story as `202411_refact_optWF.ipynb` — hand-computed value next
-  to function output, legacy vs v2 side by side, notebook golden numbers —
-  for interactive inspection. `tests/test_verification.py` is the durable
-  version; the notebook is the readable one.
 - [ ] **Return-calculation options** matching legacy: `metric` (relative /
   log), `timeFrame` (D / M with 21-day lag), sampling interval (`sampInt`,
   legacy default 20 to de-overlap monthly windows), and geometric-vs-
@@ -125,6 +120,14 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Verification notebook** (`notebooks/01_verify_core.ipynb`) —
+      2026-08-22. The readable twin of `tests/test_verification.py`:
+      hand-computed 5-point case for median/MAD/CoMAD, closed-form
+      Markowitz vs the optimizer, legacy-vs-v2 side by side (CoMAD exact
+      to ~1e-19; normal Σ intentionally differs = Ledoit-Wolf, shown not
+      hidden), the 2024 notebook golden numbers, and an object-API demo
+      with a frontier plot. Executed offline, outputs saved.
 
 - [x] **CLI** (`condor/cli.py`, `python -m condor`) — 2026-08-22. Thin
       boundary over the object API (no numerics, same rule as views):

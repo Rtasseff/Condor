@@ -14,6 +14,7 @@ diversified portfolio building accessible to people who've never invested.
 | `context/legacy/` | Snapshot of the real code from `condor_test` (reference only) |
 | `drive_export/` | Text dump of the condorfunds@gmail.com work drive (`INDEX.md` lists all 43 docs). `files/` holds originals + bulk market data and stays out of git. |
 | `condor/` | v2 analytics core: assets, portfolios, frontier optimization |
+| `notebooks/` | `01_verify_core.ipynb` — the verification story, readable and re-runnable |
 | `web/` | v2 Django app: the portfolio Explorer UI |
 
 ## Quick start
