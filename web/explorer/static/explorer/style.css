@@ -97,6 +97,52 @@ button.small { padding: 6px 12px; font-size: 13px; }
   background: #2a1520;
 }
 
+/* save & share */
+.savecard { padding: 14px 20px; }
+.saverow {
+  display: flex; gap: 10px; align-items: end; flex-wrap: wrap;
+}
+.saverow + .saverow { margin-top: 12px; }
+.saverow label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; color: var(--muted);
+}
+.saverow label.grow { flex: 1; min-width: 200px; }
+.saverow input {
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 8px;
+  padding: 7px 10px; font-size: 14px; width: 100%;
+}
+#sharelink { font-size: 13px; color: var(--accent-hi); }
+
+.savedlist { list-style: none; margin: 0; padding: 0; }
+.savedlist li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 4px; border-bottom: 1px solid var(--grid);
+}
+.savedlist li.empty-row { color: var(--muted); font-size: 13px; }
+.savedlist .meta {
+  flex: 1; color: var(--muted); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.savedlist .chip {
+  background: var(--surface-2); border: 1px solid var(--ring);
+  color: var(--ink-2); border-radius: 999px;
+  padding: 2px 12px; font-size: 12px; text-decoration: none;
+}
+.savedlist .chip:hover { color: var(--ink); border-color: var(--accent); }
+.savedlist button.linkish {
+  background: none; border: none; padding: 0;
+  color: var(--accent-hi); font-weight: 600; font-size: 14px;
+}
+.savedlist button.linkish:hover { text-decoration: underline; }
+.savedlist button.rm {
+  background: none; border: none; color: var(--muted);
+  font-size: 16px; padding: 0 4px;
+}
+.savedlist button.rm:hover { color: var(--danger); }
+.savedlist button.rm.armed { color: var(--danger); font-size: 12px; }
+
 /* main layout */
 .layout { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }

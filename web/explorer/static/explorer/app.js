@@ -21,6 +21,8 @@ const state = {
   names: {},            // ticker -> company name (from bundled list)
   result: null,         // last /api/analyze payload
   selected: null,       // selected frontier point (or named portfolio)
+  savedId: null,        // uuid of the saved portfolio this came from
+  savedName: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -437,6 +439,192 @@ function useWeights(weights) {
   analyze();
 }
 
+// ---------- save & share ----------
+// The server stores the configuration only (tickers, weights, method,
+// lookback, rf) and normalizes weights to fractions of 1; the sidebar
+// works in percent, so conversion happens at this boundary.
+function currentConfig() {
+  const weights = {};
+  const even = state.assets.length ? 100 / state.assets.length : 0;
+  for (const t of state.assets) weights[t] = state.weights[t] ?? even;
+  return {
+    weights,
+    method: $("method").value,
+    years: parseInt($("years").value, 10),
+    risk_free_rate: parseFloat($("rf").value) / 100,
+  };
+}
+
+function applyConfig(cfg) {
+  state.assets = (cfg.tickers || []).slice(0, 15);
+  state.weights = {};
+  for (const t of state.assets) {
+    state.weights[t] = +(100 * ((cfg.weights || {})[t] || 0)).toFixed(1);
+  }
+  pickOption($("method"), cfg.method, cfg.method);
+  pickOption($("years"), String(cfg.years), `${cfg.years} years`);
+  $("rf").value = +(100 * cfg.risk_free_rate).toFixed(2);
+  state.savedId = cfg.id || null;
+  state.savedName = cfg.name || "";
+  $("savename").value = state.savedName;
+  $("savecopy").hidden = !state.savedId;
+  renderAssets();
+}
+
+// a saved lookback/method the <select> doesn't offer still has to load
+function pickOption(sel, value, label) {
+  if (![...sel.options].some((o) => o.value === value)) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  }
+  sel.value = value;
+}
+
+function showSavePanel(open) {
+  $("savepanel").hidden = !open;
+  if (open) {
+    $("savename").value = state.savedName;
+    $("savecopy").hidden = !state.savedId;
+    $("savename").focus();
+  }
+}
+
+async function savePortfolio(asNew) {
+  showError("");
+  const name = $("savename").value.trim();
+  if (!name) {
+    showError("Give the portfolio a name.");
+    return;
+  }
+  if (!state.assets.length) {
+    showError("Add at least one asset.");
+    return;
+  }
+  const body = { name, ...currentConfig() };
+  if (!asNew && state.savedId) body.id = state.savedId;
+  try {
+    const res = await fetch("/api/portfolios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+    state.savedId = data.id;
+    state.savedName = data.name;
+    $("savecopy").hidden = false;
+    $("sharelink").value = data.url;
+    $("sharerow").hidden = false;
+    $("status").textContent = `Saved “${data.name}”.`;
+    setTimeout(() => { $("status").textContent = ""; }, 3000);
+    if (!$("savedpanel").hidden) refreshSaved();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function refreshSaved() {
+  const ul = $("savedlist");
+  try {
+    const res = await fetch("/api/portfolios");
+    const rows = await res.json();
+    if (!res.ok) throw new Error(rows.error || `Server error (${res.status})`);
+    ul.replaceChildren();
+    if (!rows.length) {
+      const li = document.createElement("li");
+      li.className = "empty-row";
+      li.textContent = "Nothing saved yet — hit Save above.";
+      ul.appendChild(li);
+      return;
+    }
+    for (const row of rows) ul.appendChild(savedRow(row));
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function savedRow(row) {
+  const li = document.createElement("li");
+
+  const load = document.createElement("button");
+  load.type = "button";
+  load.className = "linkish";
+  load.textContent = row.name;
+  load.title = "Load this portfolio and analyze it";
+  load.addEventListener("click", () => loadSaved(row.id));
+
+  const meta = document.createElement("span");
+  meta.className = "meta";
+  meta.textContent =
+    `${row.tickers.join(" · ")} — ${row.method}, ` +
+    `saved ${row.updated_at.slice(0, 10)}`;
+
+  const share = document.createElement("a");
+  share.className = "chip";
+  share.href = `/p/${row.id}`;
+  share.textContent = "link";
+  share.title = "Shareable page for this portfolio";
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "rm";
+  del.textContent = "×";
+  del.setAttribute("aria-label", `Delete ${row.name}`);
+  // two-step delete: no confirm() dialog (they block automation)
+  del.addEventListener("click", () => {
+    if (del.dataset.armed) {
+      deleteSaved(row.id);
+    } else {
+      del.dataset.armed = "1";
+      del.textContent = "delete?";
+      del.classList.add("armed");
+    }
+  });
+
+  li.append(load, meta, share, del);
+  return li;
+}
+
+async function deleteSaved(id) {
+  showError("");
+  try {
+    const res = await fetch(`/api/portfolios/${id}`, {
+      method: "DELETE",
+      headers: { "X-CSRFToken": csrftoken() },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Server error (${res.status})`);
+    }
+    if (state.savedId === id) {
+      state.savedId = null;
+      state.savedName = "";
+      $("savecopy").hidden = true;
+      $("sharerow").hidden = true;
+    }
+  } catch (err) {
+    showError(err.message);
+  }
+  refreshSaved();
+}
+
+async function loadSaved(id) {
+  showError("");
+  try {
+    const res = await fetch(`/api/portfolios/${id}`);
+    const cfg = await res.json();
+    if (!res.ok) throw new Error(cfg.error || `Server error (${res.status})`);
+    applyConfig(cfg);
+    $("sharelink").value = cfg.url;
+    $("sharerow").hidden = false;
+    analyze();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
 // ---------- wire up ----------
 $("addform").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -460,9 +648,41 @@ $("adoptpoint").addEventListener("click", () => {
   if (state.selected) useWeights(state.selected.weights);
 });
 
+$("save").addEventListener("click", () => showSavePanel($("savepanel").hidden));
+$("savecancel").addEventListener("click", () => showSavePanel(false));
+$("saveform").addEventListener("submit", (e) => {
+  e.preventDefault();
+  savePortfolio(false);
+});
+$("savecopy").addEventListener("click", () => savePortfolio(true));
+$("sharelink").addEventListener("focus", (e) => e.target.select());
+$("copylink").addEventListener("click", async () => {
+  const link = $("sharelink");
+  link.select();
+  try {
+    await navigator.clipboard.writeText(link.value);
+  } catch {
+    document.execCommand("copy"); // older browsers / insecure origins
+  }
+  $("copylink").textContent = "Copied";
+  setTimeout(() => { $("copylink").textContent = "Copy"; }, 1500);
+});
+$("saved").addEventListener("click", () => {
+  const open = $("savedpanel").hidden;
+  $("savedpanel").hidden = !open;
+  $("saved").setAttribute("aria-expanded", String(open));
+  if (open) refreshSaved();
+});
+
 (async function init() {
   await loadTickers();
+  const presetEl = $("preset"); // /p/<uuid> injects the saved config
+  if (presetEl) {
+    applyConfig(JSON.parse(presetEl.textContent));
+    $("sharelink").value = window.location.href;
+    $("sharerow").hidden = false;
+  }
   renderAssets();
   renderQuickAdd();
-  analyze(); // first paint with the deck's example portfolio
+  analyze(); // first paint: the shared portfolio, else the deck's example
 })();
