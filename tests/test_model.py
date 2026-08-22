@@ -201,6 +201,63 @@ class TestFrontier:
         slope = (cal["y"][1] - cal["y"][0]) / cal["x"][1]
         assert slope == pytest.approx(fr.tangency.sharpe(self.RF))
 
+    def test_cal_mix_is_the_engine_and_closed_form(self, fr):
+        """CAL mixes are linear two-fund blends: k=0 is pure T-bills, k=1
+        is exactly the tangency portfolio, Sharpe is constant along the
+        line, and weights are total-wealth fractions summing to k."""
+        from condor.frontier import _cal_mix
+        tan, rf = fr.tangency, self.RF
+
+        # engine agreement at an arbitrary fraction
+        m = fr.cal_mix(0.6)
+        eng = _cal_mix(0.6, rf, tan.expected_return, tan.dispersion)
+        assert {k: m[k] for k in ("ret", "vol", "sharpe")} == eng
+        # closed form: linear interpolation between rf and the tangency
+        assert m["ret"] == pytest.approx(rf + 0.6 * (tan.expected_return - rf))
+        assert m["vol"] == pytest.approx(0.6 * tan.dispersion)
+
+        # k=0: pure T-bills (Sharpe None, not NaN -- payload is JSON)
+        z = fr.cal_mix(0.0)
+        assert z["ret"] == pytest.approx(rf) and z["vol"] == 0
+        assert z["sharpe"] is None and z["weights"] == {}
+        assert z["cash_frac"] == 1 and not z["borrowing"]
+
+        # k=1: the tangency portfolio, number for number
+        one = fr.cal_mix(1.0)
+        assert one["ret"] == pytest.approx(tan.expected_return)
+        assert one["vol"] == pytest.approx(tan.dispersion)
+        assert one["weights"] == tan.to_dict(rf)["weights"]
+
+        # k>1: borrowing, flagged, cash negative
+        b = fr.cal_mix(1.25)
+        assert b["borrowing"] and b["cash_frac"] == pytest.approx(-0.25)
+
+        with pytest.raises(ValueError):
+            fr.cal_mix(-0.1)
+
+    def test_cal_grid(self, fr):
+        """cal payload carries a snap-to grid spanning 100% T-bills out
+        past the tangency into the borrowing region."""
+        cal = fr.cal
+        pts = cal["points"]
+        assert len(pts) >= 2 and pts[0]["risky_frac"] == 0
+        assert pts[-1]["vol"] == pytest.approx(cal["x"][1])   # grid spans the drawn line
+        assert any(p["borrowing"] for p in pts)               # borrowing region reachable
+        tan_sharpe = fr.tangency.sharpe(self.RF)
+        for p in pts[1:]:
+            assert p["sharpe"] == pytest.approx(tan_sharpe)   # constant along the CAL
+            assert p["cash_frac"] == pytest.approx(1 - p["risky_frac"])
+            assert p["borrowing"] == (p["risky_frac"] > 1 + 1e-9)
+            assert sum(p["weights"].values()) == pytest.approx(p["risky_frac"], abs=5e-5)
+        vols = [p["vol"] for p in pts]
+        assert vols == sorted(vols)
+
+    def test_no_cal_mix_without_tangency(self, aset):
+        fr = aset.frontier(risk_free_rate=5.0, n_points=5)
+        assert fr.cal is None
+        with pytest.raises(ValueError):
+            fr.cal_mix(0.5)
+
     def test_to_dict_shape(self, fr):
         d = fr.to_dict()
         assert set(d) == {"min_vol", "tangency", "frontier", "cal"}

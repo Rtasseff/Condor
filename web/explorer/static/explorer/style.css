@@ -18,6 +18,7 @@
   --series-frontier: #3987e5;
   --series-cal:      #d55181;
   --series-you:      #c98500;
+  --series-select:   #1fc6a3;   /* 'considering' selection ring (matches UI accent) */
   --danger:       #e66767;
   --danger-bg:    #2a1520;
 
@@ -222,6 +223,16 @@ button.small { padding: 6px 12px; font-size: 13px; }
 .wrow .val {
   font-size: 13px; color: var(--ink-2); text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.wrow .bar.cash { background: var(--series-cal); opacity: 0.75; }
+
+/* selected-point card lives inside the chart card, right under the plot */
+.pointcard { border-top: 1px solid var(--ring); margin-top: 14px; padding-top: 12px; }
+.pointcard h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+.sub.warn {
+  color: #ffd9d9; background: var(--danger-bg);
+  border: 1px solid var(--danger); border-radius: 8px;
+  padding: 8px 12px;
 }
 
 /* table */

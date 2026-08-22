@@ -15,6 +15,7 @@ from pypfopt import EfficientFrontier
 from . import stats
 
 N_FRONTIER_POINTS = 40
+N_CAL_POINTS = 41  # two-fund mixes sampled along the capital allocation line
 WEIGHT_BOUNDS = (0.0, 1.0)  # long-only, no leverage (prototype)
 
 
@@ -24,6 +25,23 @@ def _perf(w: np.ndarray, mu: pd.Series, sigma: pd.DataFrame, rf: float) -> dict:
     s = sigma.to_numpy()
     ret = float(w @ m)
     vol = float(np.sqrt(w @ s @ w))
+    sharpe = (ret - rf) / vol if vol > 0 else float("nan")
+    return {"ret": ret, "vol": vol, "sharpe": sharpe}
+
+
+def _cal_mix(risky_fraction: float, risk_free_rate: float,
+             tangency_ret: float, tangency_vol: float) -> dict:
+    """Return/vol/Sharpe of a two-fund mix on the capital allocation line.
+
+    `risky_fraction` (k) of wealth is held in the tangency portfolio and
+    1-k at the risk-free rate; k > 1 means borrowing at that rate.  Both
+    moments are linear in k -- that IS the CAL -- so Sharpe is constant
+    along the line (NaN at k=0, where dispersion is zero).
+    """
+    k = float(risky_fraction)
+    rf = float(risk_free_rate)
+    ret = rf + k * (tangency_ret - rf)
+    vol = k * float(tangency_vol)
     sharpe = (ret - rf) / vol if vol > 0 else float("nan")
     return {"ret": ret, "vol": vol, "sharpe": sharpe}
 

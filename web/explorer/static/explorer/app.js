@@ -17,6 +17,7 @@ const C = {
   frontier: cssVar("--series-frontier"),
   cal: cssVar("--series-cal"),
   you: cssVar("--series-you"),
+  select: cssVar("--series-select"),
 };
 
 // ---------- state ----------
@@ -197,13 +198,30 @@ function hoverStyle() {
   };
 }
 
+function calMixLabel(p) {
+  if (p.risky_frac < 0.005) return "100% T-bills";
+  if (p.borrowing)
+    return `Borrow ${pct(-p.cash_frac, 0)} + tangency mix ${pct(p.risky_frac, 0)}`;
+  return `T-bills ${pct(p.cash_frac, 0)} + tangency mix ${pct(p.risky_frac, 0)}`;
+}
+
+function calMixTitle(p) {
+  if (p.risky_frac < 0.005) return "100% T-bills (risk-free)";
+  if (p.borrowing)
+    return `Capital allocation — ${pct(p.risky_frac, 0)} tangency mix, ` +
+           `borrowing ${pct(-p.cash_frac, 0)} at the risk-free rate`;
+  return `Capital allocation — ${pct(p.cash_frac, 0)} T-bills + ` +
+         `${pct(p.risky_frac, 0)} tangency mix`;
+}
+
 function renderChart() {
   const r = state.result;
   if (!r) return;
   $("chart-empty").style.display = "none";
 
   const traces = [];
-  const annotations = [];
+  // Identity lives in the key (legend) — no annotations chasing markers
+  // around the plane. Selection is the "Considering" ring.
 
   // capital allocation line (under everything)
   if (r.cal) {
@@ -213,6 +231,19 @@ function renderChart() {
       line: { color: C.cal, width: 2, dash: "dash" },
       hoverinfo: "skip",
     });
+    // …dotted with clickable two-fund mixes (T-bills + tangency)
+    if (r.cal.points) {
+      traces.push({
+        x: r.cal.points.map((p) => p.vol),
+        y: r.cal.points.map((p) => p.ret),
+        text: r.cal.points.map(calMixLabel),
+        mode: "markers", name: "cal-mixes", showlegend: false,
+        marker: { size: 4, color: C.cal, opacity: 0.55 },
+        hovertemplate:
+          "%{text} · reward %{y:.1%} · risk %{x:.1%}" +
+          "<br><i>click to inspect this mix</i><extra></extra>",
+      });
+    }
   }
 
   // efficient frontier
@@ -245,56 +276,41 @@ function renderChart() {
     hovertemplate: "%{text}: reward %{y:.1%} · risk %{x:.1%}<extra></extra>",
   });
 
-  // min-vol (leftmost frontier point) — labeled ink marker, not a series
+  // min-vol (leftmost frontier point)
   if (r.min_vol) {
     traces.push({
       x: [r.min_vol.vol], y: [r.min_vol.ret],
-      mode: "markers", name: "Min dispersion", showlegend: false,
+      mode: "markers", name: "Min dispersion",
       marker: {
         size: 11, symbol: "square", color: C.ink,
         line: { color: C.surface, width: 2 },
       },
       hovertemplate:
-        "Minimum dispersion · reward %{y:.1%} · risk %{x:.1%}<extra></extra>",
-    });
-    annotations.push({
-      x: r.min_vol.vol, y: r.min_vol.ret,
-      text: "Min dispersion", showarrow: true, arrowcolor: C.axis,
-      ax: -60, ay: 20, font: { color: C.ink2, size: 12 },
+        "Minimum dispersion · reward %{y:.1%} · risk %{x:.1%}" +
+        "<br><i>click to inspect</i><extra></extra>",
     });
   }
 
-  // tangency — frontier-blue diamond with ring + label
+  // tangency — frontier-blue diamond
   if (r.tangency) {
     traces.push({
       x: [r.tangency.vol], y: [r.tangency.ret],
       customdata: [[r.tangency.sharpe]],
-      mode: "markers", name: "Tangent portfolio", showlegend: false,
+      mode: "markers", name: "Tangent ('reasonable guess')",
       marker: {
         size: 15, symbol: "diamond", color: C.frontier,
         line: { color: C.ink, width: 2 },
       },
       hovertemplate:
-        "'Reasonable guess' tangent · reward %{y:.1%} · risk %{x:.1%}" +
+        "Tangent portfolio · reward %{y:.1%} · risk %{x:.1%}" +
         " · Sharpe %{customdata[0]:.2f}<br><i>click to inspect</i><extra></extra>",
-    });
-    annotations.push({
-      x: r.tangency.vol, y: r.tangency.ret,
-      text: "'Reasonable guess'<br>tangent portfolio",
-      showarrow: true, arrowcolor: C.axis,
-      ax: -80, ay: -40, font: { color: C.ink2, size: 12 },
     });
   }
 
   // risk-free anchor
-  annotations.push({
-    x: 0, y: r.risk_free_rate,
-    text: "US T-bills<br>(risk-free)", showarrow: true, arrowcolor: C.axis,
-    ax: 30, ay: 30, font: { color: C.ink2, size: 12 },
-  });
   traces.push({
     x: [0], y: [r.risk_free_rate],
-    mode: "markers", name: "Risk-free", showlegend: false,
+    mode: "markers", name: "T-bills (risk-free)",
     marker: {
       size: 11, color: C.cal, symbol: "circle",
       line: { color: C.surface, width: 2 },
@@ -307,20 +323,28 @@ function renderChart() {
   traces.push({
     x: [p.vol], y: [p.ret],
     customdata: [[p.sharpe]],
-    mode: "markers", name: "Your choice",
+    mode: "markers", name: "Your portfolio",
     marker: {
       size: 14, color: C.you, symbol: "circle",
       line: { color: C.ink, width: 2 },
     },
     hovertemplate:
-      "Your choice · reward %{y:.1%} · risk %{x:.1%}" +
+      "Your portfolio · reward %{y:.1%} · risk %{x:.1%}" +
       " · Sharpe %{customdata[0]:.2f}<extra></extra>",
   });
-  annotations.push({
-    x: p.vol, y: p.ret,
-    text: "Your choice", showarrow: true, arrowcolor: C.axis,
-    ax: 45, ay: 25, font: { color: C.you, size: 12 },
-  });
+
+  // the point being considered (selection ring)
+  if (state.selected) {
+    traces.push({
+      x: [state.selected.vol], y: [state.selected.ret],
+      mode: "markers", name: "Considering",
+      marker: {
+        size: 22, symbol: "circle-open", color: C.select,
+        line: { width: 3, color: C.select },
+      },
+      hoverinfo: "skip",
+    });
+  }
 
   const layout = {
     paper_bgcolor: C.surface,
@@ -337,26 +361,65 @@ function renderChart() {
       tickformat: ".0%", gridcolor: C.grid, zerolinecolor: C.axis,
     },
     legend: {
-      orientation: "h", x: 0, y: 1.08,
+      orientation: "h", x: 0, y: 1.1,
       font: { color: C.ink2, size: 12 },
     },
     hoverlabel: hoverStyle(),
-    annotations,
   };
 
-  Plotly.newPlot("chart", traces, layout, {
+  Plotly.react("chart", traces, layout, {
     displayModeBar: false, responsive: true,
-  }).then((gd) => {
-    gd.on("plotly_click", (ev) => {
-      const pt = ev.points && ev.points[0];
-      if (!pt) return;
-      if (pt.data.name === "Efficient frontier") {
-        selectPoint(state.result.frontier[pt.pointIndex],
-          `Frontier point ${pt.pointIndex + 1} of ${state.result.frontier.length}`);
-      } else if (pt.data.name === "Tangent portfolio") {
-        selectPoint(state.result.tangency, "'Reasonable guess' — tangent portfolio");
-      }
-    });
+  });
+}
+
+// ---------- click-anywhere selection ----------
+// Everything inspectable, with the title the point card will show.
+function clickTargets() {
+  const r = state.result, out = [];
+  if (!r) return out;
+  r.frontier.forEach((p, i) => out.push({
+    point: p, kind: "frontier",
+    title: `Frontier point ${i + 1} of ${r.frontier.length}`,
+  }));
+  if (r.tangency) out.push({
+    point: r.tangency, kind: "frontier",
+    title: "Tangent portfolio — the 'reasonable guess'",
+  });
+  if (r.min_vol) out.push({
+    point: r.min_vol, kind: "frontier",
+    title: "Minimum-dispersion portfolio",
+  });
+  if (r.cal && r.cal.points) {
+    for (const p of r.cal.points) {
+      out.push({ point: p, kind: "cal", title: calMixTitle(p) });
+    }
+  }
+  return out;
+}
+
+// A click anywhere on the plot snaps to the nearest inspectable point in
+// *pixel* distance — no need to hit a marker exactly. Drags (zoom) and
+// clicks outside the plotting area (legend, axes) are ignored.
+function wireChartClicks() {
+  const gd = $("chart");
+  let down = null;
+  gd.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
+  gd.addEventListener("click", (e) => {
+    if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+    const fl = gd._fullLayout;
+    if (!fl || !fl.xaxis || !state.result) return;
+    const rect = gd.getBoundingClientRect();
+    const xpx = e.clientX - rect.left - fl.xaxis._offset;
+    const ypx = e.clientY - rect.top - fl.yaxis._offset;
+    if (xpx < 0 || ypx < 0 || xpx > fl.xaxis._length || ypx > fl.yaxis._length) return;
+    let best = null, bestD = Infinity;
+    for (const c of clickTargets()) {
+      const dx = fl.xaxis.d2p(c.point.vol) - xpx;
+      const dy = fl.yaxis.d2p(c.point.ret) - ypx;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (best) selectPoint(best.point, best.title, best.kind);
   });
 }
 
@@ -368,10 +431,10 @@ function renderTiles() {
   $("t-sharpe").textContent = p.sharpe.toFixed(2);
 }
 
-function selectPoint(point, title) {
-  state.selected = { ...point, title };
+function selectPoint(point, title, kind) {
+  state.selected = { ...point, title, kind: kind || "frontier" };
+  renderChart(); // paints the "Considering" ring
   renderPoint(state.selected);
-  $("pointcard").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function renderPoint(sel) {
@@ -379,12 +442,16 @@ function renderPoint(sel) {
   if (!sel) { card.hidden = true; return; }
   card.hidden = false;
   $("pointtitle").textContent = sel.title || "Selected portfolio";
+  const sharpe = sel.sharpe == null ? "—" : sel.sharpe.toFixed(2);
   $("pointstats").textContent =
-    `Reward ${pct(sel.ret)} · risk ${pct(sel.vol)} · Sharpe ${sel.sharpe.toFixed(2)}`;
+    `Reward ${pct(sel.ret)} · risk ${pct(sel.vol)} · Sharpe ${sharpe}`;
 
   const box = $("pointweights");
   box.replaceChildren();
   const entries = Object.entries(sel.weights).sort((a, b) => b[1] - a[1]);
+  if (sel.kind === "cal" && sel.cash_frac > 0.0005) {
+    entries.unshift(["T-BILLS", sel.cash_frac]);
+  }
   for (const [t, w] of entries) {
     const row = document.createElement("div");
     row.className = "wrow";
@@ -393,14 +460,39 @@ function renderPoint(sel) {
     tick.textContent = t;
     const barwrap = document.createElement("div");
     const bar = document.createElement("div");
-    bar.className = "bar";
-    bar.style.width = Math.max(1, 100 * w) + "%";
+    bar.className = t === "T-BILLS" ? "bar cash" : "bar";
+    bar.style.width = Math.min(100, Math.max(1, 100 * w)) + "%";
     barwrap.appendChild(bar);
     const val = document.createElement("span");
     val.className = "val";
     val.textContent = pct(w);
     row.append(tick, barwrap, val);
     box.appendChild(row);
+  }
+
+  // CAL mixes aren't adoptable (the sidebar tracks only risky assets);
+  // explain the split instead — with a warning in the borrowing region.
+  const note = $("calnote");
+  const adopt = $("adoptpoint");
+  if (sel.kind === "cal") {
+    adopt.hidden = true;
+    note.hidden = false;
+    if (sel.borrowing) {
+      note.className = "sub warn";
+      note.textContent =
+        `This point borrows ${pct(-sel.cash_frac, 0)} of your wealth at the ` +
+        `risk-free rate to lever up the tangency mix. Most investors can't ` +
+        `borrow at the T-bill rate, so real results would be worse than shown.`;
+    } else {
+      note.className = "sub";
+      note.textContent =
+        `To hold this mix, keep ${pct(sel.cash_frac, 0)} of your money in ` +
+        `T-bills and put the remaining ${pct(sel.risky_frac, 0)} into the ` +
+        `tangency portfolio (bars are fractions of your total wealth).`;
+    }
+  } else {
+    adopt.hidden = false;
+    note.hidden = true;
   }
 }
 
@@ -680,6 +772,7 @@ $("saved").addEventListener("click", () => {
 });
 
 (async function init() {
+  wireChartClicks();
   await loadTickers();
   const presetEl = $("preset"); // /p/<uuid> injects the saved config
   if (presetEl) {

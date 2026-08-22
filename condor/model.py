@@ -41,7 +41,8 @@ import numpy as np
 import pandas as pd
 
 from . import stats
-from .frontier import N_FRONTIER_POINTS, _perf, _solve, _weights_dict
+from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix, _perf,
+                       _solve, _weights_dict)
 
 __all__ = ["Asset", "AssetSet", "Portfolio", "Frontier"]
 
@@ -568,6 +569,36 @@ class Frontier:
                else (lambda p: abs(p.dispersion - dispersion)))
         return min(self.points, key=key)
 
+    def cal_mix(self, risky_fraction: float) -> dict:
+        """A point on the capital allocation line, as a payload dict.
+
+        `risky_fraction` of wealth goes into the tangency portfolio and
+        the rest into T-bills at the risk-free rate; a fraction above 1
+        means borrowing at that rate (flagged `borrowing` -- most
+        investors can't actually borrow at the T-bill rate).  Weights are
+        fractions of *total* wealth, so they sum to `risky_fraction`;
+        `cash_frac` is the balance (negative when borrowing).  Numbers
+        come from the engine's `_cal_mix`; Sharpe is None at zero risk
+        (NaN is not JSON-safe).
+        """
+        if self.tangency is None:
+            raise ValueError("no tangency portfolio at this risk-free rate")
+        k = float(risky_fraction)
+        if k < 0:
+            raise ValueError("risky_fraction must be >= 0")
+        perf = _cal_mix(k, self.risk_free_rate,
+                        self.tangency.expected_return, self.tangency.dispersion)
+        if perf["vol"] == 0:
+            perf["sharpe"] = None
+        return {
+            "risky_frac": round(k, 6),
+            "cash_frac": round(1.0 - k, 6),
+            "borrowing": k > 1 + 1e-9,
+            "weights": _weights_dict(k * self.tangency.weight_array,
+                                     self.asset_set.tickers),
+            **perf,
+        }
+
     # -- plotting helpers / payload ------------------------------------
     @property
     def curve(self) -> pd.DataFrame:
@@ -577,15 +608,20 @@ class Frontier:
 
     @property
     def cal(self) -> dict | None:
-        """Capital allocation line endpoints {x: [..], y: [..]}."""
+        """Capital allocation line: endpoints for drawing the line, plus
+        a grid of two-fund mixes (`cal_mix`) from 100% T-bills out past
+        the tangency into the borrowing region, for the UI to snap to."""
         if self.tangency is None:
             return None
         rf = self.risk_free_rate
         vols = [p.dispersion for p in self.points] + \
                [a["vol"] for a in self.asset_set.asset_points()]
         x_end = max(vols or [self.tangency.dispersion]) * 1.05
+        k_max = x_end / self.tangency.dispersion
         return {"x": [0.0, x_end],
-                "y": [rf, rf + self.tangency.sharpe(rf) * x_end]}
+                "y": [rf, rf + self.tangency.sharpe(rf) * x_end],
+                "points": [self.cal_mix(float(k))
+                           for k in np.linspace(0.0, k_max, N_CAL_POINTS)]}
 
     def to_dict(self) -> dict:
         rf = self.risk_free_rate

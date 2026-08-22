@@ -75,14 +75,24 @@
   <div class="layout">
     <section class="card chartcard">
       <h2>Risk &amp; Reward</h2>
-      <p class="sub">Every point on the curve is a portfolio of your assets — click one to see its mix.
-         The dashed line runs from the risk-free rate through the tangent portfolio.</p>
+      <p class="sub">Every point on the curve is a portfolio of your assets; the dashed line
+         blends T-bills with the tangent portfolio (past it, you'd be borrowing).
+         Click anywhere near either — the nearest mix lights up below. The key above
+         the chart names each marker.</p>
       <div id="chart" aria-label="Efficient frontier chart"></div>
       <div id="chart-empty" class="empty">Add assets on the right, then hit <b>Analyze</b>.</div>
+
+      <section id="pointcard" class="pointcard" hidden aria-label="Selected point">
+        <h2 id="pointtitle">Selected portfolio</h2>
+        <p class="sub" id="pointstats"></p>
+        <div id="pointweights" class="wbars"></div>
+        <p class="sub" id="calnote" hidden></p>
+        <button id="adoptpoint" class="primary small">Make this my portfolio</button>
+      </section>
     </section>
 
     <aside class="card sidecard" aria-label="Your portfolio">
-      <h2>Your choice:</h2>
+      <h2>Your portfolio</h2>
       <form id="addform" autocomplete="off">
         <input id="addticker" list="tickerlist" placeholder="Add asset — ticker or name"
                spellcheck="false" aria-label="Add asset">
@@ -103,13 +113,6 @@
     <div class="tile"><span class="label">Expected return <small>(annual)</small></span><span class="value" id="t-ret">–</span></div>
     <div class="tile"><span class="label">Dispersion <small>(annual σ)</small></span><span class="value" id="t-vol">–</span></div>
     <div class="tile"><span class="label">Sharpe ratio</span><span class="value" id="t-sharpe">–</span></div>
-  </section>
-
-  <section class="card" id="pointcard" hidden>
-    <h2 id="pointtitle">Selected portfolio</h2>
-    <p class="sub" id="pointstats"></p>
-    <div id="pointweights" class="wbars"></div>
-    <button id="adoptpoint" class="primary small">Make this my portfolio</button>
   </section>
 
   <section class="card" id="tablecard" hidden>
