@@ -6,13 +6,15 @@ JSON. No numerics here — see ARCHITECTURE.md. Persistence is the same deal
 in reverse: `explorer.models` stores the inputs, `condor` does the maths.
 """
 
+import functools
 import json
 import logging
 import math
 import re
 
+from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import models, transaction
 from django.http import Http404, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -52,11 +54,13 @@ def _render_page(request, preset=None):
     return render(request, "explorer/index.html", ctx)
 
 
+@login_required
 @ensure_csrf_cookie
 def index(request):
     return _render_page(request)
 
 
+@login_required
 @ensure_csrf_cookie
 def shared_portfolio(request, pid):
     """`/p/<uuid>` — the same page, preloaded with a saved portfolio."""
@@ -72,6 +76,17 @@ def shared_portfolio(request, pid):
 
 def _bad(msg, status=400):
     return JsonResponse({"error": msg}, status=status)
+
+
+def api_login_required(view):
+    """Like login_required, but JSON: a fetch() that has lost its session
+    gets a 401 the front end can show, not a redirect to an HTML page."""
+    @functools.wraps(view)
+    def wrapped(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return _bad("Login required — reload the page to sign in.", status=401)
+        return view(request, *args, **kwargs)
+    return wrapped
 
 
 def _json_body(request):
@@ -142,6 +157,7 @@ def _clean_weights(raw):
 # ---------------------------------------------------------------- analyze
 
 
+@api_login_required
 @require_POST
 def api_analyze(request):
     body, err = _json_body(request)
@@ -205,6 +221,7 @@ def _detail(request, portfolio):
     }
 
 
+@api_login_required
 @require_http_methods(["GET", "POST"])
 def api_portfolios(request):
     if request.method == "GET":
@@ -216,9 +233,9 @@ def api_portfolios(request):
                 "method": p.method,
                 "updated_at": p.updated_at.isoformat(),
             }
-            for p in SavedPortfolio.objects.prefetch_related("holdings").order_by(
-                "-updated_at"
-            )
+            for p in SavedPortfolio.objects.filter(
+                models.Q(owner=request.user) | models.Q(owner__isnull=True)
+            ).prefetch_related("holdings").order_by("-updated_at")
         ]
         return JsonResponse(rows, safe=False)
 
@@ -245,11 +262,15 @@ def api_portfolios(request):
         portfolio = _get_portfolio(body["id"])
         if portfolio is None:
             return _bad("No saved portfolio with that id.", status=404)
+        if portfolio.owner is not None and portfolio.owner != request.user:
+            return _bad("That portfolio belongs to another user — "
+                        "use 'Save as new' to make your own copy.", status=403)
 
     created = portfolio is None
     with transaction.atomic():
         if portfolio is None:
             portfolio = SavedPortfolio()
+        portfolio.owner = request.user
         portfolio.name = name
         portfolio.method = settings["method"]
         portfolio.years = settings["years"]
@@ -267,6 +288,7 @@ def api_portfolios(request):
     )
 
 
+@api_login_required
 @require_http_methods(["GET", "DELETE"])
 def api_portfolio(request, pid):
     portfolio = _get_portfolio(pid)
@@ -274,6 +296,8 @@ def api_portfolio(request, pid):
         return _bad("No saved portfolio with that id.", status=404)
 
     if request.method == "DELETE":
+        if portfolio.owner is not None and portfolio.owner != request.user:
+            return _bad("That portfolio belongs to another user.", status=403)
         portfolio.delete()
         return JsonResponse({"deleted": str(pid)})
 

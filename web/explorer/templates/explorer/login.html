@@ -1,0 +1,45 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Condor Funds — Sign in</title>
+<link rel="icon" type="image/svg+xml" href="{% static 'explorer/brand/favicon.svg' %}">
+<link rel="stylesheet" href="{% static 'explorer/style.css' %}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wordmark">
+    <img class="logo" src="{% static 'explorer/brand/logo.svg' %}" alt="" height="26">
+    <span class="condor">CONDOR</span><span class="funds">FUNDS</span>
+    <span class="proto">v2 prototype</span>
+  </div>
+</header>
+
+<main class="loginmain">
+  <section class="card logincard" aria-label="Sign in">
+    <h2>Sign in</h2>
+    <p class="sub">Accounts are created by the team admin — ask if you need one.</p>
+    {% if form.errors %}
+      <div class="error card">Wrong username or password.</div>
+    {% endif %}
+    <form method="post" class="loginform">
+      {% csrf_token %}
+      <label>Username
+        <input type="text" name="username" autofocus autocapitalize="none"
+               autocomplete="username" required id="id_username">
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="current-password"
+               required id="id_password">
+      </label>
+      <input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+  </section>
+  <footer>Educational prototype — not investment advice.</footer>
+</main>
+
+</body>
+</html>

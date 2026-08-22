@@ -19,6 +19,13 @@
   <nav class="pillars" aria-hidden="true">
     <span>Learn</span><span class="active">Build</span><span>Compete</span><span>Develop</span>
   </nav>
+  <div class="userbox">
+    <span class="username">{{ user.username }}</span>
+    <form method="post" action="{% url 'logout' %}">
+      {% csrf_token %}
+      <button type="submit" class="ghost small">Log out</button>
+    </form>
+  </div>
 </header>
 
 <main>

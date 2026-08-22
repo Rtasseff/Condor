@@ -8,17 +8,25 @@ and nothing derived from prices. Behaviour lives in `condor`: hand
 
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
 class SavedPortfolio(models.Model):
     """One saved configuration, addressed by an unguessable uuid4.
 
-    That uuid is the prototype's only access control: anyone with the link
-    can read the portfolio (small, trusted group — users/auth come later).
+    Access control: every view requires a login; within the logged-in
+    team, anyone with the link can *read* a portfolio (that's the sharing
+    model), but the saved list is scoped to `owner` and only the owner
+    can update or delete.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.CASCADE, related_name="portfolios",
+        help_text="Who saved it. Null = legacy row from before accounts; "
+                  "claimed by whoever edits it next.")
     name = models.CharField(max_length=80)
     method = models.CharField(max_length=16, default="robust")
     years = models.PositiveSmallIntegerField(default=10)

@@ -9,10 +9,15 @@ import json
 import uuid
 from unittest.mock import patch
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 
 from explorer.models import Holding, SavedPortfolio
+
+
+def make_user(name="rt"):
+    return User.objects.create_user(name, password="x-not-secret-x")
 
 CONFIG = {
     "name": "Dividend core",
@@ -24,6 +29,10 @@ CONFIG = {
 
 
 class PortfolioApiTests(TestCase):
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+
     def post(self, body, expect=None):
         res = self.client.post(
             "/api/portfolios", data=json.dumps(body), content_type="application/json"
@@ -166,6 +175,8 @@ class PortfolioApiTests(TestCase):
 
 class SharedPageTests(TestCase):
     def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
         self.portfolio = SavedPortfolio.objects.create(
             name="Shared mix", method="normal", years=5, risk_free_rate=0.05
         )
@@ -200,3 +211,87 @@ class SharedPageTests(TestCase):
     def test_unknown_shared_page_is_404(self):
         res = self.client.get(f"/p/{uuid.uuid4()}")
         self.assertEqual(res.status_code, 404)
+
+
+class AuthTests(TestCase):
+    """Everything requires a login; saved lists are per-user; links are
+    readable (not editable) across the team."""
+
+    def setUp(self):
+        self.alice = make_user("alice")
+        self.bob = make_user("bob")
+
+    def save_as(self, user, name):
+        self.client.force_login(user)
+        res = self.client.post(
+            "/api/portfolios",
+            data=json.dumps({"name": name, "weights": {"AAPL": 1},
+                             "method": "robust", "years": 10,
+                             "risk_free_rate": 0.04}),
+            content_type="application/json")
+        self.assertEqual(res.status_code, 201, res.content)
+        return res.json()["id"]
+
+    def test_anonymous_page_redirects_to_login(self):
+        res = self.client.get("/")
+        self.assertEqual(res.status_code, 302)
+        self.assertTrue(res.url.startswith("/login"))
+
+    def test_anonymous_api_gets_json_401(self):
+        for call in (
+            lambda: self.client.get("/api/portfolios"),
+            lambda: self.client.post("/api/analyze", data="{}",
+                                     content_type="application/json"),
+        ):
+            res = call()
+            self.assertEqual(res.status_code, 401)
+            self.assertIn("error", res.json())
+
+    def test_login_page_renders_anonymously(self):
+        res = self.client.get("/login")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Sign in")
+
+    def test_saved_list_is_scoped_to_the_owner(self):
+        self.save_as(self.alice, "Alice mix")
+        self.save_as(self.bob, "Bob mix")
+        self.client.force_login(self.alice)
+        rows = self.client.get("/api/portfolios").json()
+        self.assertEqual([r["name"] for r in rows], ["Alice mix"])
+
+    def test_share_link_readable_but_not_editable_across_users(self):
+        pid = self.save_as(self.alice, "Alice mix")
+        self.client.force_login(self.bob)
+        # read: fine (that is the sharing model)
+        self.assertEqual(self.client.get(f"/api/portfolios/{pid}").status_code, 200)
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            self.assertEqual(self.client.get(f"/p/{pid}").status_code, 200)
+        # overwrite: 403 with a hint to save-as-new
+        res = self.client.post(
+            "/api/portfolios",
+            data=json.dumps({"id": pid, "name": "Steal", "weights": {"AAPL": 1},
+                             "method": "robust", "years": 10,
+                             "risk_free_rate": 0.04}),
+            content_type="application/json")
+        self.assertEqual(res.status_code, 403)
+        # delete: 403, row survives
+        self.assertEqual(
+            self.client.delete(f"/api/portfolios/{pid}").status_code, 403)
+        self.assertTrue(SavedPortfolio.objects.filter(pk=pid).exists())
+
+    def test_legacy_ownerless_rows_stay_visible_and_are_claimed_on_edit(self):
+        legacy = SavedPortfolio.objects.create(name="Old row", method="robust",
+                                               years=10, risk_free_rate=0.04)
+        legacy.set_holdings({"AAPL": 1})
+        self.client.force_login(self.bob)
+        rows = self.client.get("/api/portfolios").json()
+        self.assertIn("Old row", [r["name"] for r in rows])
+        res = self.client.post(
+            "/api/portfolios",
+            data=json.dumps({"id": str(legacy.id), "name": "Old row",
+                             "weights": {"AAPL": 1}, "method": "robust",
+                             "years": 10, "risk_free_rate": 0.04}),
+            content_type="application/json")
+        self.assertEqual(res.status_code, 200, res.content)
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.owner, self.bob)

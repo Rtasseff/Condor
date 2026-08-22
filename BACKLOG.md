@@ -12,13 +12,18 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   a list in this file (or a `UI-NOTES.md`) with each item tagged bug / UX /
   feature, so the polish work below can be prioritized from evidence
   rather than guesses. Precedes "UI polish" and "API/UX robustness".
+  *Round 1 (2026-08-22) landed same-day: key instead of chasing labels,
+  "Your portfolio" rename, considering-ring selection, point card under
+  the chart, click-anywhere snapping, CAL two-fund mixes with borrowing
+  warning, and login/accounts. Keep the notes coming.*
 - [ ] **Release 0.1 to the old Condor team** (~5 trusted users) — after
   RT's UI review and the branding pass: pick a small host (Fly.io /
   Railway / small VPS + Docker), Postgres-or-sqlite decision at that
   scale, `DEBUG=0` settings hygiene (SECRET_KEY, ALLOWED_HOSTS, static
   serving). Pre-flight done early (2026-08-22): PriceStore now takes
   per-ticker + manifest POSIX file locks, so multiple web workers can
-  share the store. No auth for 0.1 (unguessable URLs); users/auth Later.
+  share the store; accounts/login shipped 2026-08-22 (RT asked "why not
+  now" during the UI review), so 0.1 ships multi-user from day one.
 ## Next
 
 - [ ] **Estimation uncertainty / sampling / regimes** — revive the
@@ -57,9 +62,19 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   a payload change plus the key-set test in tests/test_model.py.
 - [ ] **Forecaster** ("Forecast" button, deck slide 25): fan chart with 65%
   and 95% bands, backtest-from-2-years-ago vs project-2-years-forward.
-  Start with geometric Brownian motion / bootstrap of historical returns
-  (legacy: `analytics_workflow_v1.ipynb` Part 3, GBM cell); RF/LSTM ideas
-  from the same notebook are lower priority and need honest validation.
+  Research done (2026-08-22, `docs/research/`): build the ladder in
+  `forecast-methods-ladder.md` — (A) GBM analytic + Monte Carlo with a
+  μ-uncertainty overlay (two nested band sets: "market randomness" vs
+  "+ estimate error" — the overlay is free and widens 2y bands ~10-12%,
+  more than GARCH would in normal states), (B) stationary block
+  bootstrap (fixed 21d blocks, never narrower than A's bands), (C) a
+  visible expected-return anchor control (ties into Black-Litterman).
+  Validation plan in `forecast-validation.md` (what pytest pins vs the
+  offline coverage notebook vs what the UI may claim); data-source
+  shortlist in `forecast-data-sources.md` (Fama-French, FRED regime
+  series, CAPE/ERP anchors, SEC EDGAR). Skip ML tier — ~5 independent
+  2-year observations to learn from. Legacy:
+  `analytics_workflow_v1.ipynb` Part 3; RF/LSTM ideas deprioritized.
 - [ ] **Rebalancing & dollar-cost-averaging recommendations.** Drift from
   target weights, calendar vs threshold rules, DCA schedule simulator.
   References: `reference materials/Portfolio-ManagementProcess/
@@ -100,13 +115,35 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   Expectations" trend chart, "Easy Choice" SPY, "Your Choice" plane with
   Bland/Bad Investment teaching corners.
 - [ ] **Compete:** leaderboards (public/private), portfolio sharing, chat.
-- [ ] **Users & auth**, then **broker order facilitation** (report/CSV first).
+- [ ] **Broker order facilitation** (report/CSV first). (Users & auth: done
+  2026-08-22.)
 - [ ] **Deployment:** Docker, Postgres, hosted (AWS per original plan), CI
   running the verification suite.
 - [ ] **Open-source hygiene:** LICENSE, CONTRIBUTING, public repo when ready
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Accounts & login** — 2026-08-22. Django auth wired in (sessions,
+      admin for user management, styled login page, logout in the
+      topbar). Every page and API requires a login; API returns JSON
+      401s so a lost session shows an error instead of a redirect.
+      `SavedPortfolio.owner`: the Saved list is per-user; `/p/<uuid>`
+      links stay readable by any logged-in user (that is the sharing
+      model) but only the owner can overwrite/delete (403 + "Save as
+      new" hint); pre-account rows are visible to all and claimed by
+      whoever edits them. Local setup: `migrate` + `createsuperuser`;
+      teammates added at /admin. 6 new Django tests (23 total).
+
+- [x] **UI review round 1** (RT's live notes) — 2026-08-22. Chart
+      identity moved from arrow-annotations to a key (legend); "Your
+      choice" → "Your portfolio" everywhere; clicking marks the point
+      with a teal "Considering" ring and the details card sits directly
+      under the chart; clicks snap to the nearest inspectable point
+      (no pixel-hunting); the CAL is selectable as two-fund mixes —
+      `Frontier.cal_mix()` grid in the payload, T-bills share as a bar,
+      borrowing region flagged with a warning that nobody borrows at
+      the T-bill rate. 6 new model tests; verified live in Chrome.
 
 - [x] **Branding & theming readiness** — 2026-08-22. Per docs/BRANDING.md
       + ADR 0003: `--font-body`/`--font-display` tokens (body/wordmark

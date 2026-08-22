@@ -23,12 +23,16 @@ diversified portfolio building accessible to people who've never invested.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python web/manage.py migrate      # creates the saved-portfolios tables
+python web/manage.py migrate           # tables: saved portfolios, accounts
+python web/manage.py createsuperuser   # your login (first run only)
 python web/manage.py runserver
 ```
 
-Then open http://127.0.0.1:8000/. Portfolios can be saved and shared by
-URL (`/p/<id>`); everything else recomputes live from market data.
+Then open http://127.0.0.1:8000/ and sign in. Every page requires a
+login; add teammates at http://127.0.0.1:8000/admin (Users → Add).
+Portfolios can be saved and shared by URL (`/p/<id>` — readable by any
+logged-in user, editable only by the owner); everything else recomputes
+live from market data.
 
 Core analytics can also be used directly:
 
