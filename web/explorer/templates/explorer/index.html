@@ -40,7 +40,32 @@
       {% if rf %}<small class="sub">3-mo T-bill, {{ rf.as_of }}</small>{% endif %}
     </label>
     <button id="analyze" class="primary">Analyze</button>
+    <button id="save" class="ghost" type="button">Save</button>
+    <button id="saved" class="ghost" type="button" aria-expanded="false">Saved</button>
     <span id="status" class="status" role="status"></span>
+  </section>
+
+  <section class="card savecard" id="savepanel" aria-label="Save this portfolio" hidden>
+    <form id="saveform" class="saverow" autocomplete="off">
+      <label class="grow">Name
+        <input id="savename" maxlength="80" placeholder="e.g. Dividend core" required>
+      </label>
+      <button type="submit" class="primary small">Save</button>
+      <button type="button" class="ghost small" id="savecopy" hidden
+              title="Save the current settings as a new portfolio">Save as new</button>
+      <button type="button" class="ghost small" id="savecancel">Cancel</button>
+    </form>
+    <div class="saverow" id="sharerow" hidden>
+      <label class="grow">Shareable link
+        <input id="sharelink" readonly>
+      </label>
+      <button type="button" class="ghost small" id="copylink">Copy</button>
+    </div>
+  </section>
+
+  <section class="card" id="savedpanel" aria-label="Saved portfolios" hidden>
+    <h2>Saved portfolios</h2>
+    <ul id="savedlist" class="savedlist"></ul>
   </section>
 
   <div id="error" class="error card" hidden></div>
@@ -107,6 +132,7 @@
   </footer>
 </main>
 
+{% if preset %}{{ preset|json_script:"preset" }}{% endif %}
 <script src="{% static 'explorer/app.js' %}"></script>
 </body>
 </html>

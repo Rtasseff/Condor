@@ -38,7 +38,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# Prototype has no models; keep sqlite config for future portfolio saving.
+# Saved portfolios live here (explorer.models). Local file, never committed.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
