@@ -9,3 +9,4 @@ packaging
 pytest
 matplotlib
 statsmodels
+\nwhitenoise\ngunicorn\n

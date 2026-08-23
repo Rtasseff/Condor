@@ -1,0 +1,11 @@
+.git
+.venv
+.condor_cache
+drive_export
+context
+notebooks
+docs
+web/db.sqlite3
+web/staticfiles
+**/__pycache__
+*.pyc

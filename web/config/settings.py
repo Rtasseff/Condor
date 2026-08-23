@@ -1,5 +1,11 @@
-"""Django settings — Condor Funds v2 prototype (local development only)."""
+"""Django settings — Condor Funds v2.
 
+Local development works with no environment set (safe defaults, DEBUG
+on). Production (docs/DEPLOY.md) is configured entirely by CONDOR_*
+environment variables — no separate settings file to drift.
+"""
+
+import os
 import sys
 from pathlib import Path
 
@@ -10,9 +16,15 @@ REPO_ROOT = BASE_DIR.parent  # condor_v2/
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-SECRET_KEY = "django-insecure-condor-v2-local-prototype-only"
-DEBUG = True
-ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+# --- environment (production sets these; dev defaults are safe) -----
+SECRET_KEY = os.environ.get(
+    "CONDOR_SECRET_KEY", "django-insecure-condor-v2-local-prototype-only")
+DEBUG = os.environ.get("CONDOR_DEBUG", "1") == "1"
+ALLOWED_HOSTS = os.environ.get(
+    "CONDOR_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+# e.g. CONDOR_CSRF_ORIGINS=https://condor.example.com
+CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get(
+    "CONDOR_CSRF_ORIGINS", "").split(",") if o]
 
 INSTALLED_APPS = [
     "django.contrib.admin",           # user management for the small team
@@ -26,11 +38,13 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",   # static files w/o nginx
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -53,15 +67,35 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# Saved portfolios live here (explorer.models). Local file, never committed.
+# Saved portfolios + accounts live here. Local file, never committed;
+# in production point CONDOR_DB_PATH at the persistent volume.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": os.environ.get("CONDOR_DB_PATH", BASE_DIR / "db.sqlite3"),
     }
 }
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"          # collectstatic target
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
+
+TIME_ZONE = "UTC"   # explicit: 4 users in 4 time zones, one server clock
+USE_TZ = True
+
+# --- production hardening (no-ops while DEBUG) ----------------------
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_SECONDS = 3600      # modest on purpose; raise post-0.1
+    X_FRAME_OPTIONS = "DENY"
 
 # ---- accounts -------------------------------------------------------
 # Multi-user from the start of the team release: everything requires a

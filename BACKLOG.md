@@ -16,14 +16,17 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   "Your portfolio" rename, considering-ring selection, point card under
   the chart, click-anywhere snapping, CAL two-fund mixes with borrowing
   warning, and login/accounts. Keep the notes coming.*
-- [ ] **Release 0.1 to the old Condor team** (~5 trusted users) — after
-  RT's UI review and the branding pass: pick a small host (Fly.io /
-  Railway / small VPS + Docker), Postgres-or-sqlite decision at that
-  scale, `DEBUG=0` settings hygiene (SECRET_KEY, ALLOWED_HOSTS, static
-  serving). Pre-flight done early (2026-08-22): PriceStore now takes
-  per-ticker + manifest POSIX file locks, so multiple web workers can
-  share the store; accounts/login shipped 2026-08-22 (RT asked "why not
-  now" during the UI review), so 0.1 ships multi-user from day one.
+- [ ] **Release 0.1 to the old Condor team** (~5 trusted users, 4 time
+  zones) — after RT's UI review and the branding pass. Plan + hosting
+  research + runbook: `docs/DEPLOY.md` (2026-08-23). Code prep is DONE
+  and merged: env-driven settings (CONDOR_*), whitenoise + gunicorn,
+  Dockerfile, TIME_ZONE=UTC pinned, security headers, `check --deploy`
+  clean (HSTS-subdomain flags deliberately skipped on a platform
+  subdomain). Earlier pre-flight (2026-08-22): PriceStore POSIX locks
+  for multi-worker; accounts/login shipped, so 0.1 is multi-user from
+  day one. Remaining decisions are RT's: pick the host, get the free
+  Tiingo key (yfinance-from-datacenter risk), rotate the old exposed
+  Polygon key before anything gets more public.
 ## Next
 
 - [ ] **Estimation uncertainty / sampling / regimes** — revive the
@@ -67,7 +70,9 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   "Considering" point (its cash share included) instead of only the
   sidebar mix.
 - [ ] **Forecaster — rung C** (rungs A and B shipped 2026-08-22, see
-  Done). Per `docs/research/forecast-methods-ladder.md`: a visible
+  Done). *Green-lit by RT 2026-08-23 ("read the research PDF... love
+  the ladder... completely on board") — next build item after review.*
+  Per `docs/research/forecast-methods-ladder.md`: a visible
   expected-return anchor control (Historical / long-run anchor /
   custom) with Black-Litterman underneath and CAPE/Damodaran-ERP as
   anchor sources (ties into the B-L backlog item). Then the backtest
