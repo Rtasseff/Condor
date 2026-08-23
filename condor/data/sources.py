@@ -116,8 +116,16 @@ _REGISTRY = {
 
 
 def get_sources(source: str | None = None) -> list:
-    """Resolve a source name; None -> yfinance, with tiingo as failover
-    when TIINGO_API_KEY is set."""
+    """Resolve a source spec into an ordered failover chain.
+
+    None -> yfinance, with tiingo as failover when TIINGO_API_KEY is
+    set. A single name ("tiingo") -> exactly that source, no silent
+    switching. A comma list ("tiingo,yfinance") -> that explicit chain,
+    in order — the production shape (docs/DEPLOY.md): datacenter IPs
+    get rate-limited by Yahoo, so cloud deploys run Tiingo first with
+    Yahoo as the opportunistic fallback. Explicit is still explicit:
+    the chain never contains anything the spec didn't name.
+    """
     if source is None:
         source = os.environ.get("CONDOR_SOURCE")
     if source is None:
@@ -125,7 +133,10 @@ def get_sources(source: str | None = None) -> list:
         if os.environ.get("TIINGO_API_KEY"):
             chain.append(TiingoSource())
         return chain
-    if source not in _REGISTRY:
+    names = [n.strip() for n in str(source).split(",") if n.strip()]
+    unknown = [n for n in names if n not in _REGISTRY]
+    if unknown or not names:
         raise DataFetchError(
-            f"Unknown source '{source}'; expected one of {sorted(_REGISTRY)}")
-    return [_REGISTRY[source]()]
+            f"Unknown source '{source}'; expected names from "
+            f"{sorted(_REGISTRY)} (comma-separated for a failover chain)")
+    return [_REGISTRY[n]() for n in names]

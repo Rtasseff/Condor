@@ -233,3 +233,33 @@ class TestConcurrency:
         for t in threads: t.start()
         for t in threads: t.join()
         assert store.tickers() == sorted(tickers)  # no lost manifest entries
+
+
+class TestSourceChains:
+    """get_sources: single name = exactly that source; comma list = an
+    explicit ordered failover chain (the production shape)."""
+
+    def test_single_name_is_alone(self):
+        from condor.data.sources import get_sources
+        (only,) = get_sources("tiingo")
+        assert only.name == "tiingo"
+
+    def test_comma_list_is_an_ordered_chain(self):
+        from condor.data.sources import get_sources
+        chain = get_sources("tiingo,yfinance")
+        assert [s.name for s in chain] == ["tiingo", "yfinance"]
+        chain = get_sources(" yfinance , tiingo ")   # whitespace tolerated
+        assert [s.name for s in chain] == ["yfinance", "tiingo"]
+
+    def test_env_var_carries_the_chain(self, monkeypatch):
+        from condor.data.sources import get_sources
+        monkeypatch.setenv("CONDOR_SOURCE", "tiingo,yfinance")
+        assert [s.name for s in get_sources()] == ["tiingo", "yfinance"]
+
+    def test_unknown_names_rejected(self):
+        from condor import DataFetchError
+        from condor.data.sources import get_sources
+        import pytest
+        for bad in ("stooq", "tiingo,stooq", ",,"):
+            with pytest.raises(DataFetchError):
+                get_sources(bad)

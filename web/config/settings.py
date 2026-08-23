@@ -73,6 +73,13 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": os.environ.get("CONDOR_DB_PATH", BASE_DIR / "db.sqlite3"),
+        # WAL + a patient timeout: cheap insurance under multiple
+        # gunicorn workers (and harmless in dev)
+        "OPTIONS": {
+            "timeout": 20,
+            "init_command": "PRAGMA journal_mode=WAL;"
+                            " PRAGMA synchronous=NORMAL;",
+        },
     }
 }
 
