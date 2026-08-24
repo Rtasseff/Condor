@@ -1,6 +1,8 @@
 # Condor Funds v2 — single-container deploy (docs/DEPLOY.md).
-# NOTE: authored 2026-08-23, not yet built in CI — the first deploy
-# validates it. Python 3.11 to match the development venv.
+# Validated 2026-08-24: built and smoke-tested locally (Colima) on
+# arm64 AND cross-built + boot-tested for linux/amd64 (Fly's arch) —
+# migrations, gunicorn, whitenoise static, SSL-redirect-behind-proxy
+# all confirmed inside the container. Python 3.11 matches the venv.
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

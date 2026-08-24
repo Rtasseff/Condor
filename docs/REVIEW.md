@@ -18,7 +18,7 @@ Django), and was verified live in Chrome before each push.*
 | DCA contributions | Schedule (amount + cadence), due dot on the nav + login banner, buys-only whole-share contribution routing, confirm advances the schedule from the due date | `43b151e` |
 | Whole-account forecast | Complete portfolio: holdings + cash share at the live T-bill rate, in dollars from current value | `43b151e` |
 | Forecaster rung B | "Resampled history" (stationary 21-day block bootstrap), guard-railed to never show narrower bands than model 1 — and the guard fires on real 2016-26 data | `ae363bb` |
-| Deploy prep | Env-driven settings (CONDOR_*), whitenoise, gunicorn, Dockerfile, UTC pinned, security headers; see docs/DEPLOY.md | this commit |
+| Deploy prep | Env-driven settings (CONDOR_*), whitenoise, gunicorn, Dockerfile (built + smoke-tested both arches 2026-08-24), UTC pinned, security headers; see docs/DEPLOY.md | `e0c9dae`+ |
 | Research | 3 forecasting reports + 7-page summary PDF + hosting report in `docs/research/`; ADRs 0001–0004 in `docs/decisions/` | several |
 
 ## 2. Getting running after you pull

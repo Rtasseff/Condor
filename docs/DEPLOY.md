@@ -32,7 +32,7 @@ that needs:
 | All config via env — `CONDOR_SECRET_KEY`, `CONDOR_DEBUG`, `CONDOR_ALLOWED_HOSTS`, `CONDOR_CSRF_ORIGINS`, `CONDOR_DB_PATH`, `CONDOR_DATA_DIR`, `CONDOR_SOURCE`, `TIINGO_API_KEY` | `web/config/settings.py`, `condor/data/` |
 | Static files without a reverse proxy | whitenoise (compressed, collectstatic baked into the image) |
 | App server | gunicorn, 2 workers; PriceStore POSIX locks already make multi-worker safe |
-| Container | `Dockerfile` (python:3.11-slim; migrate-then-serve at start). *Not yet built in CI — the first deploy validates it.* |
+| Container | `Dockerfile` (python:3.11-slim; migrate-then-serve at start). *Validated 2026-08-24: built + smoke-tested on arm64 and cross-built + boot-tested for linux/amd64 — prod env, migrations on a volume, 301→https, proxy-header 200, whitenoise static all confirmed.* |
 | One clock for four time zones | `TIME_ZONE = "UTC"` pinned |
 | SQLite under concurrency | WAL mode + 20s busy timeout in `DATABASES["OPTIONS"]` |
 | Production hardening | SSL redirect (behind proxy header), secure cookies, nosniff, modest HSTS, X-Frame DENY. `check --deploy` is clean except HSTS-subdomain/preload — deliberately skipped while we live on a platform subdomain |
