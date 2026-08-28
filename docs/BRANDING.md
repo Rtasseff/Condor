@@ -78,10 +78,12 @@ the same "change once, applies everywhere" property with zero toolchain.
   Open Font License (`OFL-*.txt` alongside — keep them; the license
   requires it when redistributing). Zero external font hosts, zero
   recurring cost.
-- **Mark:** `brand/logo.svg` — original artwork: a condor wing drawn
-  as a fan chart, three feather-blades in the series colors
-  (`--series-frontier`, `--accent`, `--accent-hi`) rising from a white
-  "you are here" dot. `brand/favicon.svg` is the same mark on the
+- **Mark (v2, 2026-08-29 — RT: "no condor?!"):** `brand/logo.svg` —
+  original artwork of an actual soaring condor seen from below: broad
+  white wings with the fingered primaries every condor silhouette
+  shows, tips swept in the chart's own blue→teal series colors, teal
+  ruff, small head, silvery wedge tail. Iterated visually at 128/64/
+  26px and favicon sizes. `brand/favicon.svg` is the bird on the
   surface tile. Rebranding remains: replace these two files + token
   values.
 - **Depth language:** layered radial glows on the body (teal/blue at

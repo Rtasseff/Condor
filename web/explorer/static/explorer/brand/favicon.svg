@@ -1,11 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Tab icon: the fan-wing mark on the brand surface. Keep in sync
-       with logo.svg when rebranding. -->
+  <!-- Tab icon: the condor on the brand surface. Keep in sync with
+       logo.svg when rebranding. -->
   <rect width="64" height="64" rx="14" fill="#121a2b"/>
-  <g transform="translate(7,5) scale(0.84)">
-    <path d="M12 52 C 28 54, 46 50, 58 38 C 44 42, 24 46, 12 52 Z" fill="#3987e5"/>
-    <path d="M12 52 C 22 50, 40 38, 52 20 C 36 30, 20 42, 12 52 Z" fill="#17a689"/>
-    <path d="M12 52 C 14 40, 22 22, 34 8 C 20 18, 10 34, 12 52 Z" fill="#1fc6a3"/>
-    <circle cx="12" cy="52" r="4" fill="#f2f5fa"/>
-  </g>
+  <svg x="2" y="10" width="60" height="44" viewBox="8 2 112 58">
+    <defs>
+      <g id="wing">
+        <path d="M96 28 C 107 27, 116 25.5, 126 23 C 116 29.5, 106 31.5, 96 32 Z" fill="#3987e5"/>
+        <path d="M94 26 C 105 22, 114 18, 123 13.5 C 113 21.5, 103 26.5, 94 29.5 Z" fill="#17a689"/>
+        <path d="M91 24 C 100 18, 108 12.5, 116 7 C 107 16.5, 99 22, 91 27.5 Z" fill="#17a689"/>
+        <path d="M87 22.5 C 94 16, 100 10, 107 3.5 C 100 12.5, 94 19, 88 25.5 Z" fill="#1fc6a3"/>
+        <path d="M62 25 C 80 20.5, 93 18.7, 102 19.4 L 104 26.5 C 95 30.5, 82 35.5, 62 40 Z" fill="#f2f5fa"/>
+      </g>
+    </defs>
+    <use href="#wing" transform="rotate(-8 66 32)"/>
+    <use href="#wing" transform="translate(128,0) scale(-1,1) rotate(-8 66 32)"/>
+    <path d="M58.5 40 L56.5 55 L60.8 53 L64 56.5 L67.2 53 L71.5 55 L69.5 40 Z" fill="#b7c0d0"/>
+    <ellipse cx="64" cy="34" rx="6.4" ry="11.5" fill="#f2f5fa"/>
+    <path d="M57.5 25 A 7 4.5 0 0 1 70.5 25 L 68.6 29 A 5 3 0 0 0 59.4 29 Z" fill="#1fc6a3"/>
+    <circle cx="64" cy="19.6" r="3.7" fill="#b7c0d0"/>
+    <path d="M64 15 C 66.4 14.6, 67.2 16.2, 66 17.4 L 64.3 16.6 Z" fill="#c98500"/>
+  </svg>
 </svg>
