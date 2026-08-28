@@ -139,6 +139,19 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Done
 
+- [x] **Branding pass** — 2026-08-29 (RT: "make the site look nicer,
+      legally free media", $0 by design). IBM Plex Sans/Mono
+      self-hosted under OFL (licenses committed); original fan-wing
+      mark (logo + favicon — a condor wing that is also a fan chart,
+      rising from the "you are here" dot); ambient radial-glow ground,
+      card depth, gradient primary buttons with hover lift,
+      focus-visible rings, Plex Mono tabular numerals for all money;
+      Plotly charts follow `--font-body`. Also fixed: `[hidden]` vs
+      `display:flex` (empty due-banner showed for schedule-less
+      users). Launch prep: committed ready `fly.toml` (2GB per the
+      $50/mo budget) + `docs/LAUNCH-CHECKLIST.md` — RT's exact
+      phase-by-phase steps.
+
 - [x] **Forecaster rung B — resampled history (block bootstrap)** —
       2026-08-22. Engine `bootstrap_bands`: stationary bootstrap
       (Politis-Romano, geometric blocks, mean 21 days, disclosed in

@@ -68,3 +68,26 @@ it — branding then lives in exactly one template. Until then the single
 No CSS framework, no frontend build step (React/Tailwind/bundlers) — see
 docs/decisions/0003. At this scale, tokens + template inheritance give
 the same "change once, applies everywhere" property with zero toolchain.
+
+
+## Current brand (executed 2026-08-29)
+
+- **Faces:** IBM Plex Sans (400/500/600/700) for display + UI, IBM
+  Plex Mono (400/500) for money, tickers, and numeric table columns.
+  Self-hosted woff2 (latin) in `static/explorer/fonts/` under the SIL
+  Open Font License (`OFL-*.txt` alongside — keep them; the license
+  requires it when redistributing). Zero external font hosts, zero
+  recurring cost.
+- **Mark:** `brand/logo.svg` — original artwork: a condor wing drawn
+  as a fan chart, three feather-blades in the series colors
+  (`--series-frontier`, `--accent`, `--accent-hi`) rising from a white
+  "you are here" dot. `brand/favicon.svg` is the same mark on the
+  surface tile. Rebranding remains: replace these two files + token
+  values.
+- **Depth language:** layered radial glows on the body (teal/blue at
+  ≤7% alpha), inset top-light + soft shadow on cards, gradient primary
+  buttons with hover lift, focus-visible rings in `--accent-hi`.
+- **Numerals:** all money/percent cells use Plex Mono +
+  `tabular-nums` (tiles, tables, weight bars).
+- Charts read `--font-body` via `cssVar` — Plotly follows the brand
+  automatically.

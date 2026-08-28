@@ -48,9 +48,11 @@ capacity; Render's Hobby tier is fine but its only sub-$25 instance has
 Platform and PythonAnywhere are **disqualified** (ephemeral filesystem;
 NFS-backed disk that SQLite can't trust).
 
-**Recommendation — Fly.io: one `shared-cpu-1x` 1GB machine + 10GB
-volume, always-on, `--ha=false`. ≈ $7.42/mo** (2GB is $12.61 if 1GB
-proves tight — a one-line scale command).
+**Recommendation — Fly.io: one `shared-cpu-1x` machine + 10GB volume,
+always-on, `--ha=false`.** RT set a $50/mo budget (2026-08-28), so the
+committed `fly.toml` defaults to the comfortable **2GB tier ≈
+$12.61/mo** (1GB ≈ $7.42 exists if we ever want to pinch). Step-by-step
+for launch day: `docs/LAUNCH-CHECKLIST.md`.
 
 Why it fits us specifically: Dockerfile-native; the volume takes both
 SQLite and the price store; RAM is billed on *provisioned* size (flat

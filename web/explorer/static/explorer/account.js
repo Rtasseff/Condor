@@ -13,6 +13,7 @@ const C = {
   frontier: cssVar("--series-frontier"),
   cal: cssVar("--series-cal"),
   you: cssVar("--series-you"),
+  font: cssVar("--font-body"),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -90,7 +91,7 @@ function renderChart() {
     },
   ], {
     paper_bgcolor: C.surface, plot_bgcolor: C.surface,
-    font: { family: "system-ui, -apple-system, 'Segoe UI', sans-serif", color: C.ink2 },
+    font: { family: C.font, color: C.ink2 },
     margin: { l: 70, r: 20, t: 10, b: 40 },
     xaxis: { gridcolor: C.grid, zerolinecolor: C.axis },
     yaxis: { tickprefix: "$", tickformat: ",.0f",
@@ -527,7 +528,7 @@ function renderAccountForecast(f) {
   });
   Plotly.react("afchart", traces, {
     paper_bgcolor: C.surface, plot_bgcolor: C.surface,
-    font: { family: "system-ui, -apple-system, 'Segoe UI', sans-serif", color: C.ink2 },
+    font: { family: C.font, color: C.ink2 },
     margin: { l: 70, r: 20, t: 10, b: 45 },
     xaxis: { title: { text: "Years from today", font: { color: C.muted } },
              gridcolor: C.grid, zerolinecolor: C.axis },

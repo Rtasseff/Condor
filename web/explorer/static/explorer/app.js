@@ -17,6 +17,7 @@ const C = {
   frontier: cssVar("--series-frontier"),
   cal: cssVar("--series-cal"),
   you: cssVar("--series-you"),
+  font: cssVar("--font-body"),
   select: cssVar("--series-select"),
 };
 
@@ -350,7 +351,7 @@ function renderChart() {
   const layout = {
     paper_bgcolor: C.surface,
     plot_bgcolor: C.surface,
-    font: { family: "system-ui, -apple-system, 'Segoe UI', sans-serif", color: C.ink2 },
+    font: { family: C.font, color: C.ink2 },
     margin: { l: 70, r: 20, t: 10, b: 55 },
     xaxis: {
       title: { text: "Risk — annualized dispersion (σ)", font: { color: C.muted } },
@@ -609,7 +610,7 @@ function renderForecast(f) {
 
   Plotly.react("fchart", traces, {
     paper_bgcolor: C.surface, plot_bgcolor: C.surface,
-    font: { family: "system-ui, -apple-system, 'Segoe UI', sans-serif", color: C.ink2 },
+    font: { family: C.font, color: C.ink2 },
     margin: { l: 70, r: 20, t: 10, b: 45 },
     xaxis: { title: { text: "Years from today", font: { color: C.muted } },
              gridcolor: C.grid, zerolinecolor: C.axis },
