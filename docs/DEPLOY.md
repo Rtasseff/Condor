@@ -124,7 +124,10 @@ Edit the generated `fly.toml`: internal_port 8000;
 fly secrets set CONDOR_SECRET_KEY=$(python -c "import secrets;print(secrets.token_urlsafe(50))")
 fly secrets set TIINGO_API_KEY=...            # from tiingo.com, free tier
 fly deploy                                    # first build validates the Dockerfile
-fly ssh console -C "python /app/web/manage.py createsuperuser"
+fly ssh console --pty
+# then, at the machine's # prompt (interactive — -C has no TTY for the password prompts):
+python /app/web/manage.py createsuperuser
+exit
 fly volumes snapshots list <vol-id>           # confirm dailies are on
 ```
 

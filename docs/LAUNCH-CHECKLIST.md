@@ -55,7 +55,10 @@ Terminology: run everything from the repo root
 - [ ] `fly deploy` — first run builds remotely (~5-10 min). The
       Dockerfile has already been built + boot-tested locally on both
       architectures, so surprises here mean platform, not code.
-- [ ] `fly ssh console -C "python /app/web/manage.py createsuperuser"`
+- [ ] `fly ssh console --pty
+# then, at the machine's # prompt (interactive — -C has no TTY for the password prompts):
+python /app/web/manage.py createsuperuser
+exit`
       — your login on the *server* (separate from your laptop's local
       one).
 
