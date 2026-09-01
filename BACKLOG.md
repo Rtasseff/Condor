@@ -139,6 +139,29 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Done
 
+- [x] **UX conventions pass** — 2026-09-01, from RT's live feedback
+      ("zoom so sensitive I'm refreshing constantly... not super
+      intuitive") + researched conventions (docs/research/
+      ui-conventions.md, NN/g + consumer-finance chart audits, which
+      also audited our code). Charts: full interaction lockdown
+      (dragmode/axis-handles/double-click/tips all off, fixedrange —
+      hover + click are the only interactions, like every consumer
+      finance chart), touch-action so charts never trap page scroll,
+      legends locked as keys, unified-hover + crosshair spikes on
+      time-series, preset range buttons (1m/6m/YTD/1y/All) on the
+      account value chart — "zoom" the consumer way. Guidance:
+      dismissible 3-step first-visit strip, "What am I looking at?"
+      explainer, visible plain-language glosses under every stat tile
+      (title= tooltips removed as the weakest pattern), click-cue
+      under the chart that retires after first selection, example tag
+      on the preloaded portfolio, honest empty state, login page says
+      what Condor is, dead nav marked "coming soon". Feedback: staged
+      fast-early progress messages during long fetches (Conrad et al.
+      2010), aria-disabled buttons that keep focus, feedback on plan/
+      contribution pricing, aria roles/labels on all charts.
+      Remaining "do soon" ideas queued: /learn glossary page,
+      data-table fallbacks under charts.
+
 - [x] **Branding pass** — 2026-08-29 (RT: "make the site look nicer,
       legally free media", $0 by design). IBM Plex Sans/Mono
       self-hosted under OFL (licenses committed); original fan-wing

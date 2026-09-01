@@ -17,11 +17,11 @@
     <span class="proto">v2 prototype</span>
   </div>
   <nav class="pillars">
-    <span>Learn</span>
+    <span class="soon" title="Coming soon">Learn</span>
     <a href="{% url 'index' %}" class="{% block nav_build %}{% endblock %}">Build</a>
     <a href="{% url 'account' %}" class="{% block nav_account %}{% endblock %}">My account{% if contribution_due %}
       <span class="duedot" title="Your regular contribution is due">●</span>{% endif %}</a>
-    <span>Compete</span><span>Develop</span>
+    <span class="soon" title="Coming soon">Compete</span>
   </nav>
   {% if user.is_authenticated %}
   <div class="userbox">

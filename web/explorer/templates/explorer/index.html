@@ -29,6 +29,14 @@
     <span id="status" class="status" role="status"></span>
   </section>
 
+  <section class="card hintstrip" id="hintstrip" hidden aria-label="Getting started">
+    <span class="hintstep"><b>1</b> Add assets on the right</span>
+    <span class="hintstep"><b>2</b> Hit <b>Analyze</b></span>
+    <span class="hintstep"><b>3</b> Click anywhere on the chart — every point is a
+      portfolio you could actually hold</span>
+    <button id="hintdismiss" class="ghost small" type="button">Got it</button>
+  </section>
+
   <section class="card savecard" id="savepanel" aria-label="Save this portfolio" hidden>
     <form id="saveform" class="saverow" autocomplete="off">
       <label class="grow">Name
@@ -61,8 +69,36 @@
          blends T-bills with the tangent portfolio (past it, you'd be borrowing).
          Click anywhere near either — the nearest mix lights up below. The key above
          the chart names each marker.</p>
-      <div id="chart" aria-label="Efficient frontier chart"></div>
-      <div id="chart-empty" class="empty">Add assets on the right, then hit <b>Analyze</b>.</div>
+      <details class="explain">
+        <summary>What am I looking at?</summary>
+        <ul>
+          <li><b>Every dot on the blue curve</b> is a portfolio built from your
+            assets. The curve is the set of best possible trade-offs — for any
+            level of risk, the highest reward available. Up and to the left is
+            better.</li>
+          <li><b>Risk (dispersion)</b> = how widely a year's result tends to
+            swing around the average. <b>Reward</b> = the yearly growth we'd
+            expect if the future behaves like the lookback window.</li>
+          <li><b>The dashed line</b> blends T-bills (cash) with the tangent
+            portfolio ◆. Left of the diamond = safer mixes with more cash;
+            right of it means borrowing, which most people can't do at that
+            rate.</li>
+          <li><b>Sharpe ratio</b> = reward earned per unit of risk, after
+            setting aside what T-bills pay for free. Higher is better.</li>
+          <li><b>Method</b>: <i>Robust</i> uses medians, so one wild day can't
+            distort the picture — steadier for volatile stocks. <i>Normal</i>
+            is the textbook mean/covariance approach.</li>
+        </ul>
+      </details>
+      <div id="chart" role="img" aria-label="Efficient frontier chart"></div>
+      <div id="chart-empty" class="empty">No results yet — add an asset and press <b>Analyze</b>.</div>
+      <p class="clickcue" id="clickcue" hidden>Click anywhere on the chart —
+        the nearest portfolio opens right here ↓</p>
+      <div id="chart-loading" class="empty loading" hidden>
+        <span class="spin" aria-hidden="true"></span>
+        Fetching prices &amp; optimizing… first time with a new ticker can take
+        ~30 seconds while its history downloads.
+      </div>
 
       <section id="pointcard" class="pointcard" hidden aria-label="Selected point">
         <h2 id="pointtitle">Selected portfolio</h2>
@@ -77,7 +113,8 @@
     </section>
 
     <aside class="card sidecard" aria-label="Your portfolio">
-      <h2>Your portfolio</h2>
+      <h2>Your portfolio <small class="sub" id="exampletag">— starts as an
+        example; swap these out</small></h2>
       <form id="addform" autocomplete="off">
         <input id="addticker" list="tickerlist" placeholder="Add asset — ticker or name"
                spellcheck="false" aria-label="Add asset">
@@ -95,20 +132,28 @@
   </div>
 
   <section class="tiles" id="tiles" hidden>
-    <div class="tile"><span class="label">Expected return <small>(annual)</small></span><span class="value" id="t-ret">–</span></div>
-    <div class="tile"><span class="label">Dispersion <small>(annual σ)</small></span><span class="value" id="t-vol">–</span></div>
-    <div class="tile"><span class="label">Sharpe ratio</span><span class="value" id="t-sharpe">–</span></div>
+    <div class="tile"><span class="label">Expected return <small>(annual)</small></span><span class="value" id="t-ret">–</span><span class="gloss">what a typical year averages — an estimate, not a promise</span></div>
+    <div class="tile"><span class="label">Dispersion <small>(annual σ)</small></span><span class="value" id="t-vol">–</span><span class="gloss">how bumpy the ride tends to be</span></div>
+    <div class="tile"><span class="label">Sharpe ratio</span><span class="value" id="t-sharpe">–</span><span class="gloss">reward per unit of bumpiness — higher is better</span></div>
   </section>
 
   <section class="card" id="forecastcard" hidden aria-label="Forecast">
     <h2>Forecast <span class="modeltag" id="fbadge">model 1 of 3 — simplest: steady rates</span></h2>
-    <p class="sub">Model 1 projects a constant expected return and dispersion —
-       the simplest honest model. Model 2 resamples 21-day stretches of your
-       actual history, so streaks and crashes look like they really did; its
-       bands are never allowed to come out narrower than model 1's. Shaded
-       bands are market randomness; the dashed outer band adds the uncertainty
-       in the return estimate itself — at multi-year horizons the biggest
-       unknown. A return-assumption control (model 3) comes next.</p>
+    <p class="sub">Where your mix could take a starting amount — an honest
+       range, not a promise.</p>
+    <details class="explain">
+      <summary>How these models work</summary>
+      <ul>
+        <li><b>Model 1 — steady rates</b>: projects a constant expected return
+          and dispersion. The simplest honest model.</li>
+        <li><b>Model 2 — resampled history</b>: replays 21-day stretches of
+          your actual history, so streaks and crashes look like they really
+          did. Its bands are never allowed to be narrower than model 1's.</li>
+        <li><b>The bands</b>: shaded = market randomness; the dashed outer
+          band adds the uncertainty in the return estimate itself — at
+          multi-year horizons, the biggest unknown.</li>
+      </ul>
+    </details>
     <div class="fcontrols">
       <label>Model
         <select id="fmodel">
@@ -130,7 +175,7 @@
       <button id="forecast" class="primary small" type="button">Project</button>
       <span id="fstatus" class="status" role="status"></span>
     </div>
-    <div id="fchart" hidden></div>
+    <div id="fchart" role="img" aria-label="Forecast fan chart" hidden></div>
     <p class="sub warn" id="fguard" hidden>Model 2's resampled bands came out
        narrower than model 1 allows — one decade holds too few multi-year
        stretches to trust that — so they were widened to model 1's floor.</p>

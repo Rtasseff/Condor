@@ -16,6 +16,13 @@ const C = {
   font: cssVar("--font-body"),
 };
 
+// Same consumer-chart contract as app.js (docs/research/ui-conventions.md)
+const CHART_CONFIG = {
+  displayModeBar: false, displaylogo: false, responsive: true,
+  scrollZoom: false, doubleClick: false, showTips: false,
+  showAxisDragHandles: false, showAxisRangeEntryBoxes: false,
+};
+
 const $ = (id) => document.getElementById(id);
 const money = (x) => "$" + (+x).toLocaleString(undefined, {
   minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -93,12 +100,31 @@ function renderChart() {
     paper_bgcolor: C.surface, plot_bgcolor: C.surface,
     font: { family: C.font, color: C.ink2 },
     margin: { l: 70, r: 20, t: 10, b: 40 },
-    xaxis: { gridcolor: C.grid, zerolinecolor: C.axis },
+    xaxis: {
+      type: "date", gridcolor: C.grid, zerolinecolor: C.axis,
+      fixedrange: true, showspikes: true, spikethickness: 1,
+      spikedash: "dot", spikecolor: C.axis,
+      // the consumer way to "zoom": preset ranges, not drag gestures
+      rangeselector: {
+        bgcolor: C.surface, activecolor: C.axis, bordercolor: C.grid,
+        borderwidth: 1, font: { color: C.ink2, size: 12 },
+        buttons: [
+          { count: 1, label: "1m", step: "month", stepmode: "backward" },
+          { count: 6, label: "6m", step: "month", stepmode: "backward" },
+          { count: 1, label: "YTD", step: "year", stepmode: "todate" },
+          { count: 1, label: "1y", step: "year", stepmode: "backward" },
+          { step: "all", label: "All" },
+        ],
+      },
+    },
     yaxis: { tickprefix: "$", tickformat: ",.0f",
-             gridcolor: C.grid, zerolinecolor: C.axis },
-    legend: { orientation: "h", x: 0, y: 1.12, font: { color: C.ink2, size: 12 } },
+             gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true },
+    hovermode: "x unified", hoverdistance: 30,
+    legend: { orientation: "h", x: 0, y: 1.12, itemclick: false,
+      itemdoubleclick: false, font: { color: C.ink2, size: 12 } },
+    dragmode: false,
     hoverlabel: { bgcolor: "#182238", font: { color: C.ink, size: 13 } },
-  }, { displayModeBar: false, responsive: true });
+  }, CHART_CONFIG);
 }
 
 function td(text, cls) {
@@ -292,11 +318,18 @@ async function saveTarget() {
 
 // ---------- rebalancing plan ----------
 async function loadPlan() {
+  const btn = $("planbtn");
+  btn.setAttribute("aria-disabled", "true");
+  $("targethint").textContent = "Pricing at the last close…";
   try {
     const plan = await api("/api/account/plan");
     state.plan = plan;
     renderPlan();
-  } catch (err) { showError(err.message); }
+  } catch (err) { showError(err.message); } finally {
+    btn.removeAttribute("aria-disabled");
+    if ($("targethint").textContent === "Pricing at the last close…")
+      $("targethint").textContent = "";
+  }
 }
 
 function renderPlan() {
@@ -398,10 +431,15 @@ async function loadContribution() {
   showError("");
   const amt = $("sc-amount").value;
   const q = amt ? `?amount=${encodeURIComponent(amt)}` : "";
+  $("scplan").setAttribute("aria-disabled", "true");
+  $("scstatus").textContent = "Pricing…";
   try {
     state.contrib = await api(`/api/account/contribution${q}`);
     renderContribution();
-  } catch (err) { showError(err.message); }
+  } catch (err) { showError(err.message); } finally {
+    $("scplan").removeAttribute("aria-disabled");
+    if ($("scstatus").textContent === "Pricing…") $("scstatus").textContent = "";
+  }
 }
 
 function renderContribution() {
@@ -531,12 +569,17 @@ function renderAccountForecast(f) {
     font: { family: C.font, color: C.ink2 },
     margin: { l: 70, r: 20, t: 10, b: 45 },
     xaxis: { title: { text: "Years from today", font: { color: C.muted } },
-             gridcolor: C.grid, zerolinecolor: C.axis },
+             gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true,
+             showspikes: true, spikethickness: 1, spikedash: "dot",
+             spikecolor: C.axis },
     yaxis: { tickprefix: "$", tickformat: ",.0f",
-             gridcolor: C.grid, zerolinecolor: C.axis },
-    legend: { orientation: "h", x: 0, y: 1.12, font: { color: C.ink2, size: 12 } },
+             gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true },
+    hovermode: "x unified", hoverdistance: 30,
+    legend: { orientation: "h", x: 0, y: 1.12, itemclick: false,
+      itemdoubleclick: false, font: { color: C.ink2, size: 12 } },
+    dragmode: false,
     hoverlabel: { bgcolor: "#182238", font: { color: C.ink, size: 13 } },
-  }, { displayModeBar: false, responsive: true });
+  }, CHART_CONFIG);
 
   $("afbadge").textContent = (f.model === "block-bootstrap"
     ? `model 2 — resampled history (${f.block}-day blocks)`
@@ -585,6 +628,7 @@ $("planconfirm").addEventListener("click", confirmPlan);
 
 (async function init() {
   syncEventForm();
+  $("a-asof").textContent = "Valuing your account at the last close…";
   try {
     render(await api("/api/account"));
     // arriving from Build with a fresh draft target: show the plan

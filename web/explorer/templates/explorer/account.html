@@ -11,10 +11,10 @@
        never the return. The Build page works fine without this — this is just
        the tracking.</p>
     <div class="tiles atiles">
-      <div class="tile"><span class="label">Total value</span><span class="value" id="a-value">–</span></div>
-      <div class="tile"><span class="label">Net contributions</span><span class="value" id="a-contrib">–</span></div>
-      <div class="tile"><span class="label">Gain</span><span class="value" id="a-gain">–</span></div>
-      <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="a-twr">–</span></div>
+      <div class="tile"><span class="label">Total value</span><span class="value" id="a-value">–</span><span class="gloss">holdings + cash at the last close</span></div>
+      <div class="tile"><span class="label">Net contributions</span><span class="value" id="a-contrib">–</span><span class="gloss">money you put in, minus taken out</span></div>
+      <div class="tile"><span class="label">Gain</span><span class="value" id="a-gain">–</span><span class="gloss">value minus what you put in</span></div>
+      <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="a-twr">–</span><span class="gloss">growth of a dollar — deposits don't count as return</span></div>
     </div>
     <p class="sub" id="a-asof"></p>
   </section>
@@ -30,7 +30,7 @@
     <h2>Value over time</h2>
     <p class="sub">Solid line: what the account is worth. Dashed line: money you
        put in. The space between them is your actual gain.</p>
-    <div id="achart"></div>
+    <div id="achart" role="img" aria-label="Account value over time"></div>
   </section>
 
   <section class="card">
@@ -155,11 +155,15 @@
 
   <section class="card">
     <h2>Forecast <span class="modeltag" id="afbadge">whole account</span></h2>
-    <p class="sub">Projects the <b>complete</b> account — your holdings at their
-       current mix plus your cash share earning the T-bill rate. Same models as
-       the Build page (steady rates, or resampled history with the same
-       never-narrower guard): shaded bands are market randomness, the dashed
-       band adds the return-estimate error.</p>
+    <p class="sub">Where the <b>whole</b> account could go — holdings at their
+       current mix plus your cash share earning the T-bill rate.</p>
+    <details class="explain">
+      <summary>How these models work</summary>
+      <p class="sub">Same two models as the Build page: steady rates (model 1)
+         or resampled history (model 2, never narrower than model 1). Shaded
+         bands are market randomness; the dashed band adds the uncertainty in
+         the return estimate itself.</p>
+    </details>
     <div class="fcontrols">
       <label>Model
         <select id="af-model">
@@ -178,7 +182,7 @@
       <button id="aforecast" class="primary small" type="button">Project</button>
       <span id="afstatus" class="status" role="status"></span>
     </div>
-    <div id="afchart" hidden></div>
+    <div id="afchart" role="img" aria-label="Whole-account forecast fan chart" hidden></div>
     <p class="sub warn" id="afguard" hidden>Model 2's resampled bands came out
        narrower than model 1 allows — one decade holds too few multi-year
        stretches to trust that — so they were widened to model 1's floor.</p>
@@ -209,10 +213,14 @@
       <label class="grow">Note <input id="ev-note" maxlength="120"></label>
       <button type="submit" class="primary small">Add</button>
     </form>
-    <p class="sub">Deposits and withdrawals move cash (contributions, not
-       returns). Buys/sells move shares against cash — price defaults to that
-       day's close. The force types overwrite state when reality and the ledger
-       disagree; the difference is booked as money in/out, not as return.</p>
+    <details class="explain">
+      <summary>How the ledger works</summary>
+      <p class="sub">Deposits and withdrawals move cash (contributions, not
+         returns). Buys/sells move shares against cash — price defaults to that
+         day's close. The force types overwrite state when reality and the
+         ledger disagree; the difference is booked as money in/out, not as
+         return.</p>
+    </details>
     <ul id="eventlist" class="savedlist"></ul>
   </section>
 

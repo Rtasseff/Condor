@@ -23,6 +23,7 @@ const C = {
 
 // ---------- state ----------
 const state = {
+  busy: false,          // one analyze at a time
   assets: ["AAPL", "MSFT", "JNJ", "ABBV", "XOM", "CVX", "COP"], // deck's example
   weights: {},          // ticker -> percent (UI units); empty = equal
   names: {},            // ticker -> company name (from bundled list)
@@ -30,6 +31,15 @@ const state = {
   selected: null,       // selected frontier point (or named portfolio)
   savedId: null,        // uuid of the saved portfolio this came from
   savedName: "",
+};
+
+// Consumer-chart interaction contract (docs/research/ui-conventions.md):
+// hover + click only. No drag zoom, no axis handles, no double-click
+// reset, no "double-click to zoom back" tips for interactions we removed.
+const CHART_CONFIG = {
+  displayModeBar: false, displaylogo: false, responsive: true,
+  scrollZoom: false, doubleClick: false, showTips: false,
+  showAxisDragHandles: false, showAxisRangeEntryBoxes: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -147,9 +157,33 @@ async function analyze() {
     showError("Add at least one asset.");
     return;
   }
+  if (state.busy) return;        // double-submit guard (the real one)
+  state.busy = true;
   const btn = $("analyze");
-  btn.disabled = true;
+  btn.setAttribute("aria-disabled", "true");   // keeps keyboard focus
+  btn.textContent = "Analyzing…";
+  $("chart").setAttribute("aria-busy", "true");
   $("status").textContent = "Fetching prices & optimizing…";
+  if (!state.result) {           // first run: the chart area explains the wait
+    $("chart-empty").style.display = "none";
+    $("chart-loading").hidden = false;
+  }
+  // staged, fast-early progress text (Conrad et al. 2010: framing that
+  // starts fast nearly halves abandonment)
+  const stages = [
+    [0, "Fetching price history…"],
+    [4, "Downloading market data…"],
+    [9, "Computing statistics & the frontier…"],
+    [15, "Still working — the first run for a new ticker downloads " +
+         "10 years of history."],
+  ];
+  const t0 = Date.now();
+  const stageTimer = setInterval(() => {
+    const secs = (Date.now() - t0) / 1000;
+    const msg = stages.filter(([at]) => secs >= at).pop()[1];
+    $("chart-loading").lastChild.textContent = " " + msg;
+    $("status").textContent = msg;
+  }, 1000);
   try {
     const body = {
       tickers: state.assets,
@@ -179,8 +213,13 @@ async function analyze() {
   } catch (err) {
     showError(err.message);
   } finally {
-    btn.disabled = false;
+    clearInterval(stageTimer);
+    state.busy = false;
+    btn.removeAttribute("aria-disabled");
+    btn.textContent = "Analyze";
+    $("chart").removeAttribute("aria-busy");
     $("status").textContent = "";
+    $("chart-loading").hidden = true;
   }
 }
 
@@ -220,6 +259,7 @@ function renderChart() {
   const r = state.result;
   if (!r) return;
   $("chart-empty").style.display = "none";
+  $("clickcue").hidden = !!state.selected;   // cue retires after first click
 
   const traces = [];
   // Identity lives in the key (legend) — no annotations chasing markers
@@ -356,22 +396,24 @@ function renderChart() {
     xaxis: {
       title: { text: "Risk — annualized dispersion (σ)", font: { color: C.muted } },
       tickformat: ".0%", gridcolor: C.grid, zerolinecolor: C.axis,
-      rangemode: "tozero",
+      rangemode: "tozero", fixedrange: true,
     },
     yaxis: {
       title: { text: "Reward — expected annual return", font: { color: C.muted } },
       tickformat: ".0%", gridcolor: C.grid, zerolinecolor: C.axis,
+      fixedrange: true,
     },
+    hoverdistance: 30,
     legend: {
       orientation: "h", x: 0, y: 1.1,
+      itemclick: false, itemdoubleclick: false,   // a key, not a toggle
       font: { color: C.ink2, size: 12 },
     },
+    dragmode: false,
     hoverlabel: hoverStyle(),
   };
 
-  Plotly.react("chart", traces, layout, {
-    displayModeBar: false, responsive: true,
-  });
+  Plotly.react("chart", traces, layout, CHART_CONFIG);
 }
 
 // ---------- click-anywhere selection ----------
@@ -437,6 +479,8 @@ function selectPoint(point, title, kind) {
   state.selected = { ...point, title, kind: kind || "frontier" };
   renderChart(); // paints the "Considering" ring
   renderPoint(state.selected);
+  // the card can sit below the fold — bring it in if it is
+  $("pointcard").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function renderPoint(sel) {
@@ -613,12 +657,17 @@ function renderForecast(f) {
     font: { family: C.font, color: C.ink2 },
     margin: { l: 70, r: 20, t: 10, b: 45 },
     xaxis: { title: { text: "Years from today", font: { color: C.muted } },
-             gridcolor: C.grid, zerolinecolor: C.axis },
+             gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true,
+             showspikes: true, spikethickness: 1, spikedash: "dot",
+             spikecolor: C.axis },
     yaxis: { tickprefix: "$", tickformat: ",.0f",
-             gridcolor: C.grid, zerolinecolor: C.axis },
-    legend: { orientation: "h", x: 0, y: 1.12, font: { color: C.ink2, size: 12 } },
+             gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true },
+    hovermode: "x unified", hoverdistance: 30,
+    legend: { orientation: "h", x: 0, y: 1.12, itemclick: false,
+      itemdoubleclick: false, font: { color: C.ink2, size: 12 } },
+    dragmode: false,
     hoverlabel: hoverStyle(),
-  }, { displayModeBar: false, responsive: true });
+  }, CHART_CONFIG);
 
   $("fbadge").textContent = f.model === "block-bootstrap"
     ? `model 2 of 3 — resampled history (${f.block}-day blocks)`
@@ -664,6 +713,8 @@ function currentConfig() {
 }
 
 function applyConfig(cfg) {
+  const tag = $("exampletag");
+  if (tag) tag.hidden = true;   // a loaded portfolio is not the example
   state.assets = (cfg.tickers || []).slice(0, 15);
   state.weights = {};
   for (const t of state.assets) {
@@ -902,6 +953,11 @@ $("saved").addEventListener("click", () => {
 });
 
 (async function init() {
+  if (!localStorage.getItem("condor_hint_done")) $("hintstrip").hidden = false;
+  $("hintdismiss").addEventListener("click", () => {
+    localStorage.setItem("condor_hint_done", "1");
+    $("hintstrip").hidden = true;
+  });
   wireChartClicks();
   await loadTickers();
   const presetEl = $("preset"); // /p/<uuid> injects the saved config
