@@ -145,7 +145,8 @@ origin/main`) and re-run suites after.
       re-run; the account copy quotes the prior width *actually* used
       (scaled with the invested sleeve — new `prior_sd_effective` in the
       payload); `bootstrap_bands` validates `drift_sd` before simulating.
-- [x] PR opened against `main`
+- [x] PR opened against `main` — https://github.com/Rtasseff/Condor/pull/1
+      (rebased onto `origin/main` @ `975c8df`; suites re-run green after)
 
 ### Deviations / decisions taken here
 
