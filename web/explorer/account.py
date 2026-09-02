@@ -22,8 +22,8 @@ from condor.data import risk_free_rate
 
 from .models import (Account, AccountEvent, AccountTarget,
                      ContributionSchedule)
-from .views import (MAX_ASSETS, TICKER_RE, _bad, _json_body,
-                    api_login_required)
+from .views import (MAX_ASSETS, TICKER_RE, _bad, _clean_anchor, _json_body,
+                    anchor_context, api_login_required)
 
 log = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ def _state_response(account):
 @ensure_csrf_cookie
 def account_page(request):
     _account_for(request.user)  # ensure it exists before the JS asks
-    return render(request, "explorer/account.html")
+    return render(request, "explorer/account.html", anchor_context())
 
 
 # ------------------------------------------------------------------- API
@@ -583,6 +583,9 @@ def api_account_forecast(request):
     model = body.get("model", "steady")
     if model not in ("steady", "bootstrap"):
         return _bad("model must be 'steady' or 'bootstrap'.")
+    anchor, err = _clean_anchor(body)
+    if err:
+        return _bad(err)
 
     shares, cash, _ = acct.replay(account.events_frame())
     if not shares:
@@ -603,7 +606,7 @@ def api_account_forecast(request):
         aset = AssetSet(prices)
         fc = aset.portfolio(alloc["value"].to_dict()).forecast(
             horizon_years=horizon, cash_weight=max(0.0, min(1.0, cw)),
-            risk_free_rate=rf, model=model)
+            risk_free_rate=rf, model=model, **anchor)
     except DataFetchError as e:
         return _bad(str(e))
     except Exception:

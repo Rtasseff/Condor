@@ -497,7 +497,8 @@ class Portfolio:
                  risk_free_rate: float = 0.0,
                  model: str = "steady",
                  block: int = 21, n_paths: int = 10_000,
-                 seed: int = 0) -> "Forecast":
+                 seed: int = 0, anchor: str = "historical",
+                 anchor_value: float | None = None) -> "Forecast":
         """Project this portfolio's wealth forward (research rung A):
         closed-form constant-rate ("GBM") bands, plus a second band set
         with the drift's own estimation error folded in. A non-zero
@@ -507,11 +508,17 @@ class Portfolio:
         `model` picks the rung: "steady" (closed form) or "bootstrap"
         (rung B — stationary 21-day-block resampling of the actual
         history, guard-railed to never show narrower bands than the
-        closed form). Numbers come from the engine."""
+        closed form). `anchor` (rung C) chooses what the centre of the
+        fan assumes: "historical" (this mix's own sample mean, the
+        default and an exact no-op), "market" (a long-run anchor) or
+        "custom" with `anchor_value` an annual simple return; either
+        anchor is blended with the sample mean by precision, never
+        substituted for it. Numbers come from the engine."""
         return Forecast(self, horizon_years=horizon_years, levels=levels,
                         cash_weight=cash_weight,
                         risk_free_rate=risk_free_rate, model=model,
-                        block=block, n_paths=n_paths, seed=seed)
+                        block=block, n_paths=n_paths, seed=seed,
+                        anchor=anchor, anchor_value=anchor_value)
 
     def as_asset(self) -> Asset:
         return Asset(self.label, self.label)
@@ -520,6 +527,30 @@ class Portfolio:
 # ----------------------------------------------------------------------
 # Forecast
 # ----------------------------------------------------------------------
+def _resolve_anchor(anchor: str,
+                    anchor_value: float | None) -> tuple[float | None,
+                                                         float | None]:
+    """Anchor mode -> (annual simple anchor, prior sd), or (None, None)
+    for "historical", which is the identity: no blend happens at all.
+
+    The long-run market number is a documented constant, not a live
+    feed (`condor/forecast.py`); a custom anchor is the user's own
+    number, held with the same default confidence so the fan keeps an
+    honest estimate-error band around it.
+    """
+    if anchor == "historical":
+        return None, None
+    if anchor == "market":
+        return _forecast_engine.MARKET_ANCHOR, _forecast_engine.ANCHOR_PRIOR_SD
+    if anchor_value is None:
+        raise ValueError("a custom anchor needs anchor_value")
+    value = float(anchor_value)
+    lo, hi = _forecast_engine.ANCHOR_MIN, _forecast_engine.ANCHOR_MAX
+    if not lo <= value <= hi:
+        raise ValueError(f"anchor_value must be between {lo} and {hi}")
+    return value, _forecast_engine.ANCHOR_PRIOR_SD
+
+
 class Forecast:
     """A portfolio's forward fan chart — the simplest model, honestly.
 
@@ -532,20 +563,33 @@ class Forecast:
     `table` is a DataFrame indexed by horizon (years): `median`,
     `lo65/hi65/lo95/hi95` and their `_est` twins, all wealth multiples
     of 1 (row 0 = today = 1.0). `to_dict()` is the UI payload.
+
+    The centre of the fan is an assumption, and `anchor` is where the
+    user states it: "historical" leaves the sample mean alone, while
+    "market"/"custom" blend it with a long-run anchor by precision
+    (rung C). Everything downstream — median, both band sets, the
+    headline rate and its error bar — then reports the anchored
+    posterior; `mu_historical` keeps what the sample alone said, so the
+    UI can show the user what their choice moved.
     """
 
     MODELS = {"steady": "constant-rate", "bootstrap": "block-bootstrap"}
     MODEL = "constant-rate"  # rung A's payload name (kept stable)
+    ANCHORS = ("historical", "market", "custom")
 
     def __init__(self, portfolio: "Portfolio", horizon_years: float = 2,
                  levels=_forecast_engine.DEFAULT_LEVELS,
                  cash_weight: float = 0.0, risk_free_rate: float = 0.0,
                  model: str = "steady", block: int = 21,
-                 n_paths: int = 10_000, seed: int = 0):
+                 n_paths: int = 10_000, seed: int = 0,
+                 anchor: str = "historical",
+                 anchor_value: float | None = None):
         if not 0 < float(horizon_years) <= 50:
             raise ValueError("horizon_years must be in (0, 50]")
         if model not in self.MODELS:
             raise ValueError(f"model must be one of {sorted(self.MODELS)}")
+        if anchor not in self.ANCHORS:
+            raise ValueError(f"anchor must be one of {list(self.ANCHORS)}")
         self.portfolio = portfolio
         self.horizon_years = float(horizon_years)
         self.levels = tuple(levels)
@@ -562,18 +606,35 @@ class Forecast:
                 returns, self.cash_weight, self.risk_free_rate,
                 self.periods_per_year)
         self.m, self.s, self.n_obs = _forecast_engine.log_moments(returns)
+        self.m_hist = self.m               # what the sample alone said
+        self.anchor = anchor
+        self.anchor_value, self.anchor_prior_sd = _resolve_anchor(
+            anchor, anchor_value)
+        # An anchor is an assumption about the *risky* market, so on a
+        # complete portfolio it applies to the risky sleeve only: the
+        # cash sleeve is known to earn rf, and a constant mix blends
+        # expectations (and the width of a belief about them) linearly.
+        self.anchor_effective = self.drift_sd = None
+        if self.anchor_value is not None:
+            risky = 1.0 - self.cash_weight
+            self.anchor_effective = (risky * self.anchor_value
+                                     + self.cash_weight * self.risk_free_rate)
+            self.m, self.drift_sd = _forecast_engine.anchored_log_drift(
+                self.m, self.s, self.n_obs, self.periods_per_year,
+                self.anchor_effective, risky * self.anchor_prior_sd)
         step = 5 if self.periods_per_year >= 252 else 1
         horizon = int(round(self.horizon_years * self.periods_per_year))
         closed = _forecast_engine.lognormal_bands(
             self.m, self.s, self.n_obs, horizon_periods=horizon,
             periods_per_year=self.periods_per_year,
-            levels=self.levels, step=step)
+            levels=self.levels, step=step, drift_sd=self.drift_sd)
         if model == "bootstrap":
             boot = _forecast_engine.bootstrap_bands(
                 returns, horizon_periods=horizon,
                 periods_per_year=self.periods_per_year,
                 levels=self.levels, step=step, block=self.block,
-                n_paths=self.n_paths, seed=int(seed))
+                n_paths=self.n_paths, seed=int(seed),
+                drift_shift=self.m - self.m_hist, drift_sd=self.drift_sd)
             # research guard rail: resampling one lucky decade must not
             # present narrower uncertainty than the closed form admits
             self.table, self.guarded = _forecast_engine.band_floor(
@@ -593,8 +654,26 @@ class Forecast:
 
     @property
     def mu_se_annual(self) -> float:
-        """SE of the annualized log growth rate (≈ points of annual
-        return) — depends only on the calendar span (Merton)."""
+        """Uncertainty in the annualized log growth rate (≈ points of
+        annual return). Unanchored this is the sample SE, which depends
+        only on the calendar span (Merton); anchored it is the posterior
+        sd, which is smaller because a second source of information was
+        brought in."""
+        if self.drift_sd is not None:
+            return float(self.drift_sd * self.periods_per_year)
+        return _forecast_engine.mu_standard_error(
+            self.s, self.n_obs, self.periods_per_year)
+
+    @property
+    def mu_historical(self) -> float:
+        """Geometric annual growth rate the sample alone implies —
+        `mu_annual` when the anchor is "historical"."""
+        return float(np.exp(self.m_hist * self.periods_per_year) - 1)
+
+    @property
+    def mu_se_historical(self) -> float:
+        """The sample SE, whatever the anchor: what the history on its
+        own could tell us about the rate."""
         return _forecast_engine.mu_standard_error(
             self.s, self.n_obs, self.periods_per_year)
 
@@ -611,8 +690,10 @@ class Forecast:
         return self.n_obs / self.periods_per_year
 
     def __repr__(self) -> str:
+        anchored = "" if self.anchor == "historical" else f", {self.anchor}-anchored"
         return (f"Forecast({self.portfolio.label!r}, {self.horizon_years}y, "
-                f"mu={self.mu_annual:.3f}±{self.mu_se_annual:.3f}/yr)")
+                f"mu={self.mu_annual:.3f}±{self.mu_se_annual:.3f}/yr"
+                f"{anchored})")
 
     def to_dict(self) -> dict:
         t = self.table
@@ -626,8 +707,18 @@ class Forecast:
                               "lo": r6(t[f"lo{tag}_est"]),
                               "hi": r6(t[f"hi{tag}_est"])})
         lo_ci, hi_ci = self.mu_ci95
+        r6opt = lambda x: None if x is None else round(float(x), 6)
         return {
             "model": self.model,
+            "anchor": {
+                # what the centre of this fan assumes, and where it came from
+                "mode": self.anchor,
+                "value": r6opt(self.anchor_value),
+                "prior_sd": r6opt(self.anchor_prior_sd),
+                "effective": r6opt(self.anchor_effective),
+                "mu_historical": round(self.mu_historical, 6),
+                "mu_se_historical": round(self.mu_se_historical, 6),
+            },
             "block": self.block,
             "n_paths": self.n_paths,
             "guarded": self.guarded,

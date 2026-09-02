@@ -354,6 +354,47 @@ class ForecastApiTests(TestCase):
         res = self.forecast({"tickers": ["AAA"], "model": "oracle"})
         self.assertEqual(res.status_code, 400)
 
+    def test_anchor_modes_reach_the_model(self):
+        hist = self.forecast({"tickers": ["AAA", "BBB"], "horizon_years": 2})
+        self.assertEqual(hist.status_code, 200, hist.content)
+        h = hist.json()
+        self.assertEqual(h["anchor"]["mode"], "historical")
+        self.assertIsNone(h["anchor"]["value"])
+
+        mkt = self.forecast({"tickers": ["AAA", "BBB"], "horizon_years": 2,
+                             "anchor": "market"}).json()
+        self.assertEqual(mkt["anchor"]["mode"], "market")
+        self.assertEqual(mkt["anchor"]["value"], 0.08)
+        self.assertEqual(mkt["anchor"]["prior_sd"], 0.03)
+        # the anchor moved the centre and sharpened the estimate, and the
+        # payload still says what history alone claimed
+        self.assertNotEqual(mkt["mu_annual"], h["mu_annual"])
+        self.assertLess(mkt["mu_se_annual"], h["mu_se_annual"])
+        self.assertEqual(mkt["anchor"]["mu_historical"], h["mu_annual"])
+
+        cus = self.forecast({"tickers": ["AAA"], "horizon_years": 2,
+                             "anchor": "custom", "anchor_value": 0.06}).json()
+        self.assertEqual(cus["anchor"]["value"], 0.06)
+
+    def test_rejects_bad_anchor(self):
+        for body in ({"anchor": "vibes"},
+                     {"anchor": "custom"},                   # no value
+                     {"anchor": "custom", "anchor_value": "eight"},
+                     {"anchor": "custom", "anchor_value": 8},   # 800%/yr
+                     {"anchor": "custom", "anchor_value": -0.5}):
+            res = self.forecast({"tickers": ["AAA"], **body})
+            self.assertEqual(res.status_code, 400, body)
+            self.assertIn("error", res.json())      # a message, not a traceback
+
+    def test_anchored_bootstrap_is_floored_under_the_same_anchor(self):
+        d = self.forecast({"tickers": ["AAA", "BBB"], "horizon_years": 2,
+                           "model": "bootstrap", "anchor": "market"}).json()
+        self.assertEqual(d["model"], "block-bootstrap")
+        self.assertEqual(d["anchor"]["mode"], "market")
+        # bands still nested around the anchored centre
+        self.assertLessEqual(d["bands_est"][1]["lo"][-1], d["bands"][1]["lo"][-1])
+        self.assertLessEqual(d["bands"][1]["lo"][-1], d["median"][-1])
+
     def test_requires_login(self):
         self.client.logout()
         res = self.client.post("/api/forecast", data="{}",
@@ -494,6 +535,22 @@ class AccountTests(TestCase):
             res = self.client.delete(f"/api/account/events/{eid}")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["events"], [])
+
+    def test_pages_render_the_anchor_control_from_engine_constants(self):
+        """Both forecast cards get the control, and the long-run number in
+        the copy comes from the engine — an empty {{ }} here would be a
+        silently blank label."""
+        with patch("explorer.views.risk_free_rate",
+                   return_value={"rate": 0.04, "as_of": "2026-09-01"}):
+            build = self.client.get("/").content.decode()
+        account = self.client.get("/account").content.decode()
+        for html, ids in ((build, ("fanchor", "fanchorvalue")),
+                          (account, ("af-anchor", "af-anchorvalue"))):
+            for element_id in ids:
+                self.assertIn(f'id="{element_id}"', html)
+            self.assertIn("Long-run market (8%)", html)
+            self.assertIn('max="30"', html)
+            self.assertIn('min="-20"', html)
 
     def test_anonymous_gets_401_and_page_redirects(self):
         self.client.logout()
@@ -637,6 +694,50 @@ class ContributionTests(TestCase):
         self.assertEqual(f["risk_free_rate"], 0.04)
         self.assertEqual(f["start_value"], 350.0)
         self.assertEqual(f["median"][0], 1)
+
+    def test_account_forecast_anchor(self):
+        """The anchor reaches the account endpoint, and on a part-cash
+        account it enters as a claim about the risky sleeve only."""
+        self.seed()
+        self.api("post", "/api/account/events",
+                 {"kind": "buy", "ticker": "AAA", "date": "2026-01-06",
+                  "shares": 2, "price": 100})
+        import numpy as np
+        import pandas as pd
+
+        def fake_prices(tickers, years=10, **kw):
+            rng = np.random.default_rng(9)
+            idx = pd.bdate_range("2020-01-01", periods=756)
+            data = 100 * np.cumprod(
+                1 + 0.0004 + 0.01 * rng.standard_normal((756, len(tickers))),
+                axis=0)
+            return pd.DataFrame(data, index=idx, columns=list(tickers))
+
+        def project(body):
+            with self.patched(), \
+                 patch("explorer.account.fetch_prices", side_effect=fake_prices), \
+                 patch("explorer.account.risk_free_rate",
+                       return_value={"rate": 0.04}):
+                return self.client.post(
+                    "/api/account/forecast", data=json.dumps(body),
+                    content_type="application/json")
+
+        res = project({"horizon_years": 2, "anchor": "market"})
+        self.assertEqual(res.status_code, 200, res.content)
+        f = res.json()
+        cw = 150 / 350
+        self.assertEqual(f["anchor"]["mode"], "market")
+        self.assertEqual(f["anchor"]["value"], 0.08)
+        self.assertAlmostEqual(f["anchor"]["effective"],
+                               (1 - cw) * 0.08 + cw * 0.04, places=6)
+        base = project({"horizon_years": 2}).json()
+        self.assertEqual(f["anchor"]["mu_historical"], base["mu_annual"])
+        self.assertLess(f["mu_se_annual"], base["mu_se_annual"])
+
+        res = project({"horizon_years": 2, "anchor": "custom",
+                       "anchor_value": 0.99})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("error", res.json())
 
     def test_account_forecast_needs_holdings(self):
         self.api("post", "/api/account/events",

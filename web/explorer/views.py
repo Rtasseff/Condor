@@ -21,8 +21,10 @@ from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods, require_POST
 
-from condor import (AssetSet, DataFetchError, compute_analysis, fetch_prices,
-                    risk_free_rate)
+from condor import (AssetSet, DataFetchError, Forecast, compute_analysis,
+                    fetch_prices, risk_free_rate)
+from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
+                             MARKET_ANCHOR)
 from condor.stats import METHODS
 
 from .models import SavedPortfolio
@@ -35,6 +37,21 @@ MAX_NAME = 80
 
 
 # ---------------------------------------------------------------- pages
+
+
+def anchor_context() -> dict:
+    """Template context for the forecast's expected-return control.
+
+    The long-run market number and the range a custom one may take are
+    engine constants — the copy on the page reads them from there rather
+    than repeating them, so there is one place to change.
+    """
+    return {
+        "market_anchor_pct": f"{100 * MARKET_ANCHOR:g}",
+        "anchor_prior_sd_pct": f"{100 * ANCHOR_PRIOR_SD:g}",
+        "anchor_min_pct": f"{100 * ANCHOR_MIN:g}",
+        "anchor_max_pct": f"{100 * ANCHOR_MAX:g}",
+    }
 
 
 def _render_page(request, preset=None):
@@ -51,6 +68,7 @@ def _render_page(request, preset=None):
         "rf": rf,
         "rf_pct": round(rf["rate"] * 100, 2) if rf else 4.0,
         "preset": preset,
+        **anchor_context(),
     }
     return render(request, "explorer/index.html", ctx)
 
@@ -129,6 +147,29 @@ def _clean_settings(body):
     return {"years": years, "risk_free_rate": rf, "method": method}, None
 
 
+def _clean_anchor(body):
+    """Validate the forecast's expected-return anchor -> (kwargs, error).
+
+    `anchor` picks what the centre of the fan assumes; only "custom"
+    carries a number, and it is bounded so a mistyped 800% can't produce
+    a fantasy chart. The blend itself lives in the engine.
+    """
+    mode = body.get("anchor", "historical")
+    if mode not in Forecast.ANCHORS:
+        return None, f"anchor must be one of {list(Forecast.ANCHORS)}."
+    if mode != "custom":
+        return {"anchor": mode, "anchor_value": None}, None
+    try:
+        value = float(body.get("anchor_value"))
+    except (TypeError, ValueError):
+        return None, ("anchor_value must be a number — an annual return "
+                      "as a fraction, e.g. 0.08 for 8%.")
+    if not math.isfinite(value) or not ANCHOR_MIN <= value <= ANCHOR_MAX:
+        return None, (f"A custom expected return must be between "
+                      f"{ANCHOR_MIN:.0%} and {ANCHOR_MAX:.0%} a year.")
+    return {"anchor": mode, "anchor_value": value}, None
+
+
 def _clean_weights(raw):
     """Validate a `{ticker: weight}` map -> (weights, error message).
 
@@ -197,9 +238,11 @@ def api_analyze(request):
 @api_login_required
 @require_POST
 def api_forecast(request):
-    """Rung A forecast: closed-form constant-rate fan for the given mix.
+    """Forecast the given mix: a fan chart from the model the caller picks.
 
-    Same input contract as api_analyze plus `horizon_years` (1-30).
+    Same input contract as api_analyze plus `horizon_years` (1-30),
+    `model` ("steady"/"bootstrap") and the expected-return `anchor`
+    ("historical"/"market"/"custom" + `anchor_value`).
     Boundary is lenient about weights exactly like AssetSet.analysis():
     unknown tickers ignored, negatives clipped, all-zero -> equal.
     """
@@ -224,6 +267,9 @@ def api_forecast(request):
     model = body.get("model", "steady")
     if model not in ("steady", "bootstrap"):
         return _bad("model must be 'steady' or 'bootstrap'.")
+    anchor, err = _clean_anchor(body)
+    if err:
+        return _bad(err)
 
     try:
         prices = fetch_prices(tickers, years=settings["years"])
@@ -235,7 +281,8 @@ def api_forecast(request):
             if sum(clean.values()) <= 0:
                 clean = None
         result = aset.portfolio(clean).forecast(horizon_years=horizon,
-                                                model=model).to_dict()
+                                                model=model,
+                                                **anchor).to_dict()
     except DataFetchError as e:
         return _bad(str(e))
     except Exception:

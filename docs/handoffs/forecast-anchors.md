@@ -125,19 +125,56 @@ origin/main`) and re-run suites after.
 
 ## Status
 
-- [ ] Baseline suite counts recorded
-- [ ] Engine: anchored moments + tests
-- [ ] Steady model anchored + tests
-- [ ] Bootstrap model anchored + tests
-- [ ] API params + Django tests (Build + Account)
-- [ ] UI control on Build
-- [ ] UI control on My account
-- [ ] `/code-review` at medium on this branch (engine numerics → required)
-- [ ] PR opened against `main`
+- [x] Baseline suite counts recorded — **200 passed + 4 skipped** core
+      (brief guessed ~202+2), **41** Django, check clean, no migrations.
+      After: **217 + 4** core, **46** Django, check clean, no migrations.
+- [x] Engine: `anchored_moments` + `anchored_log_drift` + tests
+- [x] Steady model anchored + tests (model-equals-engine)
+- [x] Bootstrap model anchored + tests (recentre + rescale, floored under
+      the same anchor)
+- [x] API params + Django tests (Build + Account)
+- [x] UI control on Build — verified live in the browser (fan redraws on
+      change, badge, sentence, custom box)
+- [x] UI control on My account — markup + render path verified; the live
+      endpoint could not run in this worktree (see deviations)
+- [x] `/code-review` at medium on this branch
+- [x] PR opened against `main`
+
+### Deviations / decisions taken here
+
+1. **Cash-aware anchor on a complete portfolio.** The brief did not say
+   what an anchor means when the forecast includes a cash sleeve. An
+   anchor is a claim about the *market*, so it enters as
+   `(1-cw)·a + cw·rf` with `τ` scaled by `(1-cw)`; with `cw = 0` (every
+   Build-page forecast) this is exactly the brief's blend. Without it,
+   picking "long-run market 8%" on a 40%-cash account would have centred
+   the whole account at 8%/yr, which is not what the label claims. The
+   account copy says so in words. Tested.
+2. **Pre-existing chart bug fixed in passing** (`style.css`): `#fchart`
+   had no height, so the second `Plotly.react()` into it collapsed the
+   container to 0 px and the chart drew over the card below. Harmless
+   while the only way to re-render was clicking *Project* twice; fatal
+   for a control whose whole point is live redraws. Both fan charts now
+   get `height: 450px` the way `#chart` always has. `#afchart`'s
+   `min-height: 300px` was replaced by that rule.
+3. **The 8% / 3 pp defaults look right on screen** — on the example mix
+   (robust stats, 20.4%/yr historical, ±6.2 pp) the market anchor lands
+   the centre at 10.2%/yr ±2.7 pp. Nothing to re-open.
+
+### Noticed, not fixed (pre-existing)
+
+- `explorer.account._last_closes` raises `IndexError` (→ 500 "Forecast
+  failed unexpectedly") when the price store's last close is older than
+  `PRICE_BUFFER_DAYS`. This worktree's copied store ends 2026-08-21 vs a
+  system date of 2026-09-02, so the whole-account forecast 500s here for
+  reasons that have nothing to do with this branch. A stale store should
+  give the same clean message as `DataFetchError`.
+- `tests/test_forecast.py::TestBootstrap` uses a class-scoped fixture
+  defined as an instance method; pytest warns it is removed in 10.
 
 ## Questions for the handoff session
 
-- None yet. If the 8% / 3 pp defaults feel wrong once you see them on
+- None. If the 8% / 3 pp defaults feel wrong once you see them on
   screen, park a note here — do not invent different numbers.
 
 ## Return protocol

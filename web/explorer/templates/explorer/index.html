@@ -152,6 +152,13 @@
         <li><b>The bands</b>: shaded = market randomness; the dashed outer
           band adds the uncertainty in the return estimate itself — at
           multi-year horizons, the biggest unknown.</li>
+        <li><b>Expected return</b>: the whole chart hangs off one number —
+          what the middle line assumes you earn per year. Your own history
+          is a noisy estimate of it, so you can blend that history with a
+          long-run market anchor ({{ market_anchor_pct }}%/yr, held to
+          ±{{ anchor_prior_sd_pct }} points) or with a number of your own.
+          The blend weights each by how well it is known; it never simply
+          replaces your history.</li>
       </ul>
     </details>
     <div class="fcontrols">
@@ -160,6 +167,18 @@
           <option value="steady" selected>1 — steady rates (simplest)</option>
           <option value="bootstrap">2 — resampled history</option>
         </select>
+      </label>
+      <label>Expected return
+        <select id="fanchor">
+          <option value="historical" selected>Historical</option>
+          <option value="market">Long-run market ({{ market_anchor_pct }}%)</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+      <label id="fanchorcustom" hidden>Your assumption
+        <span class="pctwrap"><input id="fanchorvalue" type="number"
+          value="{{ market_anchor_pct }}" step="0.5"
+          min="{{ anchor_min_pct }}" max="{{ anchor_max_pct }}"> %/yr</span>
       </label>
       <label>Horizon
         <select id="fhorizon">
