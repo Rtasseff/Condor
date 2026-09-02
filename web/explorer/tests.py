@@ -542,7 +542,7 @@ class AccountTests(TestCase):
         silently blank label."""
         with patch("explorer.views.risk_free_rate",
                    return_value={"rate": 0.04, "as_of": "2026-09-01"}):
-            build = self.client.get("/").content.decode()
+            build = self.client.get("/optimize").content.decode()
         account = self.client.get("/account").content.decode()
         for html, ids in ((build, ("fanchor", "fanchorvalue")),
                           (account, ("af-anchor", "af-anchorvalue"))):
