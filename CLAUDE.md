@@ -9,6 +9,11 @@ Orientation: `README.md` (run it), `BACKLOG.md` (what's next, in order),
 `context/CONTEXT.md` (history, mission, UI concept), `context/legacy/`
 (2023–24 code, reference only).
 
+**If this checkout lives under `~/projects/condor-dev/`** it is a git
+worktree for one branch of work: read `docs/handoffs/<dirname>.md` FIRST —
+it is your brief — and never `git checkout` another branch or run `fly`
+commands here. Conventions: `docs/WORKTREES.md`.
+
 Working rules:
 
 - New capabilities are methods on `AssetSet` / `Portfolio` / `Frontier`
