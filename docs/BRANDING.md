@@ -23,7 +23,7 @@ Token vocabulary (keep these names; change only values):
 | Text | `--ink`, `--ink-2`, `--muted` |
 | Chart chrome | `--grid`, `--axis`, `--ring` |
 | Brand accent | `--accent`, `--accent-hi` |
-| Data series | `--series-frontier`, `--series-cal`, `--series-you` |
+| Data series | `--series-frontier`, `--series-cal`, `--series-you`, `--series-select`, plus the fixed 8-slot categorical set (`--series-2`, `-3`, `-6`, `-7`, `-8`; slots 1/4/5 reuse the three above) for the Build-page pie |
 | Signals | `--danger` |
 
 Rules for choosing values:

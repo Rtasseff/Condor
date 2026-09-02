@@ -1,0 +1,72 @@
+{% extends "explorer/base.html" %}
+{% load static %}
+{% block title %}Condor Funds — Build{% endblock %}
+{% block nav_build %}active{% endblock %}
+{% block content %}
+<main>
+  <div class="pagehead">
+    <h1>Build</h1>
+    <p class="sub">Search for assets, check the ones you like, and see your
+       mix take shape. No jargon here — <a href="{% url 'optimize' %}">Optimize</a>
+       is where the curves and fine-tuning live.</p>
+  </div>
+
+  <div id="error" class="error card" hidden></div>
+
+  <section class="card" aria-label="Search for an asset">
+    <form id="addform" autocomplete="off">
+      <input id="addticker" list="tickerlist" placeholder="Search — ticker or company name"
+             spellcheck="false" aria-label="Add asset">
+      <datalist id="tickerlist"></datalist>
+      <button type="submit" class="primary small">Add</button>
+    </form>
+    <div class="quickadd" id="quickadd"></div>
+  </section>
+
+  <div class="buildlayout">
+    <section class="card piecard" aria-label="Your mix">
+      <h2>Your mix</h2>
+      <div id="piechart" role="img" aria-label="Your draft portfolio, by weight" hidden></div>
+      <div id="pie-empty" class="empty">Add an asset to start your mix.</div>
+    </section>
+
+    <section class="card" aria-label="Your assets">
+      <div class="draftheader">
+        <h2>Your assets</h2>
+        <button id="evenout" class="ghost small" type="button"
+                title="Split your mix evenly across every asset">Even out</button>
+      </div>
+      <ul id="draftlist" class="draftlist"></ul>
+      <p class="empty" id="draftempty">Nothing yet — search above, or try a
+         starter below.</p>
+    </section>
+  </div>
+
+  <section class="card" id="acctcard" aria-label="Your account">
+    <h2>Your account</h2>
+    <p class="sub" id="acct-empty"></p>
+    <div class="tiles atiles" id="acct-tiles" hidden>
+      <div class="tile"><span class="label">Value</span><span class="value" id="acct-value">–</span><span class="gloss">at the last close</span></div>
+      <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="acct-twr">–</span><span class="gloss">growth of a dollar in the account</span></div>
+      <div class="tile"><span class="label">Setpoint</span><span class="value" id="acct-drift">–</span><span class="gloss">how close holdings are to plan</span></div>
+    </div>
+    <a href="{% url 'account' %}" class="ghost small">Go to My account →</a>
+  </section>
+
+  <section class="card ctacard" id="ctacard" aria-label="Optimize this mix">
+    <div>
+      <h2>Ready to fine-tune?</h2>
+      <p class="sub">Optimize shows the risk-and-reward trade-offs across
+         your mix, and lets you nudge the weights.</p>
+    </div>
+    <a href="{% url 'optimize' %}" class="primary" id="gotooptimize">Optimize this mix →</a>
+  </section>
+
+  <footer>
+    Historical daily prices via Yahoo Finance; statistics are estimates from past data.
+    Educational prototype — not investment advice.
+  </footer>
+</main>
+
+<script src="{% static 'explorer/home.js' %}"></script>
+{% endblock %}

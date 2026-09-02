@@ -39,6 +39,15 @@
   --danger:       #e66767;
   --danger-bg:    #2a1520;
 
+  /* Build-page pie: the same validated 8-hue categorical set (dark-mode
+     steps), slots 1/4/5 doubling as --series-frontier/-you/-cal above.
+     Assigned per-holding in add order, not by weight rank — see home.js. */
+  --series-2: #d95926;   /* orange */
+  --series-3: #199e70;   /* aqua */
+  --series-6: #008300;   /* green */
+  --series-7: #9085e9;   /* violet */
+  --series-8: #e66767;   /* red (== --danger; kept separate, distinct role) */
+
   /* Fonts (docs/BRANDING.md): brand fonts land by changing these
      tokens + the @font-face rules above; self-hosted woff2 in fonts/. */
   --font-body:    "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -440,3 +449,50 @@ button[aria-disabled="true"] { opacity: 0.55; cursor: wait; }
 h2 small.sub { font-weight: 400; font-size: 12.5px; margin-left: 6px; }
 .clickcue { text-align: center; color: var(--accent-hi); font-size: 13px;
   margin: 6px 0 0; }
+
+/* ---- page headings (Build / Optimize, 2026-09) ---- */
+.pagehead { padding: 4px 4px 0; }
+.pagehead h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; }
+.pagehead .sub { margin: 0; color: var(--ink-2); font-size: 13.5px; }
+.pagehead .sub a { color: var(--accent-hi); }
+
+/* ---- Build page ---- */
+.buildlayout { display: grid; grid-template-columns: 380px 1fr; gap: 16px;
+  align-items: start; }
+@media (max-width: 900px) { .buildlayout { grid-template-columns: 1fr; } }
+
+.piecard #piechart { width: 100%; height: 340px; }
+.piecard .empty { padding: 60px 0; }
+
+.draftheader { display: flex; align-items: center; justify-content: space-between; }
+.draftheader h2 { margin: 0; }
+#draftempty.empty { padding: 24px 0; text-align: left; }
+
+.draftlist { list-style: none; margin: 10px 0 0; padding: 0; }
+.draftrow { display: flex; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--grid); }
+.draftrow .swatch { width: 10px; height: 10px; border-radius: 50%;
+  margin-top: 5px; flex: none; }
+.draftrow .draftmain { flex: 1; min-width: 0; }
+.draftline1 { display: flex; align-items: center; gap: 8px; }
+.draftline1 .tick { font-weight: 700; min-width: 52px; }
+.draftline1 .name { flex: 1; min-width: 0; color: var(--muted); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.draftline1 .pctwrap { color: var(--ink-2); font-size: 13px; }
+.draftline1 input.w { width: 60px; text-align: right;
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 6px; padding: 4px 6px;
+  font-size: 13px; }
+.draftline1 button.rm { background: none; border: none; color: var(--muted);
+  font-size: 16px; padding: 0 4px; }
+.draftline1 button.rm:hover { color: var(--danger); }
+.draftline2 { margin-top: 3px; font-size: 12.5px; }
+.draftline2 a { color: var(--accent-hi); text-decoration: none; white-space: nowrap; }
+.draftline2 a:hover { text-decoration: underline; }
+
+.ctacard { display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; }
+.ctacard h2 { margin: 0 0 2px; }
+.ctacard .sub { margin: 0; }
+.ctacard a.primary { text-decoration: none; white-space: nowrap; }
+
+#acctcard .tile .value.neg { color: var(--danger); }

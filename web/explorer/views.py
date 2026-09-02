@@ -6,6 +6,7 @@ JSON. No numerics here — see ARCHITECTURE.md. Persistence is the same deal
 in reverse: `explorer.models` stores the inputs, `condor` does the maths.
 """
 
+import datetime
 import functools
 import json
 import logging
@@ -13,6 +14,7 @@ import math
 import re
 
 from django.contrib.auth.decorators import login_required
+from django.contrib.staticfiles import finders
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.http import Http404, JsonResponse
@@ -21,13 +23,13 @@ from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods, require_POST
 
-from condor import (AssetSet, DataFetchError, Forecast, compute_analysis,
-                    fetch_prices, risk_free_rate)
+from condor import (AssetSet, DataFetchError, Forecast, PriceStore,
+                    compute_analysis, fetch_prices, risk_free_rate)
 from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
 from condor.stats import METHODS
 
-from .models import SavedPortfolio
+from .models import DraftPortfolio, SavedPortfolio
 
 log = logging.getLogger(__name__)
 
@@ -54,11 +56,22 @@ def anchor_context() -> dict:
     }
 
 
-def _render_page(request, preset=None):
-    """The one page. Prefills the risk-free field from FRED (3-month
-    Treasury constant maturity); if FRED and the cache are both
-    unavailable, the template's hardcoded default stands. `preset` is a
-    saved config injected for the JS to load on first paint."""
+@login_required
+@ensure_csrf_cookie
+def index(request):
+    """`/` — Build: pick assets, see the draft as a pie, friendly copy.
+    Login lands here. Numerics happen client-side against `/api/draft`
+    and `/api/asset`; this view just renders the shell."""
+    return render(request, "explorer/home.html")
+
+
+def _render_optimize(request, preset=None):
+    """The frontier/CAL page (`/optimize`, and `/p/<uuid>`). Prefills the
+    risk-free field from FRED (3-month Treasury constant maturity); if
+    FRED and the cache are both unavailable, the template's hardcoded
+    default stands. `preset` is a saved config injected for the JS to
+    load on first paint, taking priority over the user's draft."""
+
     rf = None
     try:
         rf = risk_free_rate()  # cached ~12h next to the price store
@@ -70,24 +83,24 @@ def _render_page(request, preset=None):
         "preset": preset,
         **anchor_context(),
     }
-    return render(request, "explorer/index.html", ctx)
+    return render(request, "explorer/optimize.html", ctx)
 
 
 @login_required
 @ensure_csrf_cookie
-def index(request):
-    return _render_page(request)
+def optimize(request):
+    return _render_optimize(request)
 
 
 @login_required
 @ensure_csrf_cookie
 def shared_portfolio(request, pid):
-    """`/p/<uuid>` — the same page, preloaded with a saved portfolio."""
+    """`/p/<uuid>` — the Optimize page, preloaded with a saved portfolio."""
     portfolio = _get_portfolio(pid)
     if portfolio is None:
         raise Http404("No saved portfolio with that id.")
     preset = {"id": str(portfolio.id), "name": portfolio.name, **portfolio.to_config()}
-    return _render_page(request, preset=preset)
+    return _render_optimize(request, preset=preset)
 
 
 # ------------------------------------------------------------ validation
@@ -289,6 +302,134 @@ def api_forecast(request):
         log.exception("forecast failed for %s", tickers)
         return _bad("Forecast failed unexpectedly; see server log.", status=500)
     return JsonResponse(result)
+
+
+# --------------------------------------------------------------- draft
+
+
+def _draft_for(user) -> DraftPortfolio:
+    """The user's draft (v1: exactly one, auto-created)."""
+    draft, _ = DraftPortfolio.objects.get_or_create(owner=user)
+    return draft
+
+
+def _draft_dict(draft):
+    return {"assets": draft.assets, "updated_at": draft.updated_at.isoformat()}
+
+
+def _clean_draft_assets(raw):
+    """`[{"symbol": .., "weight": ..}, ...]` -> ([(ticker, weight), ...], error).
+
+    Same ticker rules as elsewhere; rejects unknown-looking or duplicate
+    symbols. Weights need not already sum to 1 — `DraftPortfolio.set_assets`
+    normalises on save, same rescaling-only contract as `SavedPortfolio`.
+    """
+    if not isinstance(raw, list) or not raw:
+        return None, "Add at least one asset."
+    if len(raw) > MAX_ASSETS:
+        return None, f"Prototype is capped at {MAX_ASSETS} assets."
+    seen = set()
+    items = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None, "each asset must be an object."
+        symbol = str(entry.get("symbol") or "").strip().upper()
+        if not TICKER_RE.match(symbol):
+            return None, f"'{symbol}' does not look like a ticker symbol."
+        if symbol in seen:
+            return None, f"'{symbol}' is listed twice."
+        seen.add(symbol)
+        try:
+            weight = float(entry.get("weight", 0))
+        except (TypeError, ValueError):
+            return None, f"weight for '{symbol}' must be a number."
+        if not math.isfinite(weight) or weight < 0:
+            return None, "weights must be non-negative numbers."
+        items.append((symbol, weight))
+    if sum(w for _, w in items) <= 0:
+        return None, "weights must add up to more than zero."
+    return items, None
+
+
+@api_login_required
+@require_http_methods(["GET", "PUT"])
+def api_draft(request):
+    """`GET`: the caller's draft. `PUT`: replace it wholesale — the Build
+    page round-trips its whole asset list on every change, and Optimize's
+    'Make this my portfolio' writes the adopted mix here too."""
+    draft = _draft_for(request.user)
+    if request.method == "GET":
+        return JsonResponse(_draft_dict(draft))
+
+    body, err = _json_body(request)
+    if err:
+        return _bad(err)
+    items, err = _clean_draft_assets(body.get("assets"))
+    if err:
+        return _bad(err)
+    draft.set_assets(items)
+    draft.save()
+    return JsonResponse(_draft_dict(draft))
+
+
+# --------------------------------------------------------------- asset info
+
+
+ASSET_INFO_DAYS_BUFFER = 400  # days of history fetched for a 1-year return
+
+
+@functools.lru_cache(maxsize=1)
+def _ticker_names():
+    """symbol -> display name, from the bundled `tickers.json` (best-effort;
+    an unlisted symbol just gets no name)."""
+    path = finders.find("explorer/tickers.json")
+    if not path:
+        return {}
+    with open(path) as f:
+        rows = json.load(f)
+    return {row["t"]: row["n"] for row in rows}
+
+
+@api_login_required
+@require_http_methods(["GET"])
+def api_asset(request):
+    """`GET /api/asset?symbol=X` — plain facts for one Build-page row:
+    display name, last close + its date, and a 1-year simple return.
+    Never more than one PriceStore fetch; a store miss degrades to
+    `{"ok": false}` rather than a traceback (a brand-new or delisted
+    ticker has no history yet)."""
+    symbol = str(request.GET.get("symbol") or "").strip().upper()
+    if not TICKER_RE.match(symbol):
+        return _bad(f"'{symbol}' does not look like a ticker symbol.")
+    name = _ticker_names().get(symbol)
+
+    start = datetime.date.today() - datetime.timedelta(days=ASSET_INFO_DAYS_BUFFER)
+    try:
+        closes = PriceStore().get(symbol, start=start)["close"].dropna()
+    except DataFetchError:
+        closes = None
+    except Exception:
+        log.exception("asset info failed for %s", symbol)
+        closes = None
+
+    if closes is None or closes.empty:
+        return JsonResponse({"ok": False, "symbol": symbol, "name": name})
+
+    last_date = closes.index[-1]
+    last_close = float(closes.iloc[-1])
+    year_ago = closes[closes.index <= last_date - datetime.timedelta(days=365)]
+    year_return = None
+    if not year_ago.empty and float(year_ago.iloc[-1]) > 0:
+        year_return = last_close / float(year_ago.iloc[-1]) - 1
+
+    return JsonResponse({
+        "ok": True,
+        "symbol": symbol,
+        "name": name,
+        "last_close": round(last_close, 4),
+        "as_of": str(last_date.date()),
+        "year_return": round(year_return, 6) if year_return is not None else None,
+    })
 
 
 # ------------------------------------------------------- saved portfolios

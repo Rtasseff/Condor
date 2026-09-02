@@ -980,8 +980,49 @@ $("settarget").addEventListener("click", async () => {
   }
 });
 $("adoptpoint").addEventListener("click", () => {
-  if (state.selected) useWeights(state.selected.weights);
+  if (!state.selected) return;
+  useWeights(state.selected.weights);
+  syncDraft(state.selected.weights); // Build's pie reflects this too
 });
+
+// ---------- draft (Build page) sync ----------
+// Optimize prefills from /api/draft on load (see init(), below) and
+// writes back here on adopt — the two pages share one draft. Best
+// effort: adopting the mix here still works even if the sync fails.
+async function syncDraft(weights) {
+  const assets = Object.entries(weights)
+    .filter(([, w]) => w > 0)
+    .map(([symbol, weight]) => ({ symbol, weight }));
+  if (!assets.length) return;
+  try {
+    await fetch("/api/draft", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
+      body: JSON.stringify({ assets }),
+    });
+  } catch {
+    /* best effort */
+  }
+}
+
+// A brand-new user has no draft yet -> keep the deck's example on the
+// sidebar (state.assets' initial value) rather than clearing it.
+async function loadDraftPrefill() {
+  try {
+    const res = await fetch("/api/draft");
+    const draft = await res.json();
+    if (!res.ok || !draft.assets || !draft.assets.length) return;
+    state.assets = draft.assets.map((a) => a.symbol).slice(0, 15);
+    state.weights = {};
+    for (const a of draft.assets) {
+      state.weights[a.symbol] = +(100 * a.weight).toFixed(1);
+    }
+    const tag = $("exampletag");
+    if (tag) tag.hidden = true; // this came from Build, not the example
+  } catch {
+    /* fall back to the built-in example deck */
+  }
+}
 
 $("save").addEventListener("click", () => showSavePanel($("savepanel").hidden));
 $("savecancel").addEventListener("click", () => showSavePanel(false));
@@ -1022,6 +1063,8 @@ $("saved").addEventListener("click", () => {
     applyConfig(JSON.parse(presetEl.textContent));
     $("sharelink").value = window.location.href;
     $("sharerow").hidden = false;
+  } else {
+    await loadDraftPrefill(); // else: the Build draft, if there is one
   }
   renderAssets();
   renderQuickAdd();
