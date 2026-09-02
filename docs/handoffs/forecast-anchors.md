@@ -113,10 +113,15 @@ choice.
 
 ## Conflict watchlist
 
-Nothing else is in flight on `main` right now. Highest-churn files if that
-changes: `web/explorer/static/explorer/app.js`, `index.html`,
-`condor/forecast.py`. Rebase onto `main` before opening the PR
-(`git fetch origin && git rebase origin/main`).
+**`feature/home-builder` is in flight in parallel.** It renames the index
+page to Optimize (`/optimize`), touches `web/explorer/views.py` (new
+endpoints + index rename), `base.html` (nav), `index.html` (headings,
+NOT the forecast card), `app.js` (init/prefill region, NOT the forecast
+card), and adds a `DraftPortfolio` model. Your forecast-card work is the
+region it has been told not to touch, so overlaps should be trivial —
+but `base.html`/`views.py`/`app.js` will both move. Rebase onto
+`origin/main` before opening the PR (`git fetch origin && git rebase
+origin/main`) and re-run suites after.
 
 ## Status
 
