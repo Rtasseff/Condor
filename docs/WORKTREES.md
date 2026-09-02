@@ -188,3 +188,4 @@ Mark the registry row merged (or remove it) in the same commit.
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
 | `forecast-anchors/` | `feature/forecast-anchors` | 8001 | 2026-09-02 | Active. Forecaster rung C: μ anchor control + posterior blend. Brief: `docs/handoffs/forecast-anchors.md` on the branch. |
+| `home-builder/` | `feature/home-builder` | 8002 | 2026-09-02 | Active. Friendly Build home at `/`, Optimize rename, DraftPortfolio thread. Brief: `docs/handoffs/home-builder.md` on the branch. |

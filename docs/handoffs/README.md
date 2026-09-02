@@ -15,3 +15,5 @@ Currently on branches (not yet on `main`):
 
 - `forecast-anchors.md` — `feature/forecast-anchors`, created 2026-09-02.
   Forecaster rung C: expected-return anchor control + posterior blend.
+- `home-builder.md` — `feature/home-builder`, created 2026-09-02.
+  Friendly Build home page, Optimize rename, draft portfolio thread.
