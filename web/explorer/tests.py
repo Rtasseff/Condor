@@ -645,3 +645,151 @@ class ContributionTests(TestCase):
             res = self.client.post("/api/account/forecast", data="{}",
                                    content_type="application/json")
         self.assertEqual(res.status_code, 400)
+
+
+# ----------------------------------------------------------- Build / Optimize
+# feature/home-builder: the Build home page, its draft, and the rename of
+# the old index page to Optimize. Kept in its own classes per
+# docs/handoffs/home-builder.md's conflict watchlist.
+
+
+class PageTests(TestCase):
+    """`/` (Build) and `/optimize` render; login still lands on Build."""
+
+    def setUp(self):
+        self.user = make_user()
+
+    def test_build_page_renders_for_a_logged_in_user(self):
+        self.client.force_login(self.user)
+        res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Build")
+
+    def test_optimize_page_renders_for_a_logged_in_user(self):
+        self.client.force_login(self.user)
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            res = self.client.get("/optimize")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Optimize")
+
+    def test_optimize_anonymous_redirects_to_login(self):
+        res = self.client.get("/optimize")
+        self.assertEqual(res.status_code, 302)
+        self.assertTrue(res.url.startswith("/login"))
+
+    def test_login_redirect_lands_on_build(self):
+        res = self.client.post(
+            "/login", {"username": self.user.username, "password": "x-not-secret-x"})
+        self.assertRedirects(res, "/")
+
+
+class DraftApiTests(TestCase):
+    """`/api/draft` — the Build page's single stored mix."""
+
+    def setUp(self):
+        self.alice = make_user("alice")
+        self.bob = make_user("bob")
+        self.client.force_login(self.alice)
+
+    def put(self, assets, expect=None):
+        res = self.client.put(
+            "/api/draft", data=json.dumps({"assets": assets}),
+            content_type="application/json")
+        if expect is not None:
+            self.assertEqual(res.status_code, expect, res.content)
+        return res
+
+    def test_empty_draft_created_lazily(self):
+        res = self.client.get("/api/draft")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["assets"], [])
+        from explorer.models import DraftPortfolio
+        self.assertEqual(DraftPortfolio.objects.filter(owner=self.alice).count(), 1)
+
+    def test_put_normalizes_weights_and_round_trips(self):
+        res = self.put([{"symbol": "aapl", "weight": 3}, {"symbol": "msft", "weight": 1}],
+                       expect=200)
+        assets = res.json()["assets"]
+        self.assertEqual([a["symbol"] for a in assets], ["AAPL", "MSFT"])
+        self.assertAlmostEqual(assets[0]["weight"], 0.75)
+        self.assertAlmostEqual(assets[1]["weight"], 0.25)
+        self.assertAlmostEqual(sum(a["weight"] for a in assets), 1.0)
+
+        get = self.client.get("/api/draft").json()
+        self.assertEqual(get["assets"], assets)
+
+    def test_rejects_bad_ticker_duplicate_and_too_many(self):
+        self.put([{"symbol": "not a ticker!", "weight": 1}], expect=400)
+        self.put([{"symbol": "AAPL", "weight": 1}, {"symbol": "AAPL", "weight": 1}],
+                expect=400)
+        self.put([{"symbol": f"T{i}", "weight": 1} for i in range(16)], expect=400)
+
+    def test_rejects_empty_and_all_zero_weights(self):
+        self.put([], expect=400)
+        self.put([{"symbol": "AAPL", "weight": 0}], expect=400)
+
+    def test_draft_is_scoped_per_owner(self):
+        self.put([{"symbol": "AAPL", "weight": 1}], expect=200)
+        self.client.force_login(self.bob)
+        self.assertEqual(self.client.get("/api/draft").json()["assets"], [])
+        self.put([{"symbol": "SPY", "weight": 1}], expect=200)
+        self.client.force_login(self.alice)
+        alice_assets = self.client.get("/api/draft").json()["assets"]
+        self.assertEqual([a["symbol"] for a in alice_assets], ["AAPL"])
+
+    def test_anonymous_gets_401(self):
+        self.client.logout()
+        self.assertEqual(self.client.get("/api/draft").status_code, 401)
+        self.assertEqual(self.put([{"symbol": "AAPL", "weight": 1}]).status_code, 401)
+
+
+class AssetInfoApiTests(TestCase):
+    """`/api/asset` — plain facts for one Build-page row, no traceback on a
+    data miss. Prices are synthetic (no network); name lookup reads the
+    real bundled tickers.json."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+
+    @staticmethod
+    def fake_store(closes):
+        import pandas as pd
+
+        class FakeStore:
+            def get(self, ticker, start=None, **kw):
+                if ticker not in closes:
+                    from condor import DataFetchError
+                    raise DataFetchError(f"no data for {ticker}")
+                return pd.DataFrame({"close": closes[ticker]})
+        return patch("explorer.views.PriceStore", return_value=FakeStore())
+
+    def test_happy_path_with_known_name(self):
+        import datetime as dt
+        import pandas as pd
+        idx = pd.bdate_range(end=dt.date.today(), periods=400)
+        s = pd.Series(100.0, index=idx, dtype=float)
+        s.iloc[-1] = 112.0
+        with self.fake_store({"AAPL": s}):
+            res = self.client.get("/api/asset?symbol=aapl")
+        self.assertEqual(res.status_code, 200)
+        d = res.json()
+        self.assertEqual(d, {
+            "ok": True, "symbol": "AAPL", "name": "Apple Inc.",
+            "last_close": 112.0, "as_of": str(idx[-1].date()),
+            "year_return": round(0.12, 6),
+        })
+
+    def test_no_data_degrades_gracefully(self):
+        with self.fake_store({}):
+            res = self.client.get("/api/asset?symbol=ZZZZ")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"ok": False, "symbol": "ZZZZ", "name": None})
+
+    def test_rejects_bad_symbol(self):
+        res = self.client.get("/api/asset?symbol=not a ticker!")
+        self.assertEqual(res.status_code, 400)
+
+    def test_anonymous_gets_401(self):
+        self.client.logout()
+        self.assertEqual(self.client.get("/api/asset?symbol=AAPL").status_code, 401)

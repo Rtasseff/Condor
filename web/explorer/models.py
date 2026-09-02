@@ -70,6 +70,42 @@ class SavedPortfolio(models.Model):
         }
 
 
+class DraftPortfolio(models.Model):
+    """The single in-progress mix a user is building on the Build page.
+
+    Storage only (see ARCHITECTURE.md): `payload` holds
+    `{"assets": [{"symbol": "MSFT", "weight": 0.25}, ...]}`, weights
+    already normalised to sum to 1. One per user, created lazily.
+    Optimize reads it to prefill; adopting a point there writes it back —
+    it is the thread between the two pages.
+    """
+
+    owner = models.OneToOneField(settings.AUTH_USER_MODEL,
+                                 on_delete=models.CASCADE,
+                                 related_name="draft")
+    payload = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Draft ({self.owner})"
+
+    @property
+    def assets(self):
+        return (self.payload or {}).get("assets", [])
+
+    def set_assets(self, items):
+        """Replace the draft with `[(ticker, weight), ...]`, weight > 0.
+
+        Normalises to sum to 1, in the given order — rescaling only, like
+        `SavedPortfolio.set_holdings`; no analysis happens here.
+        """
+        total = sum(w for _, w in items)
+        if total <= 0:
+            raise ValueError("weights must sum to a positive number")
+        self.payload = {"assets": [{"symbol": t, "weight": w / total}
+                                   for t, w in items]}
+
+
 class Holding(models.Model):
     """One ticker's share of a saved portfolio (fraction of 1)."""
 

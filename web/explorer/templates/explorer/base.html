@@ -19,6 +19,7 @@
   <nav class="pillars">
     <span class="soon" title="Coming soon">Learn</span>
     <a href="{% url 'index' %}" class="{% block nav_build %}{% endblock %}">Build</a>
+    <a href="{% url 'optimize' %}" class="{% block nav_optimize %}{% endblock %}">Optimize</a>
     <a href="{% url 'account' %}" class="{% block nav_account %}{% endblock %}">My account{% if contribution_due %}
       <span class="duedot" title="Your regular contribution is due">●</span>{% endif %}</a>
     <span class="soon" title="Coming soon">Compete</span>

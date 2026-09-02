@@ -145,15 +145,44 @@ Rules for you:
 
 ## Status
 
-- [ ] Baseline suite counts recorded
-- [ ] `DraftPortfolio` model + migration + draft API + tests
-- [ ] Asset info API + tests
-- [ ] Build page (template, home.js, styles)
-- [ ] Optimize rename + draft prefill + adopt-syncs-draft
-- [ ] Account summary card
-- [ ] Click-through on port 8002; screenshots in PR
+- [x] Baseline suite counts recorded — 200 passed/4 skipped (core), 41
+  Django, `check`/`makemigrations --check` clean.
+- [x] `DraftPortfolio` model + migration + draft API + tests
+- [x] Asset info API + tests
+- [x] Build page (template, home.js, styles)
+- [x] Optimize rename + draft prefill + adopt-syncs-draft
+- [x] Account summary card
+- [x] Click-through on port 8002 (via a throwaway local user, since deleted);
+  screenshots below
 - [ ] Rebase on origin/main; suites re-run
 - [ ] PR opened against `main`
+
+Final suite counts (before rebase): 200 passed/4 skipped (core, unchanged —
+this bucket is `web/` only), 55 Django (41 baseline + 14 new), `check` and
+`makemigrations --check` both clean.
+
+### Deviations from the brief
+
+- Pie chart colors: the brief only had 4 series tokens (`--series-frontier/
+  -cal/-you/-select`) to draw on, not enough for up to 15 holdings. Added
+  5 more tokens (`--series-2/-3/-6/-7/-8`) completing the documented
+  8-hue categorical set (dataviz skill's default palette — turns out the
+  three original tokens already *were* slots 1/4/5 of it), validated with
+  the palette validator against the app's dark card surface (all PASS,
+  worst adjacent ΔE 8.4). Colors are assigned per-symbol in add-order
+  (stable across reweights/removals), not by weight rank; beyond 8 assets
+  they cycle — acceptable since every slice is directly labeled
+  (ticker + %), so color is never the only identity signal. Noted in
+  `docs/BRANDING.md`'s token table.
+- Added a small `.pagehead` (`<h1>` + one-line `sub`) to both Build and
+  Optimize — the brief's acceptance criterion ("`/optimize` shows the old
+  page under the heading 'Optimize'") needed a visible heading the old
+  page didn't have.
+- "Drift status" on the account summary tile is a single derived line
+  (max |actual − target weight| across positions, >2% = "N% off target",
+  else "On target"/"No setpoint yet") rather than a new endpoint —
+  reuses `/api/account`'s existing `positions[].weight/target_weight`,
+  same 2%-drift threshold `account.js` already uses per-row.
 
 ## Questions for the handoff session
 

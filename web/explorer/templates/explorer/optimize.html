@@ -1,9 +1,14 @@
 {% extends "explorer/base.html" %}
 {% load static %}
-{% block title %}Condor Funds — Portfolio Explorer{% endblock %}
-{% block nav_build %}active{% endblock %}
+{% block title %}Condor Funds — Optimize{% endblock %}
+{% block nav_optimize %}active{% endblock %}
 {% block content %}
 <main>
+  <div class="pagehead">
+    <h1>Optimize</h1>
+    <p class="sub">The curves and fine-tuning behind your mix — starts from
+       your <a href="{% url 'index' %}">Build</a> draft if you have one.</p>
+  </div>
   <section class="controls card" aria-label="Analysis settings">
     <label>Method
       <select id="method">

@@ -5,6 +5,7 @@ from . import account, views
 
 urlpatterns = [
     path("", views.index, name="index"),
+    path("optimize", views.optimize, name="optimize"),
     path("login", auth_views.LoginView.as_view(
         template_name="explorer/login.html",
         redirect_authenticated_user=True), name="login"),
@@ -13,6 +14,8 @@ urlpatterns = [
     path("p/<uuid:pid>", views.shared_portfolio, name="shared_portfolio"),
     path("api/analyze", views.api_analyze, name="api_analyze"),
     path("api/forecast", views.api_forecast, name="api_forecast"),
+    path("api/draft", views.api_draft, name="api_draft"),
+    path("api/asset", views.api_asset, name="api_asset"),
     path("account", account.account_page, name="account"),
     path("api/account", account.api_account, name="api_account"),
     path("api/account/events", account.api_account_events,
