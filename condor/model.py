@@ -614,14 +614,16 @@ class Forecast:
         # complete portfolio it applies to the risky sleeve only: the
         # cash sleeve is known to earn rf, and a constant mix blends
         # expectations (and the width of a belief about them) linearly.
-        self.anchor_effective = self.drift_sd = None
+        self.anchor_effective = self.anchor_prior_sd_effective = None
+        self.drift_sd = None
         if self.anchor_value is not None:
             risky = 1.0 - self.cash_weight
             self.anchor_effective = (risky * self.anchor_value
                                      + self.cash_weight * self.risk_free_rate)
+            self.anchor_prior_sd_effective = risky * self.anchor_prior_sd
             self.m, self.drift_sd = _forecast_engine.anchored_log_drift(
                 self.m, self.s, self.n_obs, self.periods_per_year,
-                self.anchor_effective, risky * self.anchor_prior_sd)
+                self.anchor_effective, self.anchor_prior_sd_effective)
         step = 5 if self.periods_per_year >= 252 else 1
         horizon = int(round(self.horizon_years * self.periods_per_year))
         closed = _forecast_engine.lognormal_bands(
@@ -716,6 +718,7 @@ class Forecast:
                 "value": r6opt(self.anchor_value),
                 "prior_sd": r6opt(self.anchor_prior_sd),
                 "effective": r6opt(self.anchor_effective),
+                "prior_sd_effective": r6opt(self.anchor_prior_sd_effective),
                 "mu_historical": round(self.mu_historical, 6),
                 "mu_se_historical": round(self.mu_se_historical, 6),
             },

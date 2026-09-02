@@ -614,11 +614,15 @@ function assumptionSentence(f) {
 function clearForecast() {
   $("forecastcard").hidden = !state.result;
   for (const id of ["fchart", "fmu", "fnote", "fguard"]) $(id).hidden = true;
+  $("fanchor").options[0].textContent = "Historical";   // it named the old mix
 }
+
+let forecastSeq = 0;   // only the newest request may paint the card
 
 async function runForecast() {
   showError("");
   if (!state.result) return;
+  const seq = ++forecastSeq;
   const btn = $("forecast");
   btn.disabled = true;
   $("fstatus").textContent = "Projecting…";
@@ -639,13 +643,16 @@ async function runForecast() {
       body: JSON.stringify(body),
     });
     const data = await res.json();
+    if (seq !== forecastSeq) return;      // a later change already won
     if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
     renderForecast(data);
   } catch (err) {
     showError(err.message);
   } finally {
-    btn.disabled = false;
-    $("fstatus").textContent = "";
+    if (seq === forecastSeq) {
+      btn.disabled = false;
+      $("fstatus").textContent = "";
+    }
   }
 }
 
@@ -687,7 +694,9 @@ function renderForecast(f) {
 
   traces.push({
     x: t, y: dollars(f.median), mode: "lines",
-    name: "Median — if the past average holds",
+    name: f.anchor.mode === "historical"
+      ? "Median — if the past average holds"
+      : "Median — if the blended assumption holds",
     line: { color: C.frontier, width: 2.5 },
     hovertemplate: "$%{y:,.0f} at year %{x:.1f}<extra>median</extra>",
   });

@@ -542,13 +542,17 @@ function assumptionSentence(f) {
     + `${pctpt(a.mu_historical)}%/yr over ${f.span_years.toFixed(1)} years `
     + `blended with ${source} (held to ±${pctnum(a.prior_sd)} points), each `
     + `weighted by how well it is known. Because ${cash}, that anchor counts `
-    + `as ${pctpt(a.effective)}%/yr across the account. History alone was good `
-    + `only to ±${pctpt(a.mu_se_historical)} points; the blend is ${error}.`
+    + `as ${pctpt(a.effective)}%/yr — held to ±${pctpt(a.prior_sd_effective)} `
+    + `points — across the account. History alone was good only to `
+    + `±${pctpt(a.mu_se_historical)} points; the blend is ${error}.`
     + dispersion;
 }
 
+let forecastSeq = 0;   // only the newest request may paint the card
+
 async function runAccountForecast() {
   showError("");
+  const seq = ++forecastSeq;
   const btn = $("aforecast");
   btn.disabled = true;
   $("afstatus").textContent = "Projecting…";
@@ -560,12 +564,15 @@ async function runAccountForecast() {
         model: $("af-model").value,
         ...anchorParams() }),
     });
+    if (seq !== forecastSeq) return;       // a later change already won
     renderAccountForecast(f);
   } catch (err) {
-    showError(err.message);
+    if (seq === forecastSeq) showError(err.message);
   } finally {
-    btn.disabled = false;
-    $("afstatus").textContent = "";
+    if (seq === forecastSeq) {
+      btn.disabled = false;
+      $("afstatus").textContent = "";
+    }
   }
 }
 
@@ -600,7 +607,9 @@ function renderAccountForecast(f) {
   });
   traces.push({
     x: t, y: dollars(f.median), mode: "lines",
-    name: "Median — if the past average holds",
+    name: f.anchor.mode === "historical"
+      ? "Median — if the past average holds"
+      : "Median — if the blended assumption holds",
     line: { color: C.frontier, width: 2.5 },
     hovertemplate: "$%{y:,.0f} at year %{x:.1f}<extra>median</extra>",
   });
@@ -625,7 +634,8 @@ function renderAccountForecast(f) {
     ? `model 2 — resampled history (${f.block}-day blocks)`
     : "model 1 — steady rates") + " · whole account"
     + (f.anchor.mode === "historical" ? ""
-       : ` · anchored ${pctnum(f.anchor.value)}% ± ${pctnum(f.anchor.prior_sd)} pp`);
+       : ` · anchored ${pctnum(f.anchor.effective)}%`
+         + ` ± ${pctnum(f.anchor.prior_sd_effective)} pp`);
   $("afguard").hidden = !f.guarded;
   $("af-anchor").options[0].textContent =
     `Historical (${pctpt(f.anchor.mu_historical)}%)`;

@@ -221,6 +221,8 @@ def bootstrap_bands(returns, horizon_periods: int, periods_per_year: int,
         raise ValueError("block must be >= 1")
     if n_paths < 100:
         raise ValueError("n_paths must be >= 100")
+    if drift_sd is not None and drift_sd < 0:
+        raise ValueError("drift_sd must be non-negative")
     r = np.log1p(np.asarray(pd.Series(returns).dropna(), dtype=float))
     n = r.size
     if n < 2:
@@ -251,8 +253,6 @@ def bootstrap_bands(returns, horizon_periods: int, periods_per_year: int,
 
     # Merton overlay: an uncertain drift shifts each whole path
     sd = r.std(ddof=1) / np.sqrt(n) if drift_sd is None else float(drift_sd)
-    if sd < 0:
-        raise ValueError("drift_sd must be non-negative")
     delta = rng.normal(0.0, sd, n_paths)
     est = out + delta[:, None] * h[None, :]
 

@@ -137,7 +137,14 @@ origin/main`) and re-run suites after.
       change, badge, sentence, custom box)
 - [x] UI control on My account — markup + render path verified; the live
       endpoint could not run in this worktree (see deviations)
-- [x] `/code-review` at medium on this branch
+- [x] `/code-review` at medium on this branch — 6 findings, all landed
+      here (see the second commit): median trace name now follows the
+      anchor mode on both charts; a request-generation guard so a slow
+      bootstrap response can't repaint the card after a newer choice;
+      the "Historical (x%)" option label resets when the analysis is
+      re-run; the account copy quotes the prior width *actually* used
+      (scaled with the invested sleeve — new `prior_sd_effective` in the
+      payload); `bootstrap_bands` validates `drift_sd` before simulating.
 - [x] PR opened against `main`
 
 ### Deviations / decisions taken here

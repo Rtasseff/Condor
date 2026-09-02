@@ -730,6 +730,8 @@ class ContributionTests(TestCase):
         self.assertEqual(f["anchor"]["value"], 0.08)
         self.assertAlmostEqual(f["anchor"]["effective"],
                                (1 - cw) * 0.08 + cw * 0.04, places=6)
+        self.assertAlmostEqual(f["anchor"]["prior_sd_effective"],
+                               (1 - cw) * 0.03, places=6)
         base = project({"horizon_years": 2}).json()
         self.assertEqual(f["anchor"]["mu_historical"], base["mu_annual"])
         self.assertLess(f["mu_se_annual"], base["mu_se_annual"])

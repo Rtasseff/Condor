@@ -129,7 +129,8 @@ class TestModel:
                           "bands_est", "mu_annual", "mu_se_annual", "mu_ci95",
                           "sigma_annual", "n_obs", "span_years"}
         assert set(d["anchor"]) == {"mode", "value", "prior_sd", "effective",
-                                    "mu_historical", "mu_se_historical"}
+                                    "prior_sd_effective", "mu_historical",
+                                    "mu_se_historical"}
         assert d["anchor"]["mode"] == "historical"
         assert d["anchor"]["value"] is None
         assert d["block"] is None and d["n_paths"] is None   # steady model
@@ -507,6 +508,10 @@ class TestAnchorModel:
         assert fc.m == post_m and fc.drift_sd == post_sd
         d = fc.to_dict()["anchor"]
         assert d["value"] == MARKET_ANCHOR and d["effective"] == 0.06
+        # the prior's *width* is scaled with the sleeve too, and the payload
+        # says so — the UI must quote the width actually used, not the 3 pp
+        assert d["prior_sd"] == ANCHOR_PRIOR_SD
+        assert d["prior_sd_effective"] == pytest.approx(0.5 * ANCHOR_PRIOR_SD)
 
     def test_all_cash_anchored_stays_exact(self, prices):
         """No anchor can move a rate that is already known."""
@@ -524,6 +529,7 @@ class TestAnchorModel:
         assert a["mode"] == "market"
         assert a["value"] == MARKET_ANCHOR and a["prior_sd"] == ANCHOR_PRIOR_SD
         assert a["effective"] == MARKET_ANCHOR      # no cash sleeve
+        assert a["prior_sd_effective"] == ANCHOR_PRIOR_SD
         assert a["mu_historical"] > d["mu_annual"] > 0
         assert d["mu_se_annual"] < a["mu_se_historical"]
 
