@@ -69,19 +69,18 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   /account); what remains is the Build-page UI: forecast the
   "Considering" point (its cash share included) instead of only the
   sidebar mix.
-- [ ] **Forecaster — rung C** (rungs A and B shipped 2026-08-22, see
-  Done). *Green-lit by RT 2026-08-23 ("read the research PDF... love
-  the ladder... completely on board") — next build item after review.*
-  Per `docs/research/forecast-methods-ladder.md`: a visible
-  expected-return anchor control (Historical / long-run anchor /
-  custom) with Black-Litterman underneath and CAPE/Damodaran-ERP as
-  anchor sources (ties into the B-L backlog item). Then the backtest
-  view (project from 2y ago, overlay reality, report the landed
-  percentile with the sample-of-one caveat) and the offline coverage
-  notebook from `forecast-validation.md`. Skip the ML tier — ~5
-  independent 2-year observations to learn from. Data shortlist:
-  `forecast-data-sources.md`. Legacy: `analytics_workflow_v1.ipynb`
-  Part 3; RF/LSTM ideas deprioritized.
+- [ ] **Forecaster — rung C, the rest of it** (the anchor control itself
+  shipped 2026-09-02, see Done; rungs A and B 2026-08-22). What remains
+  of the ladder's rung C and its follow-ons: *multi-asset*
+  Black-Litterman on the frontier (`pypfopt.BlackLittermanModel`,
+  market-cap equilibrium prior, user views as tilts — ties into the B-L
+  backlog item below), CAPE / Damodaran-ERP as *live* anchor sources
+  instead of the documented 8% constant, the backtest view (project from
+  2y ago, overlay reality, report the landed percentile with the
+  sample-of-one caveat) and the offline coverage notebook from
+  `forecast-validation.md`. Skip the ML tier — ~5 independent 2-year
+  observations to learn from. Data shortlist: `forecast-data-sources.md`.
+  Legacy: `analytics_workflow_v1.ipynb` Part 3; RF/LSTM deprioritized.
 - [ ] **Rebalancing rules & DCA** (drift-triggered vs calendar rules, DCA
   schedule simulator) — the *mechanics* shipped 2026-08-22 with the
   account view (drift display, whole-share plans, confirm-to-ledger);
@@ -174,6 +173,28 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
       users). Launch prep: committed ready `fly.toml` (2GB per the
       $50/mo budget) + `docs/LAUNCH-CHECKLIST.md` — RT's exact
       phase-by-phase steps.
+
+- [x] **Forecaster rung C — an anchor on the expected return** —
+      2026-09-02. The sample mean is the forecast's weakest input (SE ≈
+      5-6 pp/yr on a decade of equity data), so the user now chooses
+      what the fan's centre assumes: their own history, a long-run
+      market anchor, or their own number. Engine `anchored_moments`
+      (conjugate-normal precision blend, exact at both limits, and
+      exact data beats any prior so cash stays exact) +
+      `anchored_log_drift` (annual simple anchor in via log1p,
+      per-period posterior drift and sd out); `lognormal_bands
+      (drift_sd=)` and `bootstrap_bands(drift_shift=, drift_sd=)` carry
+      it into both models, with model 2 still floored at model 1's
+      bands *computed under the same anchor*. Historical is the default
+      and bit-identical to before. `MARKET_ANCHOR` 8%/yr, τ = 3 pp, per
+      the ladder's §7a; not fetched from anywhere. On a complete
+      portfolio the anchor applies to the risky sleeve — cash is known
+      to earn rf — so it enters as (1-cw)·a + cw·rf with τ scaled to
+      match. Control + honest assumption sentence on both forecast
+      cards; the fan redraws live, which is the educational point. 17
+      new engine/model tests + 5 API/page tests. Also fixed a
+      pre-existing bug the live redraw exposed: `#fchart` had no CSS
+      height, so a second `Plotly.react()` collapsed it to 0 px.
 
 - [x] **Forecaster rung B — resampled history (block bootstrap)** —
       2026-08-22. Engine `bootstrap_bands`: stationary bootstrap

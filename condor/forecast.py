@@ -53,6 +53,75 @@ def mu_standard_error(s: float, n_obs: int, periods_per_year: int) -> float:
     return float(s) * periods_per_year / np.sqrt(n_obs)
 
 
+# ---------------------------------------------------------------- anchors
+# Rung C. The sample mean is the forecast's weakest input: SE(m) is
+# s*sqrt(ppy)/sqrt(n) -- five or six points a year on a typical equity
+# mix estimated from a decade. A long-run anchor is a second source of
+# information about the same quantity, so the honest thing to do with it
+# is a precision-weighted blend, not a replacement.
+MARKET_ANCHOR = 0.08      # long-run nominal market expectation, simple %/yr
+ANCHOR_PRIOR_SD = 0.03    # tau: 3 points/yr, how firmly the anchor is held
+ANCHOR_MIN, ANCHOR_MAX = -0.20, 0.30   # sane range for a user-typed anchor
+
+
+def anchored_moments(mu_hat: float, se: float, anchor: float,
+                     prior_sd: float) -> tuple[float, float]:
+    """Conjugate-normal blend of an estimate with a prior -> (mean, sd).
+
+        mu_post = (mu_hat/se^2 + a/tau^2) / (1/se^2 + 1/tau^2)
+        sd_post = sqrt(1 / (1/se^2 + 1/tau^2))
+
+    Unit-agnostic: all four arguments must live in the same space (Condor
+    passes the *annualized log* drift; see `anchored_log_drift`). This is
+    the generalizable core of Black-Litterman -- shrink the sample mean
+    toward an equilibrium anchor with weight set by the ratio of prior to
+    sampling variance (docs/research/forecast-methods-ladder.md 7a).
+
+    Limits, exactly: `prior_sd = inf` is "no prior at all" and returns
+    (mu_hat, se) unchanged; `prior_sd = 0` is total certainty and returns
+    (anchor, 0). `se = 0` means the data are exact (an all-cash mix), and
+    no prior can improve on that -- it wins over a zero prior_sd. With
+    both finite and positive the posterior sd is strictly below either
+    input: bringing in information narrows the estimate error.
+    """
+    se, prior_sd = float(se), float(prior_sd)
+    if se < 0 or prior_sd < 0:
+        raise ValueError("se and prior_sd must be non-negative")
+    if se == 0:
+        return float(mu_hat), 0.0
+    if prior_sd == 0:
+        return float(anchor), 0.0
+    if np.isinf(prior_sd):
+        return float(mu_hat), se
+    w_data, w_prior = 1.0 / se ** 2, 1.0 / prior_sd ** 2
+    post_var = 1.0 / (w_data + w_prior)
+    return (float(post_var * (mu_hat * w_data + anchor * w_prior)),
+            float(np.sqrt(post_var)))
+
+
+def anchored_log_drift(m: float, s: float, n_obs: int,
+                       periods_per_year: int, anchor: float,
+                       prior_sd: float) -> tuple[float, float]:
+    """`anchored_moments` in the units the forecaster actually holds.
+
+    Takes the per-period log drift `m` and its sample (s, n_obs), plus an
+    anchor quoted as an **annual simple** return and a prior sd quoted in
+    annual log points; returns the posterior *per-period* log drift and
+    the posterior *per-period* sd of that drift (the quantity that drives
+    the `_est` bands, in the same units as the s/sqrt(n) it replaces).
+
+    The anchor is converted with log(1 + a); tau is treated as log-space
+    directly. At these magnitudes the difference between a simple-space
+    and a log-space sd is second-order (3 points of return around 8% maps
+    to ~2.8 log points), and pretending to more precision about the width
+    of a prior belief than that would be false.
+    """
+    se = mu_standard_error(s, n_obs, periods_per_year)
+    post_m, post_sd = anchored_moments(m * periods_per_year, se,
+                                       float(np.log1p(anchor)), prior_sd)
+    return post_m / periods_per_year, post_sd / periods_per_year
+
+
 def horizon_grid(horizon_periods: int, step: int) -> np.ndarray:
     """0..horizon inclusive in `step`-period increments (endpoint kept)."""
     if horizon_periods < 1:
@@ -65,19 +134,28 @@ def horizon_grid(horizon_periods: int, step: int) -> np.ndarray:
 
 def lognormal_bands(m: float, s: float, n_obs: int, horizon_periods: int,
                     periods_per_year: int, levels=DEFAULT_LEVELS,
-                    step: int = 5) -> pd.DataFrame:
+                    step: int = 5, drift_sd: float | None = None) -> pd.DataFrame:
     """Closed-form fan-chart table, indexed by horizon in years.
 
     Columns: `median`, and per level L (as an int percent, e.g. 65):
     `lo{L}`/`hi{L}` (path-only) and `lo{L}_est`/`hi{L}_est` (drift
     estimation error included). All values are wealth multiples of 1.
     Row 0 is "today": everything exactly 1.
+
+    `drift_sd` overrides the per-period uncertainty in the drift, which
+    defaults to the sample SE s/sqrt(n). Rung C passes the posterior sd
+    from `anchored_log_drift` (with `m` its posterior mean) so the fan
+    centres on the anchored expectation and carries the anchored, usually
+    narrower, estimate error.
     """
     if s < 0 or n_obs < 2:
         raise ValueError("need s >= 0 and n_obs >= 2")
+    if drift_sd is not None and drift_sd < 0:
+        raise ValueError("drift_sd must be non-negative")
     h = horizon_grid(horizon_periods, step).astype(float)
     var_path = h * s ** 2
-    var_est = var_path + (h * s) ** 2 / n_obs   # + h²s²/n: Var of h·m̂
+    var_est = (var_path + (h * s) ** 2 / n_obs   # + h²s²/n: Var of h·m̂
+               if drift_sd is None else var_path + (h * drift_sd) ** 2)
     drift = h * m
 
     out = {"median": np.exp(drift)}
@@ -113,7 +191,9 @@ def blend_with_cash(returns, cash_weight: float, risk_free_rate: float,
 
 def bootstrap_bands(returns, horizon_periods: int, periods_per_year: int,
                     levels=DEFAULT_LEVELS, step: int = 5, block: int = 21,
-                    n_paths: int = 10_000, seed: int = 0) -> pd.DataFrame:
+                    n_paths: int = 10_000, seed: int = 0,
+                    drift_shift: float = 0.0,
+                    drift_sd: float | None = None) -> pd.DataFrame:
     """Rung B: stationary-block-bootstrap fan-chart table.
 
     Resamples the portfolio's own per-period log returns in contiguous
@@ -127,11 +207,22 @@ def bootstrap_bands(returns, horizon_periods: int, periods_per_year: int,
     warns this method inherits whatever mean-reversion happens to be in
     the sample window — callers must apply `band_floor` against the
     closed form so a lucky decade can never *narrow* the bands.
+
+    Rung C enters through the same door: `drift_shift` is a per-period
+    log-drift offset added to every path (recentring the resampled
+    history on an anchored expectation without disturbing its shape —
+    the streaks and drawdowns are still the real ones), and `drift_sd`
+    replaces s/sqrt(n) as the sd of the per-path drift draw. Relative to
+    the unshifted resample, the overlay is then
+    N(drift_shift, drift_sd²) — the posterior recentring and its
+    estimate error in one constant-per-path term.
     """
     if block < 1:
         raise ValueError("block must be >= 1")
     if n_paths < 100:
         raise ValueError("n_paths must be >= 100")
+    if drift_sd is not None and drift_sd < 0:
+        raise ValueError("drift_sd must be non-negative")
     r = np.log1p(np.asarray(pd.Series(returns).dropna(), dtype=float))
     n = r.size
     if n < 2:
@@ -155,8 +246,14 @@ def bootstrap_bands(returns, horizon_periods: int, periods_per_year: int,
         if k is not None:
             out[:, k] = acc
 
+    # anchoring (rung C) recentres every path by a constant drift; the
+    # median and the path-only bands move with it
+    if drift_shift:
+        out = out + float(drift_shift) * h[None, :]
+
     # Merton overlay: an uncertain drift shifts each whole path
-    delta = rng.normal(0.0, r.std(ddof=1) / np.sqrt(n), n_paths)
+    sd = r.std(ddof=1) / np.sqrt(n) if drift_sd is None else float(drift_sd)
+    delta = rng.normal(0.0, sd, n_paths)
     est = out + delta[:, None] * h[None, :]
 
     cols = {"median": np.exp(np.quantile(out, 0.5, axis=0))}

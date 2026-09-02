@@ -571,15 +571,58 @@ function renderTable() {
     ` · ${r.method === "robust" ? "robust (median/CoMAD)" : "normal (mean/Ledoit-Wolf)"} statistics.`;
 }
 
-// ---------- forecast (model 1: constant-rate closed form) ----------
+// ---------- forecast ----------
+// The expected-return anchor (rung C): what the middle line assumes.
+// "historical" is the default and sends nothing the server didn't
+// already assume; the other two blend that history with a stated
+// long-run number, so the chart visibly hinges on the choice.
+function anchorParams() {
+  const mode = $("fanchor").value;
+  $("fanchorcustom").hidden = mode !== "custom";
+  return mode === "custom"
+    ? { anchor: mode, anchor_value: parseFloat($("fanchorvalue").value) / 100 }
+    : { anchor: mode };
+}
+
+const pctpt = (x) => (100 * x).toFixed(1);
+const pctnum = (x) => String(+(100 * x).toFixed(1));
+
+// One sentence naming the centre line's number AND where it came from —
+// the honesty rule from docs/research/forecast-methods-ladder.md.
+function assumptionSentence(f) {
+  const a = f.anchor;
+  const error = `good to about ±${pctpt(f.mu_se_annual)} points, so the true `
+    + `long-run rate is plausibly ${pctpt(f.mu_ci95[0])}% to `
+    + `${pctpt(f.mu_ci95[1])}%`;
+  const dispersion = ` Dispersion: ${pctpt(f.sigma_annual)}%/yr.`;
+  if (a.mode === "historical") {
+    return `Middle line: ${pctpt(f.mu_annual)}%/yr — your mix's own average `
+      + `over ${f.span_years.toFixed(1)} years of data, and nothing else. `
+      + `That estimate is ${error}.` + dispersion;
+  }
+  const source = a.mode === "market"
+    ? `the long-run market anchor of ${pctnum(a.value)}%`
+    : `your own ${pctnum(a.value)}% assumption`;
+  return `Middle line: ${pctpt(f.mu_annual)}%/yr — your mix's `
+    + `${pctpt(a.mu_historical)}%/yr over ${f.span_years.toFixed(1)} years `
+    + `blended with ${source} (held to ±${pctnum(a.prior_sd)} points), each `
+    + `weighted by how well it is known. History alone was good only to `
+    + `±${pctpt(a.mu_se_historical)} points; the blend is ${error}.`
+    + dispersion;
+}
+
 function clearForecast() {
   $("forecastcard").hidden = !state.result;
   for (const id of ["fchart", "fmu", "fnote", "fguard"]) $(id).hidden = true;
+  $("fanchor").options[0].textContent = "Historical";   // it named the old mix
 }
+
+let forecastSeq = 0;   // only the newest request may paint the card
 
 async function runForecast() {
   showError("");
   if (!state.result) return;
+  const seq = ++forecastSeq;
   const btn = $("forecast");
   btn.disabled = true;
   $("fstatus").textContent = "Projecting…";
@@ -592,6 +635,7 @@ async function runForecast() {
       weights: Object.keys(state.weights).length ? state.weights : null,
       horizon_years: parseInt($("fhorizon").value, 10),
       model: $("fmodel").value,
+      ...anchorParams(),
     };
     const res = await fetch("/api/forecast", {
       method: "POST",
@@ -599,13 +643,16 @@ async function runForecast() {
       body: JSON.stringify(body),
     });
     const data = await res.json();
+    if (seq !== forecastSeq) return;      // a later change already won
     if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
     renderForecast(data);
   } catch (err) {
     showError(err.message);
   } finally {
-    btn.disabled = false;
-    $("fstatus").textContent = "";
+    if (seq === forecastSeq) {
+      btn.disabled = false;
+      $("fstatus").textContent = "";
+    }
   }
 }
 
@@ -647,7 +694,9 @@ function renderForecast(f) {
 
   traces.push({
     x: t, y: dollars(f.median), mode: "lines",
-    name: "Median — if the past average holds",
+    name: f.anchor.mode === "historical"
+      ? "Median — if the past average holds"
+      : "Median — if the blended assumption holds",
     line: { color: C.frontier, width: 2.5 },
     hovertemplate: "$%{y:,.0f} at year %{x:.1f}<extra>median</extra>",
   });
@@ -669,17 +718,17 @@ function renderForecast(f) {
     hoverlabel: hoverStyle(),
   }, CHART_CONFIG);
 
-  $("fbadge").textContent = f.model === "block-bootstrap"
+  $("fbadge").textContent = (f.model === "block-bootstrap"
     ? `model 2 of 3 — resampled history (${f.block}-day blocks)`
-    : "model 1 of 3 — simplest: steady rates";
+    : "model 1 of 3 — simplest: steady rates")
+    + (f.anchor.mode === "historical" ? ""
+       : ` · anchored ${pctnum(f.anchor.value)}% ± ${pctnum(f.anchor.prior_sd)} pp`);
   $("fguard").hidden = !f.guarded;
-  const pctpt = (x) => (100 * x).toFixed(1);
-  $("fmu").textContent =
-    `Estimated growth rate: ${pctpt(f.mu_annual)}%/yr from ` +
-    `${f.span_years.toFixed(1)} years of data — good to about ` +
-    `±${pctpt(f.mu_se_annual)} points, so the true long-run rate is plausibly ` +
-    `${pctpt(f.mu_ci95[0])}% to ${pctpt(f.mu_ci95[1])}%. ` +
-    `Dispersion: ${pctpt(f.sigma_annual)}%/yr.`;
+  // the control's own label carries what history says, so the choice is
+  // a comparison of two numbers rather than a leap in the dark
+  $("fanchor").options[0].textContent =
+    `Historical (${pctpt(f.anchor.mu_historical)}%)`;
+  $("fmu").textContent = assumptionSentence(f);
   for (const id of ["fchart", "fmu", "fnote"]) $(id).hidden = false;
   // (fguard visibility is set above from the payload)
 }
@@ -904,6 +953,14 @@ $("tangentw").addEventListener("click", () => {
   }
 });
 $("forecast").addEventListener("click", runForecast);
+// The anchor redraws the fan on the spot (no re-analyze): seeing the
+// whole chart swing on this one number is the point of the control.
+for (const id of ["fanchor", "fanchorvalue"]) {
+  $(id).addEventListener("change", () => {
+    anchorParams();                       // keep the custom box in sync
+    if (!$("fchart").hidden) runForecast();
+  });
+}
 $("settarget").addEventListener("click", async () => {
   // Send the considered mix to the account as its new setpoint, then
   // open the transition plan there. Weights are total-wealth fractions,

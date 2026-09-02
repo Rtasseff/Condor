@@ -14,9 +14,10 @@ import pytest
 from scipy.stats import lognorm, norm
 
 from condor import AssetSet, Forecast
-from condor.forecast import (DEFAULT_LEVELS, band_floor, blend_with_cash,
-                             bootstrap_bands, horizon_grid, log_moments,
-                             lognormal_bands, mu_standard_error)
+from condor.forecast import (ANCHOR_PRIOR_SD, DEFAULT_LEVELS, MARKET_ANCHOR,
+                             anchored_log_drift, anchored_moments, band_floor,
+                             blend_with_cash, bootstrap_bands, horizon_grid,
+                             log_moments, lognormal_bands, mu_standard_error)
 
 M, S, N = 0.0004, 0.011, 2520  # per-day log drift/dispersion, 10y of obs
 PPY = 252
@@ -122,11 +123,16 @@ class TestModel:
     def test_to_dict_shape(self, prices):
         fc = AssetSet(prices).portfolio().forecast(horizon_years=1)
         d = fc.to_dict()
-        assert set(d) == {"model", "block", "n_paths", "guarded",
+        assert set(d) == {"model", "anchor", "block", "n_paths", "guarded",
                           "horizon_years", "cash_weight",
                           "risk_free_rate", "t", "median", "bands",
                           "bands_est", "mu_annual", "mu_se_annual", "mu_ci95",
                           "sigma_annual", "n_obs", "span_years"}
+        assert set(d["anchor"]) == {"mode", "value", "prior_sd", "effective",
+                                    "prior_sd_effective", "mu_historical",
+                                    "mu_se_historical"}
+        assert d["anchor"]["mode"] == "historical"
+        assert d["anchor"]["value"] is None
         assert d["block"] is None and d["n_paths"] is None   # steady model
         assert d["model"] == "constant-rate"
         assert d["t"][0] == 0 and d["median"][0] == 1
@@ -302,3 +308,237 @@ class TestBootstrap:
     def test_unknown_model_rejected(self, prices):
         with pytest.raises(ValueError):
             AssetSet(prices).portfolio().forecast(2, model="oracle")
+
+
+# ----------------------------------------------------------------------
+# rung C: an anchor on the expected return
+# ----------------------------------------------------------------------
+class TestAnchorEngine:
+    def test_hand_computed_posterior(self):
+        """Conjugate normal, worked by hand: precisions add, and the
+        posterior mean is the precision-weighted average."""
+        mu_hat, se, a, tau = 0.14, 0.056, 0.077, 0.03
+        w_d, w_p = 1 / 0.056 ** 2, 1 / 0.03 ** 2
+        mean = (0.14 * w_d + 0.077 * w_p) / (w_d + w_p)
+        sd = np.sqrt(1 / (w_d + w_p))
+        got_mean, got_sd = anchored_moments(mu_hat, se, a, tau)
+        assert got_mean == pytest.approx(mean, abs=1e-12)
+        assert got_sd == pytest.approx(sd, abs=1e-12)
+        # the research doc's worked example: ~9.5%/yr, ~2.6 pp, from a
+        # 14.3% sample mean with a 5.7 pp SE and an 8% +/- 3 pp prior
+        m2, sd2 = anchored_moments(np.log1p(0.1426), 0.057, np.log1p(0.08), 0.03)
+        assert np.expm1(m2) == pytest.approx(0.095, abs=0.005)
+        assert sd2 == pytest.approx(0.026, abs=0.002)
+
+    def test_diffuse_prior_is_the_identity(self):
+        """tau -> inf is "no prior at all": historical mu-hat and SE back,
+        exactly (not approximately)."""
+        for tau in (np.inf, float("inf")):
+            mean, sd = anchored_moments(0.14, 0.056, 0.077, tau)
+            assert mean == 0.14 and sd == 0.056
+        # and a merely huge tau converges to it
+        mean, sd = anchored_moments(0.14, 0.056, 0.077, 1e6)
+        assert mean == pytest.approx(0.14, abs=1e-12)
+        assert sd == pytest.approx(0.056, abs=1e-12)
+
+    def test_certain_prior_is_the_anchor(self):
+        mean, sd = anchored_moments(0.14, 0.056, 0.077, 0.0)
+        assert mean == 0.077 and sd == 0.0
+
+    def test_posterior_is_sharper_than_either_input(self):
+        rng = np.random.default_rng(0)
+        for mu_hat, se, a, tau in rng.uniform(0.01, 0.3, size=(50, 4)):
+            mean, sd = anchored_moments(mu_hat, se, a, tau)
+            assert sd < min(se, tau)
+            assert min(mu_hat, a) <= mean <= max(mu_hat, a)
+
+    def test_exact_data_beats_any_prior(self):
+        """se = 0 is an all-cash mix: its rate is known, so no anchor can
+        improve on it (and this keeps cash forecasts exact)."""
+        assert anchored_moments(0.04, 0.0, 0.08, 0.03) == (0.04, 0.0)
+        assert anchored_moments(0.04, 0.0, 0.08, 0.0) == (0.04, 0.0)
+
+    def test_rejects_negative_widths(self):
+        with pytest.raises(ValueError):
+            anchored_moments(0.1, -0.01, 0.08, 0.03)
+        with pytest.raises(ValueError):
+            anchored_moments(0.1, 0.05, 0.08, -0.03)
+
+    def test_log_drift_adapter_pins_to_the_blend(self):
+        """The units wrapper: annual simple anchor -> log via log1p, and
+        the result comes back per period."""
+        post_m, post_sd = anchored_log_drift(M, S, N, PPY, 0.08, 0.03)
+        se = mu_standard_error(S, N, PPY)
+        mean, sd = anchored_moments(M * PPY, se, np.log1p(0.08), 0.03)
+        assert post_m == pytest.approx(mean / PPY, abs=1e-15)
+        assert post_sd == pytest.approx(sd / PPY, abs=1e-15)
+        # a diffuse prior leaves the sample drift and its SE untouched
+        d_m, d_sd = anchored_log_drift(M, S, N, PPY, 0.08, np.inf)
+        assert d_m == M and d_sd * PPY == se
+
+    def test_drift_sd_drives_the_est_bands_only(self):
+        """Passing drift_sd replaces s/sqrt(n); zero uncertainty in the
+        drift collapses the est bands onto the path-only bands."""
+        base = lognormal_bands(M, S, N, 504, PPY, step=5)
+        same = lognormal_bands(M, S, N, 504, PPY, step=5,
+                               drift_sd=S / np.sqrt(N))
+        for tag in ("65", "95"):
+            np.testing.assert_allclose(same[f"hi{tag}_est"],
+                                       base[f"hi{tag}_est"], rtol=1e-12)
+        exact = lognormal_bands(M, S, N, 504, PPY, step=5, drift_sd=0.0)
+        for tag in ("65", "95"):
+            np.testing.assert_allclose(exact[f"lo{tag}_est"], exact[f"lo{tag}"],
+                                       rtol=1e-12)
+        # tighter drift knowledge => tighter est bands, path-only untouched
+        tight = lognormal_bands(M, S, N, 504, PPY, step=5,
+                                drift_sd=S / np.sqrt(N) / 2)
+        assert tight["hi95_est"].iloc[-1] < base["hi95_est"].iloc[-1]
+        np.testing.assert_allclose(tight["hi95"], base["hi95"], rtol=1e-12)
+        with pytest.raises(ValueError):
+            lognormal_bands(M, S, N, 504, PPY, drift_sd=-0.1)
+
+    def test_bootstrap_drift_shift_is_exactly_multiplicative(self):
+        """Recentring adds a constant log drift to every path, so every
+        band moves by exp(shift*h) and the shape of the resample — its
+        streaks, its skew — is untouched."""
+        rng = np.random.default_rng(3)
+        iid = pd.Series(np.expm1(M + S * rng.standard_normal(2520)))
+        shift = 0.0002
+        base = bootstrap_bands(iid, 252, PPY, n_paths=1000, seed=7)
+        moved = bootstrap_bands(iid, 252, PPY, n_paths=1000, seed=7,
+                                drift_shift=shift)
+        h = base.index.values * PPY
+        for col in base.columns:
+            np.testing.assert_allclose(moved[col], base[col] * np.exp(shift * h),
+                                       rtol=1e-12)
+        # zero shift and default sd are the untouched rung-B path
+        pd.testing.assert_frame_equal(
+            bootstrap_bands(iid, 252, PPY, n_paths=1000, seed=7,
+                            drift_shift=0.0, drift_sd=None), base)
+        # a certain drift collapses the est bands onto the path-only ones
+        exact = bootstrap_bands(iid, 252, PPY, n_paths=1000, seed=7,
+                                drift_sd=0.0)
+        np.testing.assert_allclose(exact["hi95_est"], exact["hi95"], rtol=1e-12)
+        with pytest.raises(ValueError):
+            bootstrap_bands(iid, 252, PPY, n_paths=1000, drift_sd=-1.0)
+
+
+class TestAnchorModel:
+    def test_historical_is_bit_identical(self, prices):
+        """The default must be a no-op: same table, same payload, for
+        both models. Anything else is a behaviour change nobody asked
+        for."""
+        p = AssetSet(prices).portfolio({"AAA": 0.6, "BBB": 0.4})
+        for kw in ({}, {"model": "bootstrap", "n_paths": 500, "seed": 2}):
+            base = p.forecast(2, **kw)
+            same = p.forecast(2, anchor="historical", **kw)
+            assert base.table.equals(same.table)
+            assert base.to_dict() == same.to_dict()
+            assert same.drift_sd is None and same.anchor_value is None
+            assert same.mu_annual == same.mu_historical
+
+    def test_steady_anchored_equals_engine(self, prices):
+        p = AssetSet(prices).portfolio({"AAA": 0.6, "BBB": 0.4})
+        fc = p.forecast(2, anchor="market")
+        m, s, n = log_moments(p.returns)
+        post_m, post_sd = anchored_log_drift(m, s, n, 252, MARKET_ANCHOR,
+                                             ANCHOR_PRIOR_SD)
+        expected = lognormal_bands(post_m, s, n, 504, 252,
+                                   levels=DEFAULT_LEVELS, step=5,
+                                   drift_sd=post_sd)
+        pd.testing.assert_frame_equal(fc.table, expected)
+        assert fc.mu_annual == pytest.approx(np.exp(post_m * 252) - 1)
+        assert fc.mu_se_annual == pytest.approx(post_sd * 252)
+        assert fc.mu_historical == pytest.approx(np.exp(m * 252) - 1)
+        assert fc.mu_se_historical == mu_standard_error(s, n, 252)
+
+    def test_anchor_pulls_the_centre_and_sharpens_the_estimate(self, prices):
+        """The educational point, made numerically: an 8% anchor on a
+        15%/yr sample pulls the median down and narrows the estimate-error
+        band, while market randomness (the inner band) is untouched."""
+        p = AssetSet(prices).portfolio()
+        hist, mkt = p.forecast(2), p.forecast(2, anchor="market")
+        assert hist.mu_annual > mkt.mu_annual > MARKET_ANCHOR
+        assert mkt.mu_se_annual < hist.mu_se_annual
+        assert mkt.table["median"].iloc[-1] < hist.table["median"].iloc[-1]
+        width = lambda t, c: np.log(t["hi95" + c]).iloc[-1] - np.log(t["lo95" + c]).iloc[-1]
+        assert width(mkt.table, "") == pytest.approx(width(hist.table, ""),
+                                                     rel=1e-12)
+        assert width(mkt.table, "_est") < width(hist.table, "_est")
+        # a custom anchor above the sample mean pushes the centre up
+        high = p.forecast(2, anchor="custom", anchor_value=0.25)
+        assert high.mu_annual > hist.mu_annual
+        assert high.anchor_value == 0.25
+
+    def test_bootstrap_anchored_equals_engine_and_floors_under_the_anchor(
+            self, prices):
+        p = AssetSet(prices).portfolio({"AAA": 0.7, "BBB": 0.3})
+        fc = p.forecast(2, model="bootstrap", block=21, n_paths=2000, seed=5,
+                        anchor="custom", anchor_value=0.05)
+        m, s, n = log_moments(p.returns)
+        post_m, post_sd = anchored_log_drift(m, s, n, 252, 0.05,
+                                             ANCHOR_PRIOR_SD)
+        closed = lognormal_bands(post_m, s, n, 504, 252, step=5,
+                                 drift_sd=post_sd)
+        boot = bootstrap_bands(p.returns, 504, 252, step=5, block=21,
+                               n_paths=2000, seed=5, drift_shift=post_m - m,
+                               drift_sd=post_sd)
+        expected, guarded = band_floor(boot, closed)
+        pd.testing.assert_frame_equal(fc.table, expected)
+        assert fc.guarded == guarded
+        # the floor is the anchored closed form, not the historical one:
+        # its median sits at the anchored centre
+        assert closed["median"].iloc[-1] == pytest.approx(
+            np.exp(post_m * 504), rel=1e-12)
+
+    def test_anchor_applies_to_the_risky_sleeve_of_a_complete_portfolio(
+            self, prices):
+        """A market anchor is a claim about the market, not about T-bills:
+        on a half-cash account it enters as 0.5*8% + 0.5*rf, held half as
+        firmly."""
+        p = AssetSet(prices).portfolio()
+        rf = 0.04
+        fc = p.forecast(2, cash_weight=0.5, risk_free_rate=rf, anchor="market")
+        assert fc.anchor_value == MARKET_ANCHOR
+        assert fc.anchor_effective == pytest.approx(0.5 * MARKET_ANCHOR
+                                                    + 0.5 * rf)
+        m, s, n = log_moments(blend_with_cash(p.returns, 0.5, rf, 252))
+        post_m, post_sd = anchored_log_drift(m, s, n, 252, fc.anchor_effective,
+                                             0.5 * ANCHOR_PRIOR_SD)
+        assert fc.m == post_m and fc.drift_sd == post_sd
+        d = fc.to_dict()["anchor"]
+        assert d["value"] == MARKET_ANCHOR and d["effective"] == 0.06
+        # the prior's *width* is scaled with the sleeve too, and the payload
+        # says so — the UI must quote the width actually used, not the 3 pp
+        assert d["prior_sd"] == ANCHOR_PRIOR_SD
+        assert d["prior_sd_effective"] == pytest.approx(0.5 * ANCHOR_PRIOR_SD)
+
+    def test_all_cash_anchored_stays_exact(self, prices):
+        """No anchor can move a rate that is already known."""
+        p = AssetSet(prices).portfolio()
+        fc = p.forecast(2, cash_weight=1.0, risk_free_rate=0.04,
+                        anchor="market")
+        assert fc.mu_annual == pytest.approx(0.04, rel=1e-9)
+        assert fc.mu_se_annual == 0.0
+        assert fc.table["lo95"].iloc[-1] == pytest.approx(
+            fc.table["hi95"].iloc[-1], rel=1e-12)
+
+    def test_payload_reports_what_was_assumed(self, prices):
+        d = AssetSet(prices).portfolio().forecast(2, anchor="market").to_dict()
+        a = d["anchor"]
+        assert a["mode"] == "market"
+        assert a["value"] == MARKET_ANCHOR and a["prior_sd"] == ANCHOR_PRIOR_SD
+        assert a["effective"] == MARKET_ANCHOR      # no cash sleeve
+        assert a["prior_sd_effective"] == ANCHOR_PRIOR_SD
+        assert a["mu_historical"] > d["mu_annual"] > 0
+        assert d["mu_se_annual"] < a["mu_se_historical"]
+
+    def test_validation(self, prices):
+        p = AssetSet(prices).portfolio()
+        with pytest.raises(ValueError):
+            p.forecast(2, anchor="vibes")
+        with pytest.raises(ValueError):
+            p.forecast(2, anchor="custom")               # needs a value
+        for bad in (-0.5, 0.9):
+            with pytest.raises(ValueError):
+                p.forecast(2, anchor="custom", anchor_value=bad)

@@ -508,8 +508,51 @@ async function confirmContribution() {
 }
 
 // ---------- whole-account forecast ----------
+// Expected-return anchor (rung C), same control as the Build page: an
+// anchor is a claim about the market, so the server applies it to the
+// invested sleeve and leaves the cash share at the T-bill rate.
+function anchorParams() {
+  const mode = $("af-anchor").value;
+  $("af-anchorcustom").hidden = mode !== "custom";
+  return mode === "custom"
+    ? { anchor: mode, anchor_value: parseFloat($("af-anchorvalue").value) / 100 }
+    : { anchor: mode };
+}
+
+const pctpt = (x) => (100 * x).toFixed(1);
+const pctnum = (x) => String(+(100 * x).toFixed(1));
+
+function assumptionSentence(f) {
+  const a = f.anchor;
+  const cash = `${pct(f.cash_weight, 0)} of the account is cash at the `
+    + `${pctpt(f.risk_free_rate)}% T-bill rate`;
+  const error = `good to about ±${pctpt(f.mu_se_annual)} points; plausibly `
+    + `${pctpt(f.mu_ci95[0])}% to ${pctpt(f.mu_ci95[1])}%`;
+  const dispersion = ` Dispersion: ${pctpt(f.sigma_annual)}%/yr.`;
+  if (a.mode === "historical") {
+    return `Middle line: ${pctpt(f.mu_annual)}%/yr for the whole account `
+      + `(${cash}) — what your holdings averaged over `
+      + `${f.span_years.toFixed(1)} years of data, and nothing else. `
+      + `That estimate is ${error}.` + dispersion;
+  }
+  const source = a.mode === "market"
+    ? `the long-run market anchor of ${pctnum(a.value)}%`
+    : `your own ${pctnum(a.value)}% assumption`;
+  return `Middle line: ${pctpt(f.mu_annual)}%/yr for the whole account — its `
+    + `${pctpt(a.mu_historical)}%/yr over ${f.span_years.toFixed(1)} years `
+    + `blended with ${source} (held to ±${pctnum(a.prior_sd)} points), each `
+    + `weighted by how well it is known. Because ${cash}, that anchor counts `
+    + `as ${pctpt(a.effective)}%/yr — held to ±${pctpt(a.prior_sd_effective)} `
+    + `points — across the account. History alone was good only to `
+    + `±${pctpt(a.mu_se_historical)} points; the blend is ${error}.`
+    + dispersion;
+}
+
+let forecastSeq = 0;   // only the newest request may paint the card
+
 async function runAccountForecast() {
   showError("");
+  const seq = ++forecastSeq;
   const btn = $("aforecast");
   btn.disabled = true;
   $("afstatus").textContent = "Projecting…";
@@ -518,14 +561,18 @@ async function runAccountForecast() {
       method: "POST",
       body: JSON.stringify({
         horizon_years: parseInt($("af-horizon").value, 10),
-        model: $("af-model").value }),
+        model: $("af-model").value,
+        ...anchorParams() }),
     });
+    if (seq !== forecastSeq) return;       // a later change already won
     renderAccountForecast(f);
   } catch (err) {
-    showError(err.message);
+    if (seq === forecastSeq) showError(err.message);
   } finally {
-    btn.disabled = false;
-    $("afstatus").textContent = "";
+    if (seq === forecastSeq) {
+      btn.disabled = false;
+      $("afstatus").textContent = "";
+    }
   }
 }
 
@@ -560,7 +607,9 @@ function renderAccountForecast(f) {
   });
   traces.push({
     x: t, y: dollars(f.median), mode: "lines",
-    name: "Median — if the past average holds",
+    name: f.anchor.mode === "historical"
+      ? "Median — if the past average holds"
+      : "Median — if the blended assumption holds",
     line: { color: C.frontier, width: 2.5 },
     hovertemplate: "$%{y:,.0f} at year %{x:.1f}<extra>median</extra>",
   });
@@ -583,17 +632,14 @@ function renderAccountForecast(f) {
 
   $("afbadge").textContent = (f.model === "block-bootstrap"
     ? `model 2 — resampled history (${f.block}-day blocks)`
-    : "model 1 — steady rates") + " · whole account";
+    : "model 1 — steady rates") + " · whole account"
+    + (f.anchor.mode === "historical" ? ""
+       : ` · anchored ${pctnum(f.anchor.effective)}%`
+         + ` ± ${pctnum(f.anchor.prior_sd_effective)} pp`);
   $("afguard").hidden = !f.guarded;
-  const pctpt = (x) => (100 * x).toFixed(1);
-  $("afmu").textContent =
-    `Whole-account growth rate: ${pctpt(f.mu_annual)}%/yr ` +
-    `(${pct(f.cash_weight, 0)} of the account is cash at the ` +
-    `${pctpt(f.risk_free_rate)}% T-bill rate) from ` +
-    `${f.span_years.toFixed(1)} years of data — good to about ` +
-    `±${pctpt(f.mu_se_annual)} points; plausibly ` +
-    `${pctpt(f.mu_ci95[0])}% to ${pctpt(f.mu_ci95[1])}%. ` +
-    `Dispersion: ${pctpt(f.sigma_annual)}%/yr.`;
+  $("af-anchor").options[0].textContent =
+    `Historical (${pctpt(f.anchor.mu_historical)}%)`;
+  $("afmu").textContent = assumptionSentence(f);
   for (const id of ["afchart", "afmu", "afnote"]) $(id).hidden = false;
 }
 
@@ -623,6 +669,13 @@ $("duego").addEventListener("click", () => {
 $("contribcancel").addEventListener("click", () => { $("contribpanel").hidden = true; });
 $("contribconfirm").addEventListener("click", confirmContribution);
 $("aforecast").addEventListener("click", runAccountForecast);
+// changing the assumption redraws the fan straight away
+for (const id of ["af-anchor", "af-anchorvalue"]) {
+  $(id).addEventListener("change", () => {
+    anchorParams();
+    if (!$("afchart").hidden) runAccountForecast();
+  });
+}
 $("plancancel").addEventListener("click", () => { $("planpanel").hidden = true; });
 $("planconfirm").addEventListener("click", confirmPlan);
 
