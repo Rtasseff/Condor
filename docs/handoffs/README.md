@@ -11,9 +11,9 @@ When a branch merges, its handoff doc lands here as a record — mark it
 Conventions, registry of active worktrees, review policy, and lifecycle:
 [../WORKTREES.md](../WORKTREES.md).
 
-Currently on branches (not yet on `main`):
+Merged (kept as records):
 
-- `forecast-anchors.md` — `feature/forecast-anchors`, created 2026-09-02.
-  Forecaster rung C: expected-return anchor control + posterior blend.
-- `home-builder.md` — `feature/home-builder`, created 2026-09-02.
-  Friendly Build home page, Optimize rename, draft portfolio thread.
+- `forecast-anchors.md` — `feature/forecast-anchors`, merged 2026-09-02
+  (PR #1): Forecaster rung C, expected-return anchor + posterior blend.
+- `home-builder.md` — `feature/home-builder`, merged 2026-09-02:
+  friendly Build home at `/`, Optimize rename, DraftPortfolio thread.

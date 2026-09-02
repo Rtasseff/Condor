@@ -1,5 +1,7 @@
 # Handoff — `feature/forecast-anchors`
 
+**Merged 2026-09-02.**
+
 <!-- Seeded from docs/handoffs/_template.md by scripts/new-worktree.sh.
      Keep "Status" current. -->
 
