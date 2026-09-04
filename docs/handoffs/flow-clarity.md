@@ -225,24 +225,79 @@ the PR.
 
 ## Status
 
-- [ ] Rebased onto origin/main; baseline suite counts recorded
-- [ ] World chips (all three pages)
-- [ ] Bridge 1: starter card (fund-from-plan) — happy path + failure copy
-- [ ] Bridge 2: hypothetical account forecast
-- [ ] Fix 1: Optimize gating + tests
-- [ ] Fix 2: source picker + fork-to-draft
-- [ ] Fix 3: adoption copy
-- [ ] Fix 4: Build dollar-forecast deep link; account chooser + nudge
-- [ ] Fix 5: renames, glosses, Advanced priors disclosure; tests updated
-- [ ] Click-through on port 8001 (worlds, both bridges, all five fixes);
+- [x] Rebased onto origin/main; baseline suite counts recorded
+      (217 passed / 4 skipped core; 60 Django; check + makemigrations clean)
+- [x] World chips (all three pages)
+- [x] Bridge 1: starter card (fund-from-plan) — happy path + failure copy
+- [x] Bridge 2: hypothetical account forecast
+- [x] Fix 1: Optimize gating + tests
+- [x] Fix 2: source picker + fork-to-draft
+- [x] Fix 3: adoption copy
+- [x] Fix 4: Build dollar-forecast deep link; account chooser + nudge
+- [x] Fix 5: renames, glosses, Advanced priors disclosure; tests updated
+- [x] Click-through on port 8001 (worlds, both bridges, all five fixes);
       screenshots in PR
-- [ ] Rebase again; suites re-run
+- [x] Rebase again; suites re-run (217/4 core, 66 Django, no new migrations)
 - [ ] PR opened against `main`
+
+## Deviations from the brief (v2)
+
+1. **`/api/forecast` gained an optional `cash_weight`.** §bridge-2 says to
+   run the hypothetical on "the setpoint's symbols/weights **and cash
+   share**" via `/api/forecast` with "the same params the Optimize card
+   sends". That endpoint had no cash parameter — the Optimize card never
+   needs one — so the cash share would have been silently dropped and a
+   setpoint holding, say, 20% cash would have been projected as if fully
+   invested. Added `cash_weight` (0–1) to the existing view, forwarding to
+   the `cash_weight` / `risk_free_rate` options `Portfolio.forecast` has
+   had since rung A. No new endpoint, no engine change, no migration. The
+   rate is only forwarded when a sleeve exists, so the all-risky payload
+   is byte-identical to before. Covered by
+   `ForecastApiTests.test_cash_sleeve_reaches_the_model`.
+2. **The account page now gets `rf_context()`.** The hypothetical's cash
+   sleeve needs a rate; the account template had no risk-free number.
+   Factored `rf_context()` out of `_render_optimize` and used it in both,
+   surfaced as `<main data-rf>`.
+3. **Cash clause in the forecast sentence is now conditional.** A fully
+   invested mix was reading "0% of it is cash at the 0.0% T-bill rate".
+   Dropped the clause when `cash_weight` is ~0. Affects the real account
+   forecast too, where it was equally noisy.
+4. **Optimize's `?years=` deep-link param is the forecast horizon,** not
+   the lookback — as the acceptance line
+   (`/optimize?forecast=25000&years=5`) specifies. Worth knowing that the
+   page also has a *Lookback* control in years; the param does not touch
+   it. Flagged rather than renamed, since the acceptance line is explicit.
+5. **No light theme to verify.** §acceptance asks that both chip variants
+   "light+dark obey the token system". `style.css` is dark-only
+   (`color-scheme: dark`, a single `:root`). Read that as "derive from
+   tokens, don't hardcode": both variants take their hue from a
+   `--world-hue` custom property set to existing tokens (`--accent-hi`,
+   `--series-you`), so a future light theme follows automatically.
+
+## Found while testing — fixed here
+
+- **The partial-failure message was invisible.** `render()` starts with
+  `showError("")`, so the starter card's deposit-succeeded/buys-failed
+  message was wiped by the very state refresh that followed it: the user
+  saw money appear and no explanation. Now the refresh runs first and the
+  message lands after it. Verified live by forcing `/api/account/plan` to
+  503 — this is exactly the case §acceptance asked to force, and it was
+  broken until that test.
+
+## Found while testing — NOT fixed (pre-existing)
+
+- **`PUT /api/draft` races itself.** Adding assets on Build faster than a
+  round-trip (three quick-add clicks in the same tick) fires overlapping
+  whole-list PUTs; last writer wins, so the draft can end up holding only
+  the first asset. Hit while driving the page from a script, not
+  reachable at human speed. Untouched by this branch — it predates it and
+  a fix (sequencing or a version token) is its own bucket.
 
 ## Questions for the handoff session
 
-- None yet. Copy is specified; if a string reads badly in place, improve
-  the wording, keep the meaning, note it here. Park anything structural.
+- Deviation 1 is the only one that touches a server contract. It is
+  additive and defaulted off, but it is a param the brief did not
+  authorise in so many words — worth a look during review.
 
 ## Return protocol
 

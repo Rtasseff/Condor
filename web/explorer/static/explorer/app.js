@@ -21,6 +21,8 @@ const C = {
   select: cssVar("--series-select"),
 };
 
+const $ = (id) => document.getElementById(id);
+
 // ---------- state ----------
 const state = {
   busy: false,          // one analyze at a time
@@ -31,7 +33,17 @@ const state = {
   selected: null,       // selected frontier point (or named portfolio)
   savedId: null,        // uuid of the saved portfolio this came from
   savedName: "",
+  source: "draft",      // "draft" | "real" — where the sidebar came from
+  forked: false,        // edited away from the real portfolio (fix 2)
 };
+
+// What the server says this user actually has to optimize (fix 1/2). The
+// page only renders at all when one of these is true, so the deck's
+// example above is a last-resort fallback, not a starting state.
+const SOURCES = (() => {
+  const el = $("sources");
+  try { return el ? JSON.parse(el.textContent) : {}; } catch { return {}; }
+})();
 
 // Consumer-chart interaction contract (docs/research/ui-conventions.md):
 // hover + click only. No drag zoom, no axis handles, no double-click
@@ -42,7 +54,6 @@ const CHART_CONFIG = {
   showAxisDragHandles: false, showAxisRangeEntryBoxes: false,
 };
 
-const $ = (id) => document.getElementById(id);
 const pct = (x, d = 1) => (100 * x).toFixed(d) + "%";
 
 function csrftoken() {
@@ -91,6 +102,7 @@ function renderAssets() {
       const v = parseFloat(w.value);
       if (isFinite(v) && v >= 0) state.weights[t] = v;
       else delete state.weights[t];
+      forkIfReal();
     });
 
     const p = document.createElement("span");
@@ -106,6 +118,7 @@ function renderAssets() {
       state.assets = state.assets.filter((x) => x !== t);
       delete state.weights[t];
       renderAssets();
+      forkIfReal();
     });
 
     li.append(tick, name, w, p, rm);
@@ -127,6 +140,7 @@ function addAsset(raw) {
   }
   state.assets.push(t);
   renderAssets();
+  forkIfReal();
 }
 
 const QUICK = ["SPY", "QQQ", "GLD", "BND", "NEE", "VNQ", "EEM"];
@@ -579,9 +593,31 @@ function renderTable() {
 function anchorParams() {
   const mode = $("fanchor").value;
   $("fanchorcustom").hidden = mode !== "custom";
+  renderPriorChip();
   return mode === "custom"
     ? { anchor: mode, anchor_value: parseFloat($("fanchorvalue").value) / 100 }
     : { anchor: mode };
+}
+
+// Discoverability guard (fix 5): the priors live behind a disclosure, so a
+// non-default one has to be legible while it is closed — otherwise the
+// control vanishes again, which is how it got lost twice in testing.
+function renderPriorChip() {
+  const chip = $("fpriorchip");
+  const sel = $("fanchor");
+  if (!chip) return;
+  const mode = sel.value;
+  if (mode === "historical") {
+    chip.hidden = true;
+    chip.textContent = "";
+    return;
+  }
+  const value = mode === "market"
+    ? sel.dataset.market
+    : String(+parseFloat($("fanchorvalue").value).toFixed(1));
+  chip.textContent = `prior: ${mode === "market" ? "return to normal" :
+    "my own number"}, ${value}%`;
+  chip.hidden = false;
 }
 
 const pctpt = (x) => (100 * x).toFixed(1);
@@ -614,7 +650,8 @@ function assumptionSentence(f) {
 function clearForecast() {
   $("forecastcard").hidden = !state.result;
   for (const id of ["fchart", "fmu", "fnote", "fguard"]) $(id).hidden = true;
-  $("fanchor").options[0].textContent = "Historical";   // it named the old mix
+  $("fanchor").options[0].textContent = "My mix's own history"; // named the old mix
+  renderPriorChip();
 }
 
 let forecastSeq = 0;   // only the newest request may paint the card
@@ -718,16 +755,19 @@ function renderForecast(f) {
     hoverlabel: hoverStyle(),
   }, CHART_CONFIG);
 
+  // Name the models, don't number them: the numbering implied a third one
+  // that does not exist, and hunting for it derailed user testing twice.
   $("fbadge").textContent = (f.model === "block-bootstrap"
-    ? `model 2 of 3 — resampled history (${f.block}-day blocks)`
-    : "model 1 of 3 — simplest: steady rates")
+    ? `resampled history (${f.block}-day blocks)`
+    : "steady rates (simplest)")
     + (f.anchor.mode === "historical" ? ""
-       : ` · anchored ${pctnum(f.anchor.value)}% ± ${pctnum(f.anchor.prior_sd)} pp`);
+       : ` · prior ${pctnum(f.anchor.value)}% ± ${pctnum(f.anchor.prior_sd)} pp`);
   $("fguard").hidden = !f.guarded;
   // the control's own label carries what history says, so the choice is
   // a comparison of two numbers rather than a leap in the dark
   $("fanchor").options[0].textContent =
-    `Historical (${pctpt(f.anchor.mu_historical)}%)`;
+    `My mix's own history (${pctpt(f.anchor.mu_historical)}%)`;
+  renderPriorChip();
   $("fmu").textContent = assumptionSentence(f);
   for (const id of ["fchart", "fmu", "fnote"]) $(id).hidden = false;
   // (fguard visibility is set above from the payload)
@@ -742,6 +782,7 @@ function useWeights(weights) {
     state.weights[t] = +(100 * (weights[t] || 0)).toFixed(1);
   }
   renderAssets();
+  forkIfReal();
   analyze();
 }
 
@@ -943,6 +984,7 @@ $("analyze").addEventListener("click", analyze);
 $("equalw").addEventListener("click", () => {
   state.weights = {};
   renderAssets();
+  forkIfReal();
   analyze();
 });
 $("tangentw").addEventListener("click", () => {
@@ -985,6 +1027,72 @@ $("adoptpoint").addEventListener("click", () => {
   syncDraft(state.selected.weights); // Build's pie reflects this too
 });
 
+// ---------- fix 2: which mix am I optimizing? ----------
+// Two honest sources: the Build draft, and what the account actually
+// holds. Reality is read-only here — editing a real mix forks it into the
+// draft, because the ledger is the only thing that changes what you own.
+function renderSource() {
+  const pick = $("sourcepick");
+  if (!pick || SOURCES.preset) return;   // a shared link is neither source
+  pick.hidden = false;
+  $("src-real").hidden = !SOURCES.real;
+  $("src-draft").setAttribute("aria-pressed", String(state.source === "draft"));
+  $("src-real").setAttribute("aria-pressed", String(state.source === "real"));
+  const note = $("srcnote");
+  note.hidden = !state.forked;
+  note.textContent = state.forked
+    ? "Your draft — edited from your real portfolio. Your account itself is "
+      + "unchanged."
+    : "";
+}
+
+function forkIfReal() {
+  if (state.source !== "real") return;
+  state.source = "draft";
+  state.forked = true;
+  renderSource();
+  // the working copy really does become the draft, so the label is true
+  const weights = {};
+  for (const [t, w] of Object.entries(state.weights)) weights[t] = w / 100;
+  syncDraft(weights);
+}
+
+async function loadRealHoldings() {
+  const res = await fetch("/api/account");
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error || `Server error (${res.status})`);
+  const held = (d.positions || []).filter((p) => p.weight > 0);
+  if (!held.length) throw new Error("Your account holds no assets yet.");
+  // account weights are fractions of the whole account (cash included);
+  // Analyze normalizes them back to a risky mix
+  state.assets = held.map((p) => p.ticker).slice(0, 15);
+  state.weights = {};
+  for (const p of state.assets) {
+    const row = held.find((h) => h.ticker === p);
+    state.weights[p] = +(100 * row.weight).toFixed(1);
+  }
+  const tag = $("exampletag");
+  if (tag) tag.hidden = true;
+}
+
+async function switchSource(next) {
+  if (state.busy || (state.source === next && !state.forked)) return;
+  showError("");
+  try {
+    if (next === "real") await loadRealHoldings();
+    else if (!(await loadDraftPrefill())) {
+      throw new Error("You don't have a draft yet — pick a mix in Build.");
+    }
+    state.source = next;
+    state.forked = false;
+    renderAssets();
+    renderSource();
+    analyze();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
 // ---------- draft (Build page) sync ----------
 // Optimize prefills from /api/draft on load (see init(), below) and
 // writes back here on adopt — the two pages share one draft. Best
@@ -1011,7 +1119,7 @@ async function loadDraftPrefill() {
   try {
     const res = await fetch("/api/draft");
     const draft = await res.json();
-    if (!res.ok || !draft.assets || !draft.assets.length) return;
+    if (!res.ok || !draft.assets || !draft.assets.length) return false;
     state.assets = draft.assets.map((a) => a.symbol).slice(0, 15);
     state.weights = {};
     for (const a of draft.assets) {
@@ -1019,9 +1127,11 @@ async function loadDraftPrefill() {
     }
     const tag = $("exampletag");
     if (tag) tag.hidden = true; // this came from Build, not the example
+    return true;
   } catch {
     /* fall back to the built-in example deck */
   }
+  return false;
 }
 
 $("save").addEventListener("click", () => showSavePanel($("savepanel").hidden));
@@ -1050,6 +1160,25 @@ $("saved").addEventListener("click", () => {
   if (open) refreshSaved();
 });
 
+$("src-draft").addEventListener("click", () => switchSource("draft"));
+$("src-real").addEventListener("click", () => switchSource("real"));
+
+// ---------- "I just wanted to forecast $X" (fix 4) ----------
+// Build hands us ?forecast=<amount>&years=<horizon>. Malformed values fall
+// back to the card's own defaults rather than erroring at someone who only
+// wanted a number.
+function deepLinkForecast() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("forecast")) return null;
+  const amount = parseFloat(q.get("forecast"));
+  const years = parseInt(q.get("years"), 10);
+  const HORIZONS = [1, 2, 5, 10];
+  return {
+    amount: isFinite(amount) && amount > 0 ? Math.min(amount, 1e12) : 10000,
+    years: HORIZONS.includes(years) ? years : 2,
+  };
+}
+
 (async function init() {
   if (!localStorage.getItem("condor_hint_done")) $("hintstrip").hidden = false;
   $("hintdismiss").addEventListener("click", () => {
@@ -1063,10 +1192,26 @@ $("saved").addEventListener("click", () => {
     applyConfig(JSON.parse(presetEl.textContent));
     $("sharelink").value = window.location.href;
     $("sharerow").hidden = false;
-  } else {
-    await loadDraftPrefill(); // else: the Build draft, if there is one
+  } else if (await loadDraftPrefill()) {
+    state.source = "draft";
+  } else if (SOURCES.real) {
+    // no draft, but the account holds something — optimize that rather
+    // than inventing a mix (fix 1's promise, kept on the client too)
+    try {
+      await loadRealHoldings();
+      state.source = "real";
+    } catch { /* falls back to the example deck */ }
   }
   renderAssets();
   renderQuickAdd();
-  analyze(); // first paint: the shared portfolio, else the deck's example
+  renderSource();
+  renderPriorChip();
+  await analyze(); // first paint: the shared portfolio, draft, or holdings
+  const link = deepLinkForecast();
+  if (link && state.result) {
+    $("famount").value = link.amount;
+    pickOption($("fhorizon"), String(link.years), `${link.years} years`);
+    await runForecast();
+    $("forecastcard").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 })();

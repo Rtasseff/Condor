@@ -172,7 +172,9 @@ async function fetchInfo(symbol) {
 function renderAll() {
   renderDraft();
   renderPie();
-  $("ctacard").hidden = state.assets.length === 0;
+  const empty = state.assets.length === 0;
+  $("ctacard").hidden = empty;
+  $("fcastcta").hidden = empty;   // nothing to project without a mix
 }
 
 function plainChange(info) {
@@ -344,6 +346,14 @@ $("addform").addEventListener("submit", (e) => {
   $("addticker").value = "";
 });
 $("evenout").addEventListener("click", evenOut);
+// "I just wanted to know what $X becomes": hand Optimize the amount and
+// horizon in the query string; it analyzes, projects and scrolls there.
+$("fc-go").addEventListener("click", () => {
+  const amount = Math.max(1, parseFloat($("fc-amount").value) || 10000);
+  const years = parseInt($("fc-years").value, 10) || 2;
+  window.location.href =
+    `/optimize?forecast=${encodeURIComponent(amount)}&years=${years}`;
+});
 
 (async function init() {
   await loadTickers();

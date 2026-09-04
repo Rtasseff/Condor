@@ -23,7 +23,7 @@ from condor.data import risk_free_rate
 from .models import (Account, AccountEvent, AccountTarget,
                      ContributionSchedule)
 from .views import (MAX_ASSETS, TICKER_RE, _bad, _clean_anchor, _json_body,
-                    anchor_context, api_login_required)
+                    anchor_context, api_login_required, rf_context)
 
 log = logging.getLogger(__name__)
 
@@ -141,7 +141,10 @@ def _state_response(account):
 @ensure_csrf_cookie
 def account_page(request):
     _account_for(request.user)  # ensure it exists before the JS asks
-    return render(request, "explorer/account.html", anchor_context())
+    # rf_context: an empty account's forecast is hypothetical — run on the
+    # setpoint, whose leftover is a cash sleeve that earns the T-bill rate.
+    return render(request, "explorer/account.html",
+                  {**anchor_context(), **rf_context()})
 
 
 # ------------------------------------------------------------------- API
