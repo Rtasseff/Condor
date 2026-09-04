@@ -188,4 +188,4 @@ Mark the registry row merged (or remove it) in the same commit.
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
 
-*(none — forecast-anchors and home-builder both merged 2026-09-02)*
+| `flow-clarity/` | `feature/flow-clarity` | 8001 | 2026-09-04 | Active. User-testing round 1: Optimize gating, draft/real sources, forecast discoverability, honest labels. Brief: `docs/handoffs/flow-clarity.md` on the branch. |

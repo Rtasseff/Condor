@@ -17,3 +17,8 @@ Merged (kept as records):
   (PR #1): Forecaster rung C, expected-return anchor + posterior blend.
 - `home-builder.md` — `feature/home-builder`, merged 2026-09-02:
   friendly Build home at `/`, Optimize rename, DraftPortfolio thread.
+
+Currently on branches (not yet on `main`):
+
+- `flow-clarity.md` — `feature/flow-clarity`, created 2026-09-04.
+  User-testing round 1: gating, sources, forecast discoverability, labels.
