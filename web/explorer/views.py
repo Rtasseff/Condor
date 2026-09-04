@@ -81,12 +81,24 @@ def index(request):
 
 def _has_holdings(user) -> bool:
     """Does the account hold any shares right now? Ledger replay is the
-    only truth about that (ADR 0004), so ask the account engine."""
-    from .account import _account_for  # local: account.py imports from here
+    only truth about that (ADR 0004), so ask the account engine.
+
+    Read-only on purpose: this runs on every `GET /optimize`, and a page
+    render must not create an Account row as a side effect — the account
+    page creates it lazily when it is actually wanted. A user who has
+    never opened that page simply has no holdings.
+    """
     from condor import accounting as acct
+
+    from .models import Account
+    account = Account.objects.filter(owner=user).first()
+    if account is None:
+        return False
     try:
-        shares, _, _ = acct.replay(_account_for(user).events_frame())
+        shares, _, _ = acct.replay(account.events_frame())
     except Exception:
+        # the page still has to render; a draft (or a preset) keeps the
+        # workbench open regardless, and the client re-checks /api/account
         log.exception("holdings check failed for %s", user.pk)
         return False
     return any(n > 1e-9 for n in shares.values())

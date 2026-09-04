@@ -284,6 +284,43 @@ the PR.
   503 — this is exactly the case §acceptance asked to force, and it was
   broken until that test.
 
+## Code review (medium, as the return protocol asks)
+
+Run against `main...HEAD` after the first commit; eight findings, all
+real, all fixed and re-verified live in the second commit:
+
+1. **Stale fan relabelled.** Projecting the hypothetical and then funding
+   left the old "your plan" chart and sentence on screen under the new
+   "whole account" badge. The fan is now dropped on any hypo↔real flip.
+2. **Fork dropped assets.** `forkIfReal()` rebuilt the draft from
+   `state.weights`, which is sparse: a just-added ticker has no entry, and
+   "Equal weights" empties the map, so the PUT either omitted the new
+   asset or wrote nothing while the indicator claimed a draft was saved.
+   Rebuilds from `state.assets` now, absent weight = equal share.
+3. **`runAccountForecast` dereferenced a null state.** If the first
+   `/api/account` failed, Project threw a TypeError at the user instead of
+   a message. Guarded.
+4. **Cash-only accounts fell between the two bridges.** Deposit recorded,
+   no buys: the hypothetical's "Make it real above →" pointed at a starter
+   card that had already retired, and it projected the stock $10,000
+   rather than the cash actually sitting there. Now links to `#holdings`
+   ("Put your cash to work below →") and starts from the real balance.
+   This is precisely the state a partial failure leaves behind.
+5. **`prior: my own number, NaN%`** whenever the custom box was cleared
+   to retype. Guarded on both cards.
+6. **Client and server disagreed on "held".** `has_real` uses
+   `shares > 0`; the client used `weight > 0`, so a position with no price
+   (weight 0) had the server offering a source the client refused. Client
+   now matches the server, and a failed load says so instead of silently
+   showing the example deck.
+7. **`GET /optimize` wrote to the database** — the holdings check called
+   the get-or-create account helper. Read-only now.
+8. **Build could navigate before its draft landed.** `fc-go` raced the
+   fire-and-forget `PUT /api/draft`; with the new server-side gate, losing
+   that race meant landing on "Nothing to optimize yet" holding a mix you
+   had just built. Awaits the pending sync now — verified by adding an
+   asset and clicking through in the same tick.
+
 ## Found while testing — NOT fixed (pre-existing)
 
 - **`PUT /api/draft` races itself.** Adding assets on Build faster than a

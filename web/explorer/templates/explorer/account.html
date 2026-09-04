@@ -64,7 +64,7 @@
     <div id="achart" role="img" aria-label="Account value over time"></div>
   </section>
 
-  <section class="card">
+  <section class="card" id="holdings">
     <h2>Holdings &amp; setpoint</h2>
     <p class="sub">Actual % drifts as prices move; setpoint % is where you want
        it. Ask for a plan to get back — whole shares at the last close.</p>
@@ -190,7 +190,7 @@
        at their current mix plus your cash share earning the T-bill rate.</p>
     <p class="sub" id="afhypo" hidden>Nothing is held yet, so this projects your
        <b>setpoint</b> — the mix you plan to hold — starting from the amount
-       below. <a href="#startercard">Make it real above →</a></p>
+       below. <a href="#startercard" id="afhypolink">Make it real above →</a></p>
     <p class="sub" id="afnoplan" hidden>There's no plan to project yet. Pick a
        mix in <a href="{% url 'index' %}">Build</a>, fine-tune it in
        <a href="{% url 'optimize' %}">Optimize</a>, then <b>Make this my real

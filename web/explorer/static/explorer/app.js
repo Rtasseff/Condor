@@ -612,9 +612,15 @@ function renderPriorChip() {
     chip.textContent = "";
     return;
   }
+  const typed = parseFloat($("fanchorvalue").value);
+  if (mode === "custom" && !Number.isFinite(typed)) {
+    chip.hidden = true;      // mid-edit: an empty box is not a prior
+    chip.textContent = "";
+    return;
+  }
   const value = mode === "market"
     ? sel.dataset.market
-    : String(+parseFloat($("fanchorvalue").value).toFixed(1));
+    : String(+typed.toFixed(1));
   chip.textContent = `prior: ${mode === "market" ? "return to normal" :
     "my own number"}, ${value}%`;
   chip.hidden = false;
@@ -1051,26 +1057,41 @@ function forkIfReal() {
   state.source = "draft";
   state.forked = true;
   renderSource();
-  // the working copy really does become the draft, so the label is true
+  // The working copy really does become the draft, so the label is true.
+  // Build from state.assets, not state.weights: a just-added ticker has no
+  // weight yet, and "Equal weights" empties the map entirely — reading the
+  // map alone would drop the new asset, or write nothing at all while the
+  // indicator claimed a draft had been saved.
+  syncDraft(fractionWeights());
+}
+
+// state.weights is in percent and may be sparse; an absent entry means
+// "equal share", the same reading currentConfig() takes.
+function fractionWeights() {
+  const even = state.assets.length ? 1 / state.assets.length : 0;
   const weights = {};
-  for (const [t, w] of Object.entries(state.weights)) weights[t] = w / 100;
-  syncDraft(weights);
+  for (const t of state.assets) {
+    const w = state.weights[t];
+    weights[t] = Number.isFinite(w) ? w / 100 : even;
+  }
+  return weights;
 }
 
 async function loadRealHoldings() {
   const res = await fetch("/api/account");
   const d = await res.json();
   if (!res.ok) throw new Error(d.error || `Server error (${res.status})`);
-  const held = (d.positions || []).filter((p) => p.weight > 0);
+  // Held means "shares on the ledger" — the same test the server's
+  // has_real uses. Filtering on weight instead would disagree with it for
+  // a position whose price is missing (value 0, so weight 0), leaving the
+  // picker offering a source that errors when clicked.
+  const held = (d.positions || []).filter((p) => p.shares > 0).slice(0, 15);
   if (!held.length) throw new Error("Your account holds no assets yet.");
   // account weights are fractions of the whole account (cash included);
   // Analyze normalizes them back to a risky mix
-  state.assets = held.map((p) => p.ticker).slice(0, 15);
+  state.assets = held.map((p) => p.ticker);
   state.weights = {};
-  for (const p of state.assets) {
-    const row = held.find((h) => h.ticker === p);
-    state.weights[p] = +(100 * row.weight).toFixed(1);
-  }
+  for (const p of held) state.weights[p.ticker] = +(100 * p.weight).toFixed(1);
   const tag = $("exampletag");
   if (tag) tag.hidden = true;
 }
@@ -1200,7 +1221,11 @@ function deepLinkForecast() {
     try {
       await loadRealHoldings();
       state.source = "real";
-    } catch { /* falls back to the example deck */ }
+    } catch (err) {
+      // don't fail silently into the example deck: the sidebar would show
+      // seven assets the user never picked, with no hint why
+      showError(`Couldn't load your real portfolio — ${err.message}`);
+    }
   }
   renderAssets();
   renderQuickAdd();

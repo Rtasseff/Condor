@@ -147,16 +147,22 @@ function setWeight(t, weightPct) {
 }
 
 // ---------- server round-trip ----------
+// Every edit round-trips the whole list. Leaving happens on a click, so
+// the last PUT can still be in flight — and Optimize now decides
+// server-side whether there is anything to optimize, which would strand
+// the user on "Nothing to optimize yet". Anything that navigates awaits
+// this instead of racing it.
+let pendingSync = Promise.resolve();
+
 async function syncDraft() {
   const assets = state.assets
     .filter((a) => a.weight > 0)
     .map((a) => ({ symbol: a.symbol, weight: a.weight }));
   if (!assets.length) return;
-  try {
-    await api("/api/draft", { method: "PUT", body: JSON.stringify({ assets }) });
-  } catch (err) {
-    showError(err.message);
-  }
+  pendingSync = api("/api/draft", {
+    method: "PUT", body: JSON.stringify({ assets }),
+  }).catch((err) => { showError(err.message); });
+  await pendingSync;
 }
 
 async function fetchInfo(symbol) {
@@ -348,9 +354,12 @@ $("addform").addEventListener("submit", (e) => {
 $("evenout").addEventListener("click", evenOut);
 // "I just wanted to know what $X becomes": hand Optimize the amount and
 // horizon in the query string; it analyzes, projects and scrolls there.
-$("fc-go").addEventListener("click", () => {
+$("fc-go").addEventListener("click", async () => {
   const amount = Math.max(1, parseFloat($("fc-amount").value) || 10000);
   const years = parseInt($("fc-years").value, 10) || 2;
+  const btn = $("fc-go");
+  btn.disabled = true;
+  await pendingSync;          // land the draft before Optimize looks for it
   window.location.href =
     `/optimize?forecast=${encodeURIComponent(amount)}&years=${years}`;
 });

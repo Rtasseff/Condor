@@ -616,9 +616,15 @@ function renderPriorChip() {
     chip.textContent = "";
     return;
   }
+  const typed = parseFloat($("af-anchorvalue").value);
+  if (mode === "custom" && !Number.isFinite(typed)) {
+    chip.hidden = true;      // mid-edit: an empty box is not a prior
+    chip.textContent = "";
+    return;
+  }
   const value = mode === "market"
     ? sel.dataset.market
-    : String(+parseFloat($("af-anchorvalue").value).toFixed(1));
+    : String(+typed.toFixed(1));
   chip.textContent = `prior: ${mode === "market" ? "return to normal" :
     "my own number"}, ${value}%`;
   chip.hidden = false;
@@ -628,19 +634,46 @@ function renderPriorChip() {
 // With no holdings the account forecast used to refuse. It still can't
 // pretend the money exists — but it can project the *setpoint*, clearly
 // labelled, so an empty account isn't a dead end.
+let forecastMode = null;   // "hypothetical" | "real" — what the fan shows
+
+function clearForecastFan() {
+  for (const id of ["afchart", "afmu", "afnote", "afguard"]) $(id).hidden = true;
+}
+
 function renderForecastMode() {
   const d = state.data;
   const hypo = !hasHoldings(d);
   const planned = setpointRows(d).length > 0;
+  const starterVisible = !$("startercard").hidden;
   $("afintro").hidden = hypo;
   $("afhypo").hidden = !(hypo && planned);
   $("afnoplan").hidden = !(hypo && !planned);
   $("af-amountwrap").hidden = !hypo;
   $("aforecast").disabled = hypo && !planned;
-  if (hypo && !planned) {          // nothing to draw, so don't leave a stale fan
-    for (const id of ["afchart", "afmu", "afnote", "afguard"]) $(id).hidden = true;
+
+  // A chart drawn in one mode must never be relabelled as the other. The
+  // obvious way in: project the hypothetical, then fund from the starter
+  // card — the fan is still "your plan" but the badge now says "whole
+  // account". Any flip drops the old fan.
+  const mode = hypo ? "hypothetical" : "real";
+  if (mode !== forecastMode) clearForecastFan();
+  forecastMode = mode;
+
+  if (hypo) {
+    // Cash already on the ledger has nowhere to go through the starter
+    // card (it retires once events exist), so send them to the holdings
+    // table's plan instead, and start the projection from what is
+    // actually there rather than the input's stock $10,000.
+    const link = $("afhypolink");
+    link.setAttribute("href", starterVisible ? "#startercard" : "#holdings");
+    link.textContent = starterVisible
+      ? "Make it real above →" : "Put your cash to work below →";
+    if (!starterVisible && d.total_value > 0) {
+      $("af-amount").value = Math.round(d.total_value);
+    }
+  } else {
+    $("afbadge").textContent = "whole account";
   }
-  if (!hypo) $("afbadge").textContent = "whole account";
 }
 
 const pctpt = (x) => (100 * x).toFixed(1);
@@ -723,6 +756,10 @@ function projectAccount() {
 
 async function runAccountForecast() {
   showError("");
+  if (!state.data) {   // the initial /api/account never landed
+    showError("Your account hasn't loaded yet — reload the page to try again.");
+    return;
+  }
   const seq = ++forecastSeq;
   const btn = $("aforecast");
   btn.disabled = true;
