@@ -194,4 +194,5 @@ Mark the registry row merged (or remove it) in the same commit.
 
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
-| `explore-first` | `feature/explore-first` | 8001 | 2026-09-05 | briefed — Explore-primary IA, stepper, sparklines, declutter (Sonnet) |
+
+*(none — explore-first merged 2026-09-05)*

@@ -1,5 +1,7 @@
 # Handoff — `feature/explore-first`
 
+**Merged 2026-09-05** (`e6089f0`); branch and worktree removed.
+
 <!-- Copy of docs/handoffs/_template.md, seeded by scripts/new-worktree.sh.
      Lives at docs/handoffs/explore-first.md on the branch. Keep "Status" current. -->
 
