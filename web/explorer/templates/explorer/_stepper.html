@@ -1,0 +1,20 @@
+<!-- The Explore journey, shown under the page head on both Explore pages
+     (never on My portfolio — that world is calm and real). Every step is a
+     revisitable link; the end-cap is a destination, not a numbered step.
+     Pass `stepper_current` = "pick" | "optimize". -->
+<nav class="stepper" aria-label="Explore journey">
+  <a href="{% url 'index' %}"
+     class="step{% if stepper_current == 'pick' %} current{% endif %}"
+     {% if stepper_current == 'pick' %}aria-current="step"{% endif %}>
+    <span class="stepnum">1</span> Pick your assets</a>
+  <span class="steparrow" aria-hidden="true">→</span>
+  <a href="{% url 'optimize' %}"
+     class="step{% if stepper_current == 'optimize' %} current{% endif %}"
+     {% if stepper_current == 'optimize' %}aria-current="step"{% endif %}>
+    <span class="stepnum">2</span> Optimize</a>
+  <span class="steparrow" aria-hidden="true">→</span>
+  <a href="{% url 'optimize' %}#forecastcard" class="step">
+    <span class="stepnum">3</span> Forecast</a>
+  <span class="steparrow" aria-hidden="true">→</span>
+  <a href="{% url 'optimize' %}#pointcard" class="step stepend">Make it my portfolio</a>
+</nav>

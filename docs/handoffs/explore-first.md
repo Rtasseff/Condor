@@ -223,16 +223,112 @@ and in-app price history.
 ## Status
 
 <!-- Branch agent keeps this current. Checklist + short dated notes. -->
-- [ ] Baseline suites recorded
-- [ ] Nav + titles (Explore | My portfolio)
-- [ ] Stepper on both Explore pages
-- [ ] Start chooser (Load my portfolio / Start fresh)
-- [ ] api_asset `series` + `month_return` + tests
-- [ ] Sparklines + detail panel
-- [ ] Declutter + Settings disclosure + copy pass
-- [ ] Adoption → trade report moment verified/surfaced
-- [ ] `/code-review` at medium run; fixes landed
-- [ ] Suites re-run; counts vs baseline recorded here
+- [x] Baseline suites recorded (2026-09-05): `python -m pytest tests/` →
+  217 passed, 4 skipped. `python web/manage.py test explorer` → 66 passed.
+  `check` clean. `makemigrations --check --dry-run` → no changes.
+- [x] Nav + titles (Explore | My portfolio). Nav blocks renamed
+  `nav_build`/`nav_optimize`/`nav_account` → `nav_explore`/`nav_portfolio`;
+  `/` and `/optimize` both set `nav_explore`, `/account` sets
+  `nav_portfolio`. Renames (before → after): nav "Build"/"Optimize" tabs →
+  single "Explore" tab; nav "My account" → "My portfolio"; `/` `<title>`
+  "Condor Funds — Build" → "Condor Funds — Explore"; `/` `<h1>`Build→Explore;
+  `/account` `<title>` "Condor Funds — My account" → "Condor Funds — My
+  portfolio"; `/account` `<h1>` "My account" → "My portfolio"; `/account`
+  worldchip "Real" → "My portfolio" (kept `.real`/amber class + `--world-hue`
+  token, just the label). URLs unchanged as required.
+- [x] Stepper on both Explore pages (`_stepper.html` partial, included on
+  `/` and `/optimize`, including Optimize's empty state). 1 Pick your
+  assets → `/`, 2 Optimize → `/optimize`, 3 Forecast → `/optimize#forecastcard`,
+  end-cap "Make it my portfolio" → `/optimize#pointcard` (visually distinct,
+  not numbered). Current step highlighted (`aria-current="step"` + `.current`).
+  Absent on `/account`.
+- [x] Start chooser: empty draft + real holdings → "Start from…" card
+  ("Load my portfolio →" primary / "Start fresh" ghost), search card
+  hidden while it's showing. `index` view now passes `has_real`
+  (read-only, same `_has_holdings` check `/optimize` uses) via
+  `json_script`. "Load my portfolio" forks real positions into the draft
+  (same weight-fraction mechanics as Optimize's source picker) and syncs
+  `/api/draft`. Manually verified in-browser (see below).
+- [x] `api_asset` `series` (~60 evenly-downsampled points, first/last
+  always real endpoints, no second PriceStore fetch) + `month_return`
+  (same trailing-return helper as `year_return`) + tests
+  (`AssetInfoApiTests`: happy-path shape + short-history/no-downsample
+  case; degrade path unchanged).
+- [x] Sparklines (inline SVG, ~90×28, tinted by 1y-return sign via new
+  `--change-up`/`--change-down` tokens, dotted baseline at the year-ago
+  price recovered from `year_return` — no extra payload field, draw-in
+  animation ≤400ms via `pathLength`, `prefers-reduced-motion` respected)
+  + inline detail panel (click a Build row → bigger Plotly chart, 1M/1Y
+  toggle reslicing the same `series` — no second fetch — last close+date,
+  1y/1M returns in words, Yahoo link; one panel open at a time). Verified
+  in-browser: sparkline renders, panel opens/closes, 1M toggle re-renders.
+  **Deviation**: did *not* add sparklines to Optimize's sidebar asset
+  list — it's a narrow 300px column doing weight-editing already: a
+  90px sparkline plus name/weight/remove doesn't fit without either
+  truncating the name to nothing or wrapping awkwardly, and the brief
+  explicitly sanctioned skipping it here if it fights that UI.
+- [x] Declutter: Build card order is now search → mix → "Optimize this
+  mix →" CTA → forecast CTA → My-portfolio summary (link/value/return
+  only, Setpoint tile dropped). Add-asset button swaps `.primary`↔`.ghost`
+  by draft emptiness so exactly one `.primary` shows per state; forecast
+  CTA (`#fc-go`) demoted to ghost so it doesn't compete with the Optimize
+  CTA. Optimize: method/lookback/risk-free now behind a closed-by-default
+  `<details class="advanced">` "Settings" disclosure (reuses the existing
+  Advanced-priors disclosure styling); Save/Saved moved out to their own
+  quiet ghost row, always visible. Copy pass done — see the "account" →
+  "portfolio"/"real portfolio" renames throughout home/optimize/account
+  templates and JS (kept "account"/"ledger" as-is only where account.html
+  is describing the ledger mechanism to itself, e.g. "a ledger-tracked
+  account", "whole account").
+- [x] Adoption → trade report: gated "Make this my real portfolio →"
+  behind an inline confirmation (`#settargetconfirm`, no `window.confirm`)
+  restating the consequence before the real POST — design-rules item 4.
+  On `/account?plan=1` the plan panel now `scrollIntoView`s and gets a
+  2.4s amber highlight (`.justadopted`, reduced-motion-safe) so the
+  whole-share trade report is unmissable, not just present. Manually
+  verified end-to-end in-browser: Optimize → confirm → real target set →
+  landed on My portfolio scrolled straight to "buy 13 shares of SPY"
+  under "How to get there from what you hold".
+- [x] `/code-review` at medium run; fixes landed. 3 findings, all
+  confirmed and fixed:
+  1. Detail-panel range toggle was mislabeled/misleading: `series` spans
+     up to ~400 days, so "1Y" silently showed ~13 months, and a naive
+     uniform downsample gave "1M" only ~5 points (evenly spaced over the
+     full 400 days). Fixed both sides: `views._downsample()` now biases
+     density toward the most recent 35 days (`SERIES_RECENT_DAYS`) so a
+     client-side "last month" slice stays near-daily (verified: 26 of the
+     last 35 days present, was ~5), and `home.js`'s `detailSeries()` now
+     clips "1Y" to 365 days too, not just "1M" (verified: 1Y → exactly
+     365 days / 57 points, 1M → 31 days / 23 points). New test
+     `test_downsample_keeps_recent_history_dense`.
+  2. `#settargetconfirm` (the real-portfolio confirmation gate) mixed the
+     Explore teal (border) with the Real amber (background) — the one
+     control whose whole job is marking that boundary. Now amber
+     throughout (`var(--series-you)`), matching `.worldchip.real` /
+     `.justadopted`. Verified via computed style.
+  3. `/account?plan=1`'s scroll+glow fired even when `loadPlan()` failed
+     and left `#planpanel` hidden (dead animation after an error the user
+     already saw). Now gated on `!$("planpanel").hidden`.
+  All three re-verified in-browser after the fix (see below).
+- [x] Suites re-run post-fixes: `python -m pytest tests/` → 217 passed, 4
+  skipped (unchanged). `python web/manage.py test explorer` → **78
+  passed** (baseline 66 + 12 new: 2 `AssetInfoApiTests` for
+  short-history/dense-tail downsampling, 10 `ExploreFirstNavTests` for
+  nav/stepper/chooser). `check` clean. `makemigrations --check --dry-run`
+  → no changes — confirmed no migration was added.
+
+Manual browser verification (2026-09-05, this session): logged in as a
+throwaway local user, drove the running dev server (port 8001) via
+Chrome automation. Found and fixed one **pre-existing** issue unrelated
+to this bucket's code: the worktree's copied `web/db.sqlite3` was missing
+migration `0005_draftportfolio` (`python web/manage.py migrate` fixed it
+locally; not a code change, nothing to commit). Confirmed: nav labels,
+stepper + current-step highlighting, empty/chooser/populated Build
+states, sparklines + detail panel + 1M/1Y toggle, Optimize Settings
+disclosure collapsed by default, adoption confirmation gate, and the
+full "Make this my real portfolio" → confirm → My portfolio trade-report
+flow (real whole-share buy computed correctly). No console errors, no
+server tracebacks during any of this.
 
 ## Questions for the handoff session
 

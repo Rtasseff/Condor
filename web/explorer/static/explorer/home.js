@@ -1,4 +1,4 @@
-/* Condor Funds v2 — Build (pick assets, see the draft as a pie). */
+/* Condor Funds v2 — Explore (pick assets, see the draft as a pie). */
 "use strict";
 
 const cssVar = (name) =>
@@ -9,6 +9,11 @@ const C = {
   ink2: cssVar("--ink-2"),
   muted: cssVar("--muted"),
   font: cssVar("--font-body"),
+  up: cssVar("--change-up"),
+  down: cssVar("--change-down"),
+  frontier: cssVar("--series-frontier"),
+  grid: cssVar("--grid"),
+  axis: cssVar("--axis"),
 };
 // Validated 8-hue categorical set (dark-mode steps; docs/BRANDING.md).
 // Assigned per-holding in the order it was added, not by weight rank, so
@@ -51,7 +56,18 @@ const state = {
   names: {},    // ticker -> company name (bundled tickers.json)
   colors: {},   // ticker -> assigned pie color, stable in add-order
   info: {},     // ticker -> /api/asset payload once fetched
+  expanded: null,     // ticker whose detail panel is open (one at a time)
+  detailRange: "1Y",  // "1M" | "1Y" — the open detail panel's chart range
 };
+
+// Does this user hold anything real? (server-rendered; same check /optimize
+// uses.) An empty draft + real holdings is the one case Build offers a
+// start chooser instead of a bare search box.
+const HAS_REAL = (() => {
+  const el = $("has_real");
+  try { return el ? JSON.parse(el.textContent) : false; } catch { return false; }
+})();
+let chooserDismissed = false;
 
 function showError(msg) {
   const e = $("error");
@@ -179,8 +195,17 @@ function renderAll() {
   renderDraft();
   renderPie();
   const empty = state.assets.length === 0;
+  if (!empty) chooserDismissed = true;   // a real mix retires the chooser for good
   $("ctacard").hidden = empty;
   $("fcastcta").hidden = empty;   // nothing to project without a mix
+  // Exactly one .primary CTA per state: Add is the hero action while the
+  // mix is empty; once there is a mix, "Optimize this mix" takes over and
+  // Add quiets down.
+  $("addform").querySelector("button[type=submit]").className =
+    empty ? "primary small" : "ghost small";
+  const showChooser = empty && HAS_REAL && !chooserDismissed;
+  $("starterchooser").hidden = !showChooser;
+  $("searchcard").hidden = showChooser;
 }
 
 function plainChange(info) {
@@ -194,6 +219,133 @@ function plainChange(info) {
   return `${closeText} · ${dir} ${pStr}% over the past year`;
 }
 
+// One sentence in words, not a bare number — the Robinhood/Yahoo
+// convention: the number carries the precision, the sentence carries
+// the meaning. Used by the detail panel (research rule 5).
+function wordChange(ret, span) {
+  if (ret == null) return `Not enough history for a ${span} change yet.`;
+  const p = Math.abs(ret) * 100;
+  const dir = ret >= 0 ? "Up" : "Down";
+  const pStr = p < 1 ? p.toFixed(1) : Math.round(p).toString();
+  return `${dir} ${pStr}% over the last ${span}`;
+}
+
+// ---------- sparkline (word-sized, undecorated — research rule 5) ----------
+const SPARK_W = 90, SPARK_H = 28, SPARK_PAD = 2;
+
+function sparklineSVG(info) {
+  const s = info && info.ok ? info.series : null;
+  if (!s || s.closes.length < 2) return "";
+  const closes = s.closes;
+  const n = closes.length;
+  const lo = Math.min(...closes), hi = Math.max(...closes);
+  const span = hi - lo || 1;
+  const x = (i) => SPARK_PAD + (i / (n - 1)) * (SPARK_W - 2 * SPARK_PAD);
+  const y = (v) => SPARK_H - SPARK_PAD - ((v - lo) / span) * (SPARK_H - 2 * SPARK_PAD);
+  const d = closes.map((c, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(c).toFixed(1)}`).join(" ");
+  const color = info.year_return == null ? C.muted : info.year_return >= 0 ? C.up : C.down;
+  let baseline = "";
+  if (info.year_return != null) {
+    // the year-ago price, recovered from the return rather than sent
+    // separately — one more number the payload doesn't have to carry.
+    const yearAgo = info.last_close / (1 + info.year_return);
+    const by = y(Math.min(hi, Math.max(lo, yearAgo))).toFixed(1);
+    baseline = `<line class="baseline" x1="${SPARK_PAD}" x2="${SPARK_W - SPARK_PAD}"` +
+      ` y1="${by}" y2="${by}"></line>`;
+  }
+  return `<svg class="spark" width="${SPARK_W}" height="${SPARK_H}"` +
+    ` viewBox="0 0 ${SPARK_W} ${SPARK_H}" aria-hidden="true">${baseline}` +
+    `<path class="sparkline" pathLength="1" d="${d}" style="stroke:${color}"></path></svg>`;
+}
+
+// ---------- detail panel (one at a time; not a modal) ----------
+function toggleDetail(symbol) {
+  state.expanded = state.expanded === symbol ? null : symbol;
+  state.detailRange = "1Y";
+  renderDraft();
+}
+
+// `series` spans up to ~400 days (views.ASSET_INFO_DAYS_BUFFER), so "1Y"
+// has to clip to 365 days too — otherwise it silently shows ~13 months
+// under a 1-year label. Both ranges reuse the same day-cutoff filter.
+const DETAIL_RANGE_DAYS = { "1M": 31, "1Y": 365 };
+
+function detailSeries(info) {
+  const s = info.series;
+  const days = DETAIL_RANGE_DAYS[state.detailRange];
+  if (s.dates.length < 2) return s;
+  const cutoff = new Date(s.dates[s.dates.length - 1]);
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const dates = s.dates.filter((d) => d >= cutoffStr);
+  const closes = s.closes.slice(s.dates.length - dates.length);
+  return dates.length >= 2 ? { dates, closes } : s;
+}
+
+function renderDetailChart(symbol) {
+  const info = state.info[symbol];
+  if (!info || !info.ok) return;
+  const s = detailSeries(info);
+  const color = info.year_return == null ? C.frontier
+    : info.year_return >= 0 ? C.up : C.down;
+  Plotly.react("detailchart", [{
+    x: s.dates, y: s.closes, mode: "lines",
+    line: { color, width: 2 },
+    hovertemplate: "%{x}: $%{y:,.2f}<extra></extra>",
+  }], {
+    paper_bgcolor: C.surface, plot_bgcolor: C.surface,
+    font: { family: C.font, color: C.ink2, size: 11 },
+    margin: { l: 54, r: 12, t: 8, b: 30 },
+    xaxis: { type: "date", gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true },
+    yaxis: { tickprefix: "$", gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true },
+    dragmode: false, hovermode: "closest",
+  }, CHART_CONFIG);
+}
+
+function renderDetailPanel(a) {
+  const li = document.createElement("li");
+  li.className = "detailrow";
+  const info = state.info[a.symbol];
+  if (!info || !info.ok) {
+    li.innerHTML = `<p class="sub">No price history yet for ${a.symbol}.</p>`;
+    return li;
+  }
+  const head = document.createElement("div");
+  head.className = "detailhead";
+  const range = document.createElement("div");
+  range.className = "rangepick";
+  for (const r of ["1M", "1Y"]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "rangebtn" + (state.detailRange === r ? " active" : "");
+    b.textContent = r;
+    b.setAttribute("aria-pressed", String(state.detailRange === r));
+    b.addEventListener("click", () => { state.detailRange = r; renderDraft(); });
+    range.appendChild(b);
+  }
+  head.append(range);
+
+  const chart = document.createElement("div");
+  chart.id = "detailchart";
+  chart.setAttribute("role", "img");
+  chart.setAttribute("aria-label", `${a.symbol} price history`);
+
+  const stats = document.createElement("p");
+  stats.className = "sub";
+  stats.textContent = `${money(info.last_close)} as of ${info.as_of} · ` +
+    `${wordChange(info.year_return, "year")} · ${wordChange(info.month_return, "month")}`;
+
+  const more = document.createElement("a");
+  more.className = "sub detaillink";
+  more.href = `https://finance.yahoo.com/quote/${encodeURIComponent(a.symbol)}`;
+  more.target = "_blank";
+  more.rel = "noopener";
+  more.textContent = `More about ${a.symbol} on Yahoo Finance →`;
+
+  li.append(head, chart, stats, more);
+  return li;
+}
+
 function renderDraft() {
   const ul = $("draftlist");
   ul.replaceChildren();
@@ -203,6 +355,12 @@ function renderDraft() {
   for (const a of state.assets) {
     const li = document.createElement("li");
     li.className = "draftrow";
+    // Row click expands the detail panel; interactive children (weight,
+    // remove, the Yahoo link) opt out via closest() so they still work.
+    li.addEventListener("click", (e) => {
+      if (e.target.closest("input,button,a")) return;
+      toggleDetail(a.symbol);
+    });
 
     const swatch = document.createElement("span");
     swatch.className = "swatch";
@@ -222,6 +380,10 @@ function renderDraft() {
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = state.names[a.symbol] || "";
+
+    const spark = document.createElement("span");
+    spark.className = "sparkwrap";
+    spark.innerHTML = sparklineSVG(state.info[a.symbol]);
 
     const wwrap = document.createElement("span");
     wwrap.className = "pctwrap";
@@ -245,7 +407,16 @@ function renderDraft() {
     rm.setAttribute("aria-label", `Remove ${a.symbol}`);
     rm.addEventListener("click", () => removeAsset(a.symbol));
 
-    line1.append(tick, name, wwrap, rm);
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "expandbtn";
+    const isOpen = state.expanded === a.symbol;
+    expand.textContent = isOpen ? "▾" : "▸";
+    expand.setAttribute("aria-expanded", String(isOpen));
+    expand.setAttribute("aria-label", `${isOpen ? "Hide" : "Show"} price history for ${a.symbol}`);
+    expand.addEventListener("click", () => toggleDetail(a.symbol));
+
+    line1.append(tick, name, spark, wwrap, rm, expand);
 
     const line2 = document.createElement("div");
     line2.className = "draftline2 sub";
@@ -260,6 +431,10 @@ function renderDraft() {
     main.append(line1, line2);
     li.append(swatch, main);
     ul.appendChild(li);
+    if (state.expanded === a.symbol) ul.appendChild(renderDetailPanel(a));
+  }
+  if (state.expanded && state.assets.some((a) => a.symbol === state.expanded)) {
+    renderDetailChart(state.expanded);
   }
 }
 
@@ -288,28 +463,14 @@ function renderPie() {
   }, CHART_CONFIG);
 }
 
-// ---------- account summary ----------
-function driftStatus(d) {
-  const hasTarget = d.positions.some((p) => p.target_weight > 0) ||
-    d.target_cash_weight < 1;
-  if (!hasTarget) return { text: "No setpoint yet", warn: false };
-  let maxDrift = 0;
-  for (const p of d.positions) {
-    maxDrift = Math.max(maxDrift, Math.abs(p.weight - p.target_weight));
-  }
-  if (maxDrift > 0.02) {
-    return { text: `${Math.round(100 * maxDrift)}% off target`, warn: true };
-  }
-  return { text: "On target", warn: false };
-}
-
+// ---------- My portfolio summary (link, value, return — kept small) ----------
 function renderAccountCard(d) {
   const has = d.events && d.events.length > 0;
   $("acct-tiles").hidden = !has;
   $("acct-empty").hidden = has;
   if (!has) {
     $("acct-empty").textContent =
-      "You don't have a tracked account yet — head to My account to pair " +
+      "You don't have a tracked portfolio yet — head to My portfolio to pair " +
       "this mix with real (or pretend) money.";
     return;
   }
@@ -318,10 +479,6 @@ function renderAccountCard(d) {
   const r = $("acct-twr");
   r.textContent = (d.twr >= 0 ? "+" : "") + pct(d.twr);
   r.classList.toggle("neg", d.twr < 0);
-  const drift = driftStatus(d);
-  const dEl = $("acct-drift");
-  dEl.textContent = drift.text;
-  dEl.classList.toggle("neg", drift.warn);
 }
 
 async function loadAccount() {
@@ -330,7 +487,7 @@ async function loadAccount() {
   } catch {
     $("acct-empty").hidden = false;
     $("acct-tiles").hidden = true;
-    $("acct-empty").textContent = "Couldn't load your account right now.";
+    $("acct-empty").textContent = "Couldn't load your portfolio right now.";
   }
 }
 
@@ -362,6 +519,37 @@ $("fc-go").addEventListener("click", async () => {
   await pendingSync;          // land the draft before Optimize looks for it
   window.location.href =
     `/optimize?forecast=${encodeURIComponent(amount)}&years=${years}`;
+});
+
+// ---------- start chooser: explore from scratch, or from what's real ----------
+// The piece user testing said was missing: one click, right on landing,
+// to fork real holdings into the draft (same mechanics as Optimize's
+// source picker — see app.js loadRealHoldings). Read-only on the real
+// side; the draft is the only thing that changes.
+$("startfresh").addEventListener("click", () => {
+  chooserDismissed = true;
+  renderAll();
+});
+$("loadreal").addEventListener("click", async () => {
+  showError("");
+  const btn = $("loadreal");
+  btn.setAttribute("aria-disabled", "true");
+  try {
+    const d = await api("/api/account");
+    const held = (d.positions || []).filter((p) => p.shares > 0).slice(0, 15);
+    if (!held.length) throw new Error("Your real portfolio holds no assets yet.");
+    state.assets = held.map((p) => ({ symbol: p.ticker, weight: p.weight }));
+    for (const a of state.assets) colorFor(a.symbol);
+    chooserDismissed = true;
+    renderAll();
+    renderQuickAdd();
+    await Promise.all(state.assets.map((a) => fetchInfo(a.symbol)));
+    syncDraft();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.removeAttribute("aria-disabled");
+  }
 });
 
 (async function init() {

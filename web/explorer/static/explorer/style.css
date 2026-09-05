@@ -38,6 +38,8 @@
   --series-select:   #1fc6a3;   /* 'considering' selection ring (matches UI accent) */
   --danger:       #e66767;
   --danger-bg:    #2a1520;
+  --change-up:    var(--accent-hi);   /* sparkline/return coloring, up */
+  --change-down:  var(--danger);      /* sparkline/return coloring, down */
 
   /* Build-page pie: the same validated 8-hue categorical set (dark-mode
      steps), slots 1/4/5 doubling as --series-frontier/-you/-cal above.
@@ -287,6 +289,15 @@ button.small { padding: 6px 12px; font-size: 13px; }
 /* selected-point card lives inside the chart card, right under the plot */
 .pointcard { border-top: 1px solid var(--ring); margin-top: 14px; padding-top: 12px; }
 .pointcard h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+
+/* crossing into the real world: a restated-consequence confirmation, not
+   a silent redirect (research rule 4) — amber throughout, matching the
+   "real" world hue (.worldchip.real, .subpanel.justadopted), not the
+   Explore teal this control is asking you to leave */
+.confirmrow { margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--series-you); background: rgba(201, 133, 0, 0.08); }
+.confirmrow .sub { margin: 0 0 8px; }
+.confirmrow button { margin-right: 8px; }
 .sub.warn {
   color: #ffd9d9; background: var(--danger-bg);
   border: 1px solid var(--danger); border-radius: 8px;
@@ -347,6 +358,17 @@ footer {
 .tile .value.neg, td .neg { color: var(--danger); }
 .subpanel { border-top: 1px solid var(--ring); margin-top: 14px; padding-top: 12px; }
 .subpanel h3 { margin: 0 0 4px; font-size: 14px; }
+
+/* the trade report landing from adoption: the celebrated payoff, so it
+   gets one unmissable moment (research rule 7), not just a silent scroll */
+.subpanel.justadopted { animation: adopted-glow 2.4s ease-out; border-radius: 10px; }
+@keyframes adopted-glow {
+  from { box-shadow: 0 0 0 3px rgba(201, 133, 0, 0.45); }
+  to   { box-shadow: 0 0 0 3px rgba(201, 133, 0, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .subpanel.justadopted { animation: none; box-shadow: 0 0 0 3px rgba(201, 133, 0, 0.45); }
+}
 .eventform { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; margin-bottom: 8px; }
 .eventform label { display: flex; flex-direction: column; gap: 4px;
   font-size: 12px; color: var(--muted); }
@@ -456,6 +478,36 @@ h2 small.sub { font-weight: 400; font-size: 12.5px; margin-left: 6px; }
 .pagehead .sub { margin: 0; color: var(--ink-2); font-size: 13.5px; }
 .pagehead .sub a { color: var(--accent-hi); }
 
+/* ---- Explore journey stepper (2026-09, explore-first) ----
+   Whole journey up front, current step highlighted, every step a
+   revisitable link (NN/g wizard-fit rule) — frames the two Explore
+   pages, never appears on My portfolio. */
+.stepper {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 4px;
+  margin: 10px 4px 0; font-size: 13px;
+}
+.stepper .step {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--ink-2); text-decoration: none; padding: 5px 10px;
+  border-radius: 999px; border: 1px solid transparent;
+}
+.stepper .step:hover { color: var(--ink); border-color: var(--ring); }
+.stepper .step .stepnum {
+  display: inline-grid; place-items: center; width: 18px; height: 18px;
+  border: 1px solid var(--ring); border-radius: 999px;
+  font: 500 10.5px var(--font-mono); color: var(--muted);
+}
+.stepper .step.current {
+  color: var(--ink); font-weight: 700;
+  border-color: var(--accent); background: rgba(23, 166, 137, 0.10);
+}
+.stepper .step.current .stepnum { color: var(--accent-hi); border-color: var(--accent-hi); }
+.stepper .steparrow { color: var(--muted); font-size: 12px; }
+.stepper .stepend {
+  color: var(--accent-hi); font-weight: 600; border-color: rgba(31, 198, 163, 0.35);
+}
+.stepper .stepend:hover { border-color: var(--accent-hi); background: rgba(31, 198, 163, 0.08); }
+
 /* ---- Build page ---- */
 .buildlayout { display: grid; grid-template-columns: 380px 1fr; gap: 16px;
   align-items: start; }
@@ -469,7 +521,8 @@ h2 small.sub { font-weight: 400; font-size: 12.5px; margin-left: 6px; }
 #draftempty.empty { padding: 24px 0; text-align: left; }
 
 .draftlist { list-style: none; margin: 10px 0 0; padding: 0; }
-.draftrow { display: flex; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--grid); }
+.draftrow { display: flex; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--grid);
+  cursor: pointer; }
 .draftrow .swatch { width: 10px; height: 10px; border-radius: 50%;
   margin-top: 5px; flex: none; }
 .draftrow .draftmain { flex: 1; min-width: 0; }
@@ -488,6 +541,47 @@ h2 small.sub { font-weight: 400; font-size: 12.5px; margin-left: 6px; }
 .draftline2 { margin-top: 3px; font-size: 12.5px; }
 .draftline2 a { color: var(--accent-hi); text-decoration: none; white-space: nowrap; }
 .draftline2 a:hover { text-decoration: underline; }
+
+/* ---- sparkline: word-sized, undecorated (research rule 5) ---- */
+.sparkwrap { display: inline-flex; flex: none; line-height: 0; }
+.spark .sparkline {
+  fill: none; stroke-width: 1.6px; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: spark-draw 380ms ease-out forwards;
+}
+.spark .baseline {
+  stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; opacity: 0.55;
+}
+@keyframes spark-draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .spark .sparkline { animation: none; stroke-dashoffset: 0; }
+}
+.expandbtn { background: none; border: none; color: var(--muted);
+  font-size: 12px; padding: 2px 4px; line-height: 1; flex: none; }
+.expandbtn:hover { color: var(--ink); }
+
+/* ---- asset detail panel (inline, one at a time — not a modal) ---- */
+.detailrow { padding: 6px 4px 16px 24px; border-bottom: 1px solid var(--grid); }
+.detailhead { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.rangepick { display: inline-flex; gap: 4px; }
+.rangebtn {
+  background: var(--surface-2); border: 1px solid var(--ring); color: var(--ink-2);
+  border-radius: 999px; padding: 3px 12px; font-size: 12px; cursor: pointer;
+}
+.rangebtn:hover { color: var(--ink); border-color: var(--accent); }
+.rangebtn.active {
+  background: rgba(23, 166, 137, 0.14); border-color: var(--accent); color: var(--ink);
+}
+#detailchart { width: 100%; height: 220px; }
+.detaillink { display: inline-block; margin-top: 6px; color: var(--accent-hi);
+  text-decoration: none; }
+.detaillink:hover { text-decoration: underline; }
+
+/* ---- start chooser: explore from scratch, or from what's real ---- */
+.starterchooser { text-align: center; padding: 30px 20px; }
+.starterchooser h2 { font-size: 18px; }
+.starterchooser .sub { max-width: 54ch; margin: 0 auto 16px; }
+.chooserow { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
 .ctacard { display: flex; align-items: center; justify-content: space-between;
   gap: 16px; flex-wrap: wrap; }
@@ -573,6 +667,9 @@ details.advanced .advbody {
   border-radius: 0 0 10px 10px; margin: -6px 8px 0; padding: 14px 12px 4px;
 }
 .controlgloss { margin: -6px 0 12px; color: var(--muted); font-size: 12px; }
+
+/* ---- Optimize toolbar: Settings tucked away, Save/Saved stay quiet ---- */
+.quietrow { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 
 /* ---- My account: the starter card (bridge 1) ---- */
 .startercard { border-color: var(--accent); }

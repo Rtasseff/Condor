@@ -80,7 +80,9 @@ function render(data) {
 
 function renderTiles() {
   const d = state.data;
-  $("acctname").textContent = d.account.name;
+  // The card heading is a fixed "My portfolio" (matching the page/nav
+  // identity) rather than the ledger's per-account `name` field, which
+  // has no rename UI and would otherwise just repeat its DB default.
   $("a-value").textContent = money(d.total_value);
   $("a-contrib").textContent = money(d.net_contributions);
   const g = $("a-gain");
@@ -757,7 +759,7 @@ function projectAccount() {
 async function runAccountForecast() {
   showError("");
   if (!state.data) {   // the initial /api/account never landed
-    showError("Your account hasn't loaded yet — reload the page to try again.");
+    showError("Your portfolio hasn't loaded yet — reload the page to try again.");
     return;
   }
   const seq = ++forecastSeq;
@@ -900,14 +902,24 @@ $("planconfirm").addEventListener("click", confirmPlan);
 (async function init() {
   syncEventForm();
   renderPriorChip();
-  $("a-asof").textContent = "Valuing your account at the last close…";
+  $("a-asof").textContent = "Valuing your portfolio at the last close…";
   try {
     render(await api("/api/account"));
-    // arriving from Optimize's "Make this my real portfolio": show the plan,
-    // under a heading that echoes the button that got us here (fix 3)
+    // Arriving from Optimize's "Make this my real portfolio": the trade
+    // report is the celebrated payoff of adoption (research rule 7), so
+    // it has to land in view unmissably, not just somewhere on the page
+    // — under a heading that echoes the button that got us here (fix 3).
     if (new URLSearchParams(location.search).get("plan")) {
       $("plantitle").textContent = "How to get there from what you hold";
-      loadPlan();
+      await loadPlan();
+      // loadPlan() swallows its own errors (shows them via showError) and
+      // leaves the panel hidden on failure — only celebrate a plan that
+      // actually rendered.
+      if (!$("planpanel").hidden) {
+        $("planpanel").scrollIntoView({ behavior: "smooth", block: "start" });
+        $("planpanel").classList.add("justadopted");
+        setTimeout(() => $("planpanel").classList.remove("justadopted"), 2400);
+      }
     }
   } catch (err) {
     showError(err.message);

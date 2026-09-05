@@ -1,18 +1,18 @@
 {% extends "explorer/base.html" %}
 {% load static %}
-{% block title %}Condor Funds — My account{% endblock %}
-{% block nav_account %}active{% endblock %}
+{% block title %}Condor Funds — My portfolio{% endblock %}
+{% block nav_portfolio %}active{% endblock %}
 {% block content %}
 <main data-rf="{{ rf_pct }}">
   <div class="pagehead">
-    <h1>My account</h1>
-    <span class="worldchip real"><b>Real</b> the record of what this account
-      actually holds.</span>
+    <h1>My portfolio</h1>
+    <span class="worldchip real"><b>My portfolio</b> the record of what you
+      actually hold.</span>
   </div>
 
   <section class="card startercard" id="startercard" hidden
-           aria-label="Start your account">
-    <h2 id="startertitle">Start your account</h2>
+           aria-label="Start your portfolio">
+    <h2 id="startertitle">Start your portfolio</h2>
     <div id="starterfund" hidden>
       <p class="sub">Put in the amount below and we'll record the deposit and
          the whole-share buys that match your plan at the last close. Pretend
@@ -28,16 +28,16 @@
       </div>
     </div>
     <p class="sub" id="starterguide" hidden>Pick a mix in
-       <a href="{% url 'index' %}">Build</a>, fine-tune it in
+       <a href="{% url 'index' %}">Explore</a>, fine-tune it in
        <a href="{% url 'optimize' %}">Optimize</a>, then
        <b>Make this my real portfolio</b> — the plan lands back here.</p>
   </section>
 
   <section class="card">
-    <h2 id="acctname">My account</h2>
+    <h2 id="acctname">My portfolio</h2>
     <p class="sub">A ledger-tracked account — pretend money, or a mirror of a real
        one. Value comes from the last close; putting money in moves the value but
-       never the return. The Build page works fine without this — this is just
+       never the return. Explore works fine without this — this is just
        the tracking.</p>
     <div class="tiles atiles">
       <div class="tile"><span class="label">Total value</span><span class="value" id="a-value">–</span><span class="gloss">holdings + cash at the last close</span></div>
@@ -47,7 +47,7 @@
     </div>
     <p class="sub" id="a-asof"></p>
     <p class="nudge">Curious where it could go?
-       <a href="#forecast">Forecast your account →</a></p>
+       <a href="#forecast">Forecast your portfolio →</a></p>
   </section>
 
   <div id="duebanner" class="card duebanner" hidden>
@@ -192,7 +192,7 @@
        <b>setpoint</b> — the mix you plan to hold — starting from the amount
        below. <a href="#startercard" id="afhypolink">Make it real above →</a></p>
     <p class="sub" id="afnoplan" hidden>There's no plan to project yet. Pick a
-       mix in <a href="{% url 'index' %}">Build</a>, fine-tune it in
+       mix in <a href="{% url 'index' %}">Explore</a>, fine-tune it in
        <a href="{% url 'optimize' %}">Optimize</a>, then <b>Make this my real
        portfolio</b> — the plan lands back here.</p>
     <details class="explain">
