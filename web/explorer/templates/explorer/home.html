@@ -1,21 +1,34 @@
 {% extends "explorer/base.html" %}
 {% load static %}
-{% block title %}Condor Funds — Build{% endblock %}
-{% block nav_build %}active{% endblock %}
+{% block title %}Condor Funds — Explore{% endblock %}
+{% block nav_explore %}active{% endblock %}
 {% block content %}
 <main>
   <div class="pagehead">
-    <h1>Build</h1>
-    <p class="sub">Search for assets, check the ones you like, and see your
-       mix take shape. No jargon here — <a href="{% url 'optimize' %}">Optimize</a>
-       is where the curves and fine-tuning live.</p>
+    <h1>Explore</h1>
+    <p class="sub">Pick a few assets, then optimize and forecast them — see
+       what a mix could become before it's real.</p>
     <span class="worldchip explore"><b>Exploring</b> pretend money; nothing
-      here touches your account.</span>
+      here touches your real portfolio.</span>
   </div>
+
+  {% include "explorer/_stepper.html" with stepper_current="pick" %}
 
   <div id="error" class="error card" hidden></div>
 
-  <section class="card" aria-label="Search for an asset">
+  <section class="card starterchooser" id="starterchooser" hidden
+           aria-label="Start exploring from">
+    <h2>Start from…</h2>
+    <p class="sub">You already hold something real. Explore from that mix, or
+       start fresh with a blank one — either way, nothing here touches your
+       real portfolio.</p>
+    <div class="chooserow">
+      <button id="loadreal" class="primary" type="button">Load my portfolio →</button>
+      <button id="startfresh" class="ghost" type="button">Start fresh</button>
+    </div>
+  </section>
+
+  <section class="card" id="searchcard" aria-label="Search for an asset">
     <form id="addform" autocomplete="off">
       <input id="addticker" list="tickerlist" placeholder="Search — ticker or company name"
              spellcheck="false" aria-label="Add asset">
@@ -44,6 +57,15 @@
     </section>
   </div>
 
+  <section class="card ctacard" id="ctacard" aria-label="Optimize this mix">
+    <div>
+      <h2>Ready to fine-tune?</h2>
+      <p class="sub">Optimize shows the risk-and-reward trade-offs across
+         your mix, and lets you nudge the weights.</p>
+    </div>
+    <a href="{% url 'optimize' %}" class="primary" id="gotooptimize">Optimize this mix →</a>
+  </section>
+
   <section class="card" id="fcastcta" aria-label="Forecast this mix" hidden>
     <h2>What could it become?</h2>
     <div class="fcontrols">
@@ -59,30 +81,20 @@
           <option value="10">10 years</option>
         </select>
       </label>
-      <button id="fc-go" class="primary small" type="button">See the range →</button>
+      <button id="fc-go" class="ghost small" type="button">See the range →</button>
     </div>
     <p class="sub">Opens Optimize and projects an honest range for this mix —
        still pretend money.</p>
   </section>
 
-  <section class="card" id="acctcard" aria-label="Your account">
-    <h2>Your account</h2>
+  <section class="card" id="acctcard" aria-label="My portfolio">
+    <h2>My portfolio</h2>
     <p class="sub" id="acct-empty"></p>
     <div class="tiles atiles" id="acct-tiles" hidden>
       <div class="tile"><span class="label">Value</span><span class="value" id="acct-value">–</span><span class="gloss">at the last close</span></div>
-      <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="acct-twr">–</span><span class="gloss">growth of a dollar in the account</span></div>
-      <div class="tile"><span class="label">Setpoint</span><span class="value" id="acct-drift">–</span><span class="gloss">how close holdings are to plan</span></div>
+      <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="acct-twr">–</span><span class="gloss">growth of a dollar in your portfolio</span></div>
     </div>
-    <a href="{% url 'account' %}" class="ghost small">Go to My account →</a>
-  </section>
-
-  <section class="card ctacard" id="ctacard" aria-label="Optimize this mix">
-    <div>
-      <h2>Ready to fine-tune?</h2>
-      <p class="sub">Optimize shows the risk-and-reward trade-offs across
-         your mix, and lets you nudge the weights.</p>
-    </div>
-    <a href="{% url 'optimize' %}" class="primary" id="gotooptimize">Optimize this mix →</a>
+    <a href="{% url 'account' %}" class="ghost small">Go to My portfolio →</a>
   </section>
 
   <footer>
@@ -91,5 +103,6 @@
   </footer>
 </main>
 
+{{ has_real|json_script:"has_real" }}
 <script src="{% static 'explorer/home.js' %}"></script>
 {% endblock %}

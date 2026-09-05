@@ -797,7 +797,7 @@ class PageTests(TestCase):
         self.client.force_login(self.user)
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
-        self.assertContains(res, "Build")
+        self.assertContains(res, "Explore")
 
     def test_optimize_page_renders_for_a_logged_in_user(self):
         self.client.force_login(self.user)
@@ -880,6 +880,105 @@ class PageTests(TestCase):
         res = self.client.post(
             "/login", {"username": self.user.username, "password": "x-not-secret-x"})
         self.assertRedirects(res, "/")
+
+
+class ExploreFirstNavTests(TestCase):
+    """feature/explore-first: Explore | My portfolio nav, the journey
+    stepper, and the empty-draft start chooser for holders of real
+    positions. docs/handoffs/explore-first.md's conflict watchlist claims
+    the same files as PageTests above."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+
+    def draft(self, weights=(("AAA", 1.0),)):
+        d = DraftPortfolio.objects.create(owner=self.user)
+        d.set_assets(list(weights))
+        d.save()
+        return d
+
+    def test_nav_is_explore_and_my_portfolio(self):
+        html = self.client.get("/").content.decode()
+        self.assertIn('class="active">Explore</a>', html)
+        self.assertIn(">My portfolio<", html)
+        self.assertNotIn(">Build<", html)
+        self.assertNotIn(">Optimize<", html)
+
+    def test_nav_marks_explore_active_on_optimize_too(self):
+        self.draft()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            html = self.client.get("/optimize").content.decode()
+        self.assertIn('class="active">Explore</a>', html)
+
+    def test_nav_marks_my_portfolio_active_on_account_page(self):
+        html = self.client.get("/account").content.decode()
+        self.assertIn('class="active">My portfolio', html)
+
+    def test_account_page_title_and_h1_are_my_portfolio(self):
+        html = self.client.get("/account").content.decode()
+        self.assertIn("Condor Funds — My portfolio</title>", html)
+        self.assertIn("<h1>My portfolio</h1>", html)
+
+    def test_stepper_present_on_explore_pages_absent_on_account(self):
+        self.draft()
+        home_html = self.client.get("/").content.decode()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            optimize_html = self.client.get("/optimize").content.decode()
+        account_html = self.client.get("/account").content.decode()
+        self.assertIn('class="stepper"', home_html)
+        self.assertIn('class="stepper"', optimize_html)
+        self.assertNotIn('class="stepper"', account_html)
+
+    def test_stepper_present_even_when_optimize_has_nothing_to_show(self):
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            html = self.client.get("/optimize").content.decode()
+        self.assertIn('id="optimize-empty"', html)
+        self.assertIn('class="stepper"', html)
+
+    def test_stepper_highlights_the_current_step_and_links_work(self):
+        self.draft()
+        home_html = self.client.get("/").content.decode()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            optimize_html = self.client.get("/optimize").content.decode()
+        self.assertIn('class="step current"', home_html)
+        self.assertIn('href="/"', home_html)
+        self.assertIn('href="/optimize"', home_html)
+        self.assertIn('class="step current"', optimize_html)
+
+    def test_no_start_chooser_without_real_holdings(self):
+        html = self.client.get("/").content.decode()
+        self.assertIn(
+            '<script id="has_real" type="application/json">false</script>', html)
+        self.assertIn('id="starterchooser" hidden', html)
+
+    def test_start_chooser_appears_for_a_holdings_owner_with_empty_draft(self):
+        from explorer.models import Account, AccountEvent
+        account = Account.objects.create(owner=self.user)
+        AccountEvent.objects.create(account=account, date="2026-01-05",
+                                    kind="deposit", amount=1000)
+        AccountEvent.objects.create(account=account, date="2026-01-06",
+                                    kind="buy", ticker="AAA", shares=5,
+                                    price=100)
+        html = self.client.get("/").content.decode()
+        self.assertIn(
+            '<script id="has_real" type="application/json">true</script>', html)
+        self.assertIn('id="loadreal"', html)
+
+    def test_no_start_chooser_once_a_draft_exists_even_with_real_holdings(self):
+        from explorer.models import Account, AccountEvent
+        account = Account.objects.create(owner=self.user)
+        AccountEvent.objects.create(account=account, date="2026-01-05",
+                                    kind="deposit", amount=1000)
+        AccountEvent.objects.create(account=account, date="2026-01-06",
+                                    kind="buy", ticker="AAA", shares=5,
+                                    price=100)
+        self.draft([("BBB", 1.0)])
+        html = self.client.get("/").content.decode()
+        # has_real is still true (the chooser's JS gates on an empty draft,
+        # not on this flag alone), but a draft-holder never gets invented one
+        self.assertIn(
+            '<script id="has_real" type="application/json">true</script>', html)
 
 
 class DraftApiTests(TestCase):
@@ -973,11 +1072,51 @@ class AssetInfoApiTests(TestCase):
             res = self.client.get("/api/asset?symbol=aapl")
         self.assertEqual(res.status_code, 200)
         d = res.json()
+        series = d.pop("series")
         self.assertEqual(d, {
             "ok": True, "symbol": "AAPL", "name": "Apple Inc.",
             "last_close": 112.0, "as_of": str(idx[-1].date()),
-            "year_return": round(0.12, 6),
+            "year_return": round(0.12, 6), "month_return": round(0.12, 6),
         })
+        # ~60 evenly-downsampled points; first and last are real endpoints,
+        # never interpolated — a shape for a sparkline, not a data export.
+        self.assertLessEqual(len(series["dates"]), 62)
+        self.assertEqual(len(series["dates"]), len(series["closes"]))
+        self.assertEqual(series["dates"][0], str(idx[0].date()))
+        self.assertEqual(series["dates"][-1], str(idx[-1].date()))
+        self.assertEqual(series["closes"][0], 100.0)
+        self.assertEqual(series["closes"][-1], 112.0)
+
+    def test_short_history_is_not_downsampled_and_short_returns_are_none(self):
+        import datetime as dt
+        import pandas as pd
+        idx = pd.bdate_range(end=dt.date.today(), periods=10)
+        s = pd.Series(50.0, index=idx, dtype=float)
+        with self.fake_store({"NEWCO": s}):
+            d = self.client.get("/api/asset?symbol=NEWCO").json()
+        self.assertIsNone(d["year_return"])
+        self.assertIsNone(d["month_return"])
+        self.assertEqual(len(d["series"]["dates"]), len(idx))
+        self.assertEqual(d["series"]["dates"][0], str(idx[0].date()))
+        self.assertEqual(d["series"]["dates"][-1], str(idx[-1].date()))
+
+    def test_downsample_keeps_recent_history_dense(self):
+        """A naive uniform downsample over ~400 days spaces points ~7 days
+        apart, which would make a client-side "last 30 days" slice nearly
+        blank. The recent tail must stay close to daily resolution."""
+        import datetime as dt
+        import pandas as pd
+        idx = pd.bdate_range(end=dt.date.today(), periods=400)
+        s = pd.Series(range(len(idx)), index=idx, dtype=float)
+        with self.fake_store({"DENSE": s}):
+            d = self.client.get("/api/asset?symbol=DENSE").json()
+        dates = d["series"]["dates"]
+        cutoff = str((idx[-1] - pd.Timedelta(days=35)).date())
+        recent = [x for x in dates if x >= cutoff]
+        self.assertGreaterEqual(len(recent), 20)
+        self.assertLessEqual(len(dates), 62)
+        self.assertEqual(dates[0], str(idx[0].date()))
+        self.assertEqual(dates[-1], str(idx[-1].date()))
 
     def test_no_data_degrades_gracefully(self):
         with self.fake_store({}):

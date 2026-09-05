@@ -73,10 +73,14 @@ def rf_context() -> dict:
 @login_required
 @ensure_csrf_cookie
 def index(request):
-    """`/` — Build: pick assets, see the draft as a pie, friendly copy.
+    """`/` — Explore's entry point: pick assets, see the draft as a pie.
     Login lands here. Numerics happen client-side against `/api/draft`
-    and `/api/asset`; this view just renders the shell."""
-    return render(request, "explorer/home.html")
+    and `/api/asset`; this view just renders the shell. `has_real` tells
+    the client whether an empty draft should offer "Load my portfolio" —
+    read-only, same check `/optimize` uses (fix 1/2's promise applies
+    here too: don't invent a starting mix)."""
+    return render(request, "explorer/home.html",
+                  {"has_real": _has_holdings(request.user)})
 
 
 def _has_holdings(user) -> bool:
@@ -437,6 +441,7 @@ def api_draft(request):
 
 
 ASSET_INFO_DAYS_BUFFER = 400  # days of history fetched for a 1-year return
+SERIES_POINTS = 60  # target length of the downsampled sparkline/chart series
 
 
 @functools.lru_cache(maxsize=1)
@@ -451,14 +456,41 @@ def _ticker_names():
     return {row["t"]: row["n"] for row in rows}
 
 
+SERIES_RECENT_DAYS = 35  # dense tail so a client-side "1M" slice isn't blocky
+
+
+def _downsample(closes, n=SERIES_POINTS, recent_days=SERIES_RECENT_DAYS):
+    """Evenly-spaced subset of a close-price Series, biased toward the
+    most recent `recent_days` so a client-side "last month" slice still
+    shows near-daily resolution rather than the same coarse spacing as
+    the full window. First and last point are always real endpoints,
+    never interpolated — a shape for a sparkline/chart, not a data
+    export."""
+    if len(closes) <= n:
+        return closes
+    cutoff = closes.index[-1] - datetime.timedelta(days=recent_days)
+    recent_start = closes.index.searchsorted(cutoff, side="right")
+    recent_count = len(closes) - recent_start
+    if recent_count >= n:
+        positions = sorted({round(i * (len(closes) - 1) / (n - 1)) for i in range(n)})
+        return closes.iloc[positions]
+    remaining = n - recent_count
+    last_older = recent_start - 1
+    older_positions = (
+        sorted({round(i * last_older / (remaining - 1)) for i in range(remaining)})
+        if remaining > 1 else [0])
+    return closes.iloc[older_positions + list(range(recent_start, len(closes)))]
+
+
 @api_login_required
 @require_http_methods(["GET"])
 def api_asset(request):
-    """`GET /api/asset?symbol=X` — plain facts for one Build-page row:
-    display name, last close + its date, and a 1-year simple return.
-    Never more than one PriceStore fetch; a store miss degrades to
-    `{"ok": false}` rather than a traceback (a brand-new or delisted
-    ticker has no history yet)."""
+    """`GET /api/asset?symbol=X` — plain facts for one Explore mix row:
+    display name, last close + its date, 1-year and 1-month simple
+    returns, and a downsampled `series` for an in-app sparkline/chart —
+    all from the ~1y of closes this already fetches, no second PriceStore
+    call. A store miss degrades to `{"ok": false}` rather than a
+    traceback (a brand-new or delisted ticker has no history yet)."""
     symbol = str(request.GET.get("symbol") or "").strip().upper()
     if not TICKER_RE.match(symbol):
         return _bad(f"'{symbol}' does not look like a ticker symbol.")
@@ -478,10 +510,16 @@ def api_asset(request):
 
     last_date = closes.index[-1]
     last_close = float(closes.iloc[-1])
-    year_ago = closes[closes.index <= last_date - datetime.timedelta(days=365)]
-    year_return = None
-    if not year_ago.empty and float(year_ago.iloc[-1]) > 0:
-        year_return = last_close / float(year_ago.iloc[-1]) - 1
+
+    def _trailing_return(days):
+        prior = closes[closes.index <= last_date - datetime.timedelta(days=days)]
+        if prior.empty or float(prior.iloc[-1]) <= 0:
+            return None
+        return last_close / float(prior.iloc[-1]) - 1
+
+    year_return = _trailing_return(365)
+    month_return = _trailing_return(30)
+    series = _downsample(closes)
 
     return JsonResponse({
         "ok": True,
@@ -490,6 +528,11 @@ def api_asset(request):
         "last_close": round(last_close, 4),
         "as_of": str(last_date.date()),
         "year_return": round(year_return, 6) if year_return is not None else None,
+        "month_return": round(month_return, 6) if month_return is not None else None,
+        "series": {
+            "dates": [str(d.date()) for d in series.index],
+            "closes": [round(float(c), 4) for c in series],
+        },
     })
 
 

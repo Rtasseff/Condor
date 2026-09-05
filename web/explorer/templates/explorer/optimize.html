@@ -1,16 +1,18 @@
 {% extends "explorer/base.html" %}
 {% load static %}
 {% block title %}Condor Funds — Optimize{% endblock %}
-{% block nav_optimize %}active{% endblock %}
+{% block nav_explore %}active{% endblock %}
 {% block content %}
 <main>
   <div class="pagehead">
     <h1>Optimize</h1>
     <p class="sub">The curves and fine-tuning behind your mix — starts from
-       your <a href="{% url 'index' %}">Build</a> draft if you have one.</p>
+       your <a href="{% url 'index' %}">Explore</a> draft if you have one.</p>
     <span class="worldchip explore"><b>Exploring</b> pretend money; nothing
-      here touches your account.</span>
+      here touches your real portfolio.</span>
   </div>
+
+  {% include "explorer/_stepper.html" with stepper_current="optimize" %}
 
 {% if not has_source %}
   <section class="card emptystate" id="optimize-empty"
@@ -19,34 +21,42 @@
     <p class="sub">Optimize fine-tunes a mix you have already picked — it
        won't invent one for you. Choose a few assets first and they'll be
        waiting here.</p>
-    <a href="{% url 'index' %}" class="primary">Pick your assets in Build →</a>
+    <a href="{% url 'index' %}" class="primary">Pick your assets in Explore →</a>
   </section>
 {% else %}
-  <section class="controls card" aria-label="Analysis settings">
-    <label>Method
-      <select id="method">
-        <option value="robust" selected>Robust statistics (outlier-resistant)</option>
-        <option value="normal">Classic statistics (mean / SD)</option>
-      </select>
-    </label>
-    <label>Lookback
-      <select id="years">
-        <option value="5">5 years</option>
-        <option value="10" selected>10 years</option>
-        <option value="15">15 years</option>
-        <option value="20">20 years</option>
-      </select>
-    </label>
-    <label>Risk-free rate
-      <span class="pctwrap"><input id="rf" type="number" value="{{ rf_pct }}" step="0.1" min="-5" max="25"> %</span>
-      {% if rf %}<small class="sub">3-mo T-bill, {{ rf.as_of }}</small>{% endif %}
-    </label>
-    <button id="analyze" class="primary">Analyze</button>
-    <button id="save" class="ghost" type="button">Save</button>
-    <button id="saved" class="ghost" type="button" aria-expanded="false">Saved</button>
-    <span id="status" class="status" role="status"></span>
-    <p class="controlgloss">How we measure history — not a view about the
-       economy.</p>
+  <section class="card toolbar" aria-label="Analysis settings">
+    <details class="advanced" id="settingsdetails">
+      <summary><b>Settings</b> — method, lookback, risk-free rate</summary>
+      <div class="advbody controls">
+        <label>Method
+          <select id="method">
+            <option value="robust" selected>Robust statistics (outlier-resistant)</option>
+            <option value="normal">Classic statistics (mean / SD)</option>
+          </select>
+        </label>
+        <label>Lookback
+          <select id="years">
+            <option value="5">5 years</option>
+            <option value="10" selected>10 years</option>
+            <option value="15">15 years</option>
+            <option value="20">20 years</option>
+          </select>
+        </label>
+        <label>Risk-free rate
+          <span class="pctwrap"><input id="rf" type="number" value="{{ rf_pct }}" step="0.1" min="-5" max="25"> %</span>
+          {% if rf %}<small class="sub">3-mo T-bill, {{ rf.as_of }}</small>{% endif %}
+        </label>
+        <button id="analyze" class="primary">Analyze</button>
+        <p class="controlgloss">How we measure history — not a view about the
+           economy. Analysis already ran with the defaults above; change one
+           and re-run.</p>
+      </div>
+    </details>
+    <div class="quietrow">
+      <button id="save" class="ghost small" type="button">Save</button>
+      <button id="saved" class="ghost small" type="button" aria-expanded="false">Saved</button>
+      <span id="status" class="status" role="status"></span>
+    </div>
   </section>
 
   <section class="card hintstrip" id="hintstrip" hidden aria-label="Getting started">
@@ -129,8 +139,15 @@
         <p class="sub" id="calnote" hidden></p>
         <button id="adoptpoint" class="primary small">Make this my portfolio</button>
         <button id="settarget" class="ghost small" type="button"
-                title="Copies this mix to your account and opens the plan — whole shares at the last close — for turning what you hold now into this.">
+                title="Sets this as your real portfolio's target and opens the trade plan — whole shares at the last close — for turning what you hold now into this.">
           Make this my real portfolio →</button>
+        <div id="settargetconfirm" class="confirmrow" hidden>
+          <p class="sub">This sets your <b>real portfolio's</b> target to this
+             mix and opens a trade plan on My portfolio — nothing trades until you
+             confirm it there.</p>
+          <button id="settargetgo" class="primary small" type="button">Yes, set my real portfolio</button>
+          <button id="settargetcancel" class="ghost small" type="button">Cancel</button>
+        </div>
       </section>
     </section>
 

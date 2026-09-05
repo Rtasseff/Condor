@@ -535,6 +535,7 @@ function renderPoint(sel) {
   const note = $("calnote");
   const adopt = $("adoptpoint");
   $("settarget").hidden = false;
+  $("settargetconfirm").hidden = true;   // a new selection retires any open confirm
   if (sel.kind === "cal") {
     adopt.hidden = true;
     note.hidden = false;
@@ -1009,11 +1010,24 @@ for (const id of ["fanchor", "fanchorvalue"]) {
     if (!$("fchart").hidden) runForecast();
   });
 }
-$("settarget").addEventListener("click", async () => {
-  // Send the considered mix to the account as its new setpoint, then
-  // open the transition plan there. Weights are total-wealth fractions,
+// Crossing into the real world is an explicit act (research rule 4: "mode
+// slips here mean 'I thought I was playing'") — a confirmation restating
+// the consequence, not a silent POST-and-redirect. No window.confirm():
+// it blocks automation and this codebase avoids it elsewhere too.
+$("settarget").addEventListener("click", () => {
+  if (!state.selected) return;
+  $("settargetconfirm").hidden = false;
+});
+$("settargetcancel").addEventListener("click", () => {
+  $("settargetconfirm").hidden = true;
+});
+$("settargetgo").addEventListener("click", async () => {
+  // Send the considered mix to the real portfolio as its new setpoint,
+  // then open the trade plan there. Weights are total-wealth fractions,
   // so a CAL mix carries its cash share implicitly.
   if (!state.selected) return;
+  const btn = $("settargetgo");
+  btn.disabled = true;
   try {
     const res = await fetch("/api/account/target", {
       method: "POST",
@@ -1025,6 +1039,7 @@ $("settarget").addEventListener("click", async () => {
     window.location.href = "/account?plan=1";
   } catch (err) {
     showError(err.message);
+    btn.disabled = false;
   }
 });
 $("adoptpoint").addEventListener("click", () => {
@@ -1047,8 +1062,7 @@ function renderSource() {
   const note = $("srcnote");
   note.hidden = !state.forked;
   note.textContent = state.forked
-    ? "Your draft — edited from your real portfolio. Your account itself is "
-      + "unchanged."
+    ? "Your draft — edited from your real portfolio; nothing there has changed."
     : "";
 }
 
@@ -1086,7 +1100,7 @@ async function loadRealHoldings() {
   // a position whose price is missing (value 0, so weight 0), leaving the
   // picker offering a source that errors when clicked.
   const held = (d.positions || []).filter((p) => p.shares > 0).slice(0, 15);
-  if (!held.length) throw new Error("Your account holds no assets yet.");
+  if (!held.length) throw new Error("Your real portfolio holds no assets yet.");
   // account weights are fractions of the whole account (cash included);
   // Analyze normalizes them back to a risky mix
   state.assets = held.map((p) => p.ticker);
