@@ -194,4 +194,5 @@ Mark the registry row merged (or remove it) in the same commit.
 
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
-| `learn-page` | `feature/learn-page` | 8001 | 2026-09-05 | briefed — public /learn: sessions, glossary, why-card (Sonnet) |
+
+*(none — learn-page merged 2026-09-05)*
