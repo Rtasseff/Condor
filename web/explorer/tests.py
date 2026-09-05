@@ -6,6 +6,7 @@ asks FRED for the risk-free rate, so that call is patched out.
 """
 
 import json
+import re
 import uuid
 from unittest.mock import patch
 
@@ -1131,3 +1132,173 @@ class AssetInfoApiTests(TestCase):
     def test_anonymous_gets_401(self):
         self.client.logout()
         self.assertEqual(self.client.get("/api/asset?symbol=AAPL").status_code, 401)
+
+
+class LearnPageTests(TestCase):
+    """feature/learn-page: `/learn` is the one public page — sessions from
+    the channel, the plain-words glossary, the why-card — and the in-app
+    "Learn →" links that point into it. The auth boundary is the risk here,
+    so it is tested from both sides."""
+
+    def setUp(self):
+        self.user = make_user()
+
+    def learn_html(self):
+        res = self.client.get("/learn")
+        self.assertEqual(res.status_code, 200)
+        return res.content.decode()
+
+    # ------------------------------------------------------------ public
+
+    def test_learn_renders_for_anonymous_visitors(self):
+        html = self.learn_html()
+        for present in ("Sessions", "What is a portfolio?", "Plain words",
+                        "Why Condor exists", "Prefer reading? Full transcript"):
+            self.assertIn(present, html)
+
+    def test_learn_renders_the_same_for_a_logged_in_user(self):
+        anon = self.learn_html()
+        self.client.force_login(self.user)
+        self.assertIn("Plain words", self.learn_html())
+        self.assertIn("Sessions", anon)
+
+    def test_base_template_survives_anonymous_users(self):
+        """The nav, the contribution-due dot and the user box all render
+        off `request.user`; the public page is the first time they meet an
+        AnonymousUser. Links to the private pages still show — they just
+        redirect at the door."""
+        html = self.learn_html()
+        self.assertIn('href="/"', html)
+        self.assertIn('href="/account"', html)
+        self.assertNotIn('class="userbox"', html)
+        self.assertNotIn("duedot", html)
+
+    def test_every_other_page_still_requires_a_login(self):
+        for path in ("/", "/optimize", "/account"):
+            res = self.client.get(path)
+            self.assertEqual(res.status_code, 302, path)
+            self.assertTrue(res.url.startswith("/login"), path)
+
+    # ------------------------------------------------------------- embeds
+
+    def test_no_youtube_player_before_the_click(self):
+        """Facade only: the initial HTML carries a thumbnail and a button,
+        no iframe and not even a player URL to fetch."""
+        html = self.learn_html()
+        self.assertNotIn("youtube-nocookie", html)
+        self.assertNotIn("<iframe", html)
+        self.assertNotIn("youtube.com/embed", html)
+        self.assertIn("i.ytimg.com/vi/dyjYgHEM1og/hqdefault.jpg", html)
+        self.assertIn('data-video="dyjYgHEM1og"', html)
+        self.assertIn('data-video="jT6muQRTAeI"', html)
+        self.assertIn('class="facadebtn"', html)
+        self.assertIn("Plays from YouTube", html)
+
+    def test_the_player_is_built_by_the_click_handler_only(self):
+        """The nocookie URL lives in the script, so it is fetched when a
+        visitor asks for it and never on page load."""
+        from django.contrib.staticfiles import finders
+        with open(finders.find("explorer/learn.js")) as fh:
+            js = fh.read()
+        self.assertIn("https://www.youtube-nocookie.com/embed/", js)
+        self.assertIn("addEventListener", js)
+        # site-wide Referrer-Policy is same-origin, which the YouTube player
+        # rejects with Error 153; the iframe has to relax it for itself
+        self.assertIn("strict-origin-when-cross-origin", js)
+        self.assertIn('src="/static/explorer/learn.js"', self.learn_html())
+
+    def test_facade_images_have_alt_text(self):
+        """The brand logo is decorative (alt=""); a thumbnail is content —
+        it is the only picture of what the session is."""
+        thumbs = re.findall(r"<img[^>]*i\.ytimg\.com[^>]*>", self.learn_html())
+        self.assertEqual(len(thumbs), 2)
+        for img in thumbs:
+            self.assertIn("alt=", img)
+            self.assertNotIn('alt=""', img)
+
+    # ----------------------------------------------------------- glossary
+
+    def test_all_thirteen_glossary_anchors_are_present(self):
+        from explorer.learn import GLOSSARY
+        expected = ["portfolio", "weight", "diversification", "expected-return",
+                    "dispersion", "robust", "frontier", "cal", "index", "bond",
+                    "whole-shares", "bands", "anchor"]
+        self.assertEqual([e["id"] for e in GLOSSARY], expected)
+        html = self.learn_html()
+        for gid in expected:
+            self.assertIn(f'class="glossentry" id="{gid}"', html)
+
+    def test_in_the_app_lines_link_into_the_app(self):
+        html = self.learn_html()
+        self.assertIn("In the app:", html)
+        self.assertIn('href="/optimize#forecastcard"', html)
+        self.assertIn('href="/account"', html)
+
+    def test_session_covers_chips_point_at_real_anchors(self):
+        html = self.learn_html()
+        chips = re.findall(r'class="termchip" href="#([\w-]+)"', html)
+        self.assertEqual(chips, ["portfolio", "weight", "diversification",
+                                 "index", "bond"])
+        for chip in chips:
+            self.assertIn(f'id="{chip}"', html)
+
+    # --------------------------------------------------------- in-app links
+
+    def test_every_in_app_learn_link_resolves_to_an_anchor(self):
+        """The glossary ids are API. Walk the pages that carry a "Learn →"
+        link and prove each fragment exists on `/learn` — a renamed id has
+        to break here, not in a user's face."""
+        learn = self.learn_html()
+        self.client.force_login(self.user)
+        draft = DraftPortfolio.objects.create(owner=self.user)
+        draft.set_assets([("AAA", 1.0)])
+        draft.save()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            pages = {"/": self.client.get("/").content.decode(),
+                     "/optimize": self.client.get("/optimize").content.decode()}
+        self.client.logout()
+        pages["/login"] = self.client.get("/login").content.decode()
+
+        found = set()
+        for path, html in pages.items():
+            for href in re.findall(r'href="(/learn[^"]*)"', html):
+                found.add(href)
+                fragment = href.partition("#")[2]
+                if fragment:
+                    self.assertIn(f'id="{fragment}"', learn,
+                                  f"{path} links to /learn#{fragment}")
+        self.assertEqual(found, {"/learn", "/learn#robust", "/learn#anchor",
+                                 "/learn#bands", "/learn#frontier"})
+
+    def test_the_five_in_app_link_sites(self):
+        self.client.force_login(self.user)
+        draft = DraftPortfolio.objects.create(owner=self.user)
+        draft.set_assets([("AAA", 1.0)])
+        draft.save()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            optimize = self.client.get("/optimize").content.decode()
+        home = self.client.get("/").content.decode()
+        for fragment in ("#robust", "#anchor", "#bands", "#frontier"):
+            self.assertIn(f'class="learnlink" href="/learn{fragment}"', optimize)
+        self.assertIn("New here? Watch the 3-minute session on portfolios", home)
+
+    def test_login_page_offers_learn_to_people_without_an_account(self):
+        html = self.client.get("/login").content.decode()
+        self.assertIn("New to investing?", html)
+        self.assertIn('href="/learn"', html)
+
+    # ---------------------------------------------------------------- nav
+
+    def test_nav_learn_is_a_link_and_active_on_the_learn_page(self):
+        self.assertIn('class="active">Learn</a>', self.learn_html())
+        self.client.force_login(self.user)
+        home = self.client.get("/").content.decode()
+        self.assertIn('href="/learn"', home)
+        self.assertNotIn('<span class="soon" title="Coming soon">Learn</span>', home)
+
+    def test_learn_carries_no_worldchip_and_no_chart_payload(self):
+        """Learn belongs to neither world, and has nothing to plot."""
+        html = self.learn_html()
+        self.assertNotIn("worldchip", html)
+        self.assertNotIn("stepper", html)
+        self.assertNotIn("plotly", html)

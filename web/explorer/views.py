@@ -29,6 +29,7 @@ from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
 from condor.stats import METHODS
 
+from .learn import learn_context
 from .models import DraftPortfolio, SavedPortfolio
 
 log = logging.getLogger(__name__)
@@ -149,6 +150,19 @@ def shared_portfolio(request, pid):
         raise Http404("No saved portfolio with that id.")
     preset = {"id": str(portfolio.id), "name": portfolio.name, **portfolio.to_config()}
     return _render_optimize(request, preset=preset)
+
+
+def learn(request):
+    """`/learn` — the only page that does not need a login.
+
+    The videos are public and education is the front door: someone who has
+    not been given an account can still watch the sessions and read the
+    glossary. Nothing user-specific renders here, so anonymous is the
+    normal case rather than a degraded one; every other route keeps its
+    `login_required`. Content is static copy from `explorer.learn` — no
+    fetches, and the embeds are click-to-load facades.
+    """
+    return render(request, "explorer/learn.html", learn_context())
 
 
 # ------------------------------------------------------------ validation

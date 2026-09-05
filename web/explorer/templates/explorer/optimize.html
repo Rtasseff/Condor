@@ -49,7 +49,8 @@
         <button id="analyze" class="primary">Analyze</button>
         <p class="controlgloss">How we measure history — not a view about the
            economy. Analysis already ran with the defaults above; change one
-           and re-run.</p>
+           and re-run.
+           <a class="learnlink" href="{% url 'learn' %}#robust">What robust means — Learn →</a></p>
       </div>
     </details>
     <div class="quietrow">
@@ -98,7 +99,8 @@
       <p class="sub">Every point on the curve is a portfolio of your assets; the dashed line
          blends T-bills with the tangent portfolio (past it, you'd be borrowing).
          Click anywhere near either — the nearest mix lights up below. The key above
-         the chart names each marker.</p>
+         the chart names each marker.
+         <a class="learnlink" href="{% url 'learn' %}#frontier">The frontier, in plain words — Learn →</a></p>
       <details class="explain">
         <summary>What am I looking at?</summary>
         <ul>
@@ -187,7 +189,8 @@
   <section class="card" id="forecastcard" hidden aria-label="Forecast">
     <h2>Forecast <span class="modeltag" id="fbadge">steady rates (simplest)</span></h2>
     <p class="sub">Where your mix could take a starting amount — an honest
-       range, not a promise.</p>
+       range, not a promise.
+       <a class="learnlink" href="{% url 'learn' %}#bands">Why the bands are wide — Learn →</a></p>
     <details class="explain">
       <summary>How these models work</summary>
       <ul>
@@ -249,7 +252,8 @@
         </div>
         <p class="controlgloss">A belief about the future, blended with your
            data by how sure each is — never swapped in. It applies to both
-           models.</p>
+           models.
+           <a class="learnlink" href="{% url 'learn' %}#anchor">Return to normal, explained — Learn →</a></p>
       </div>
     </details>
     <div id="fchart" role="img" aria-label="Forecast fan chart" hidden></div>

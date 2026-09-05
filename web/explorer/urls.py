@@ -6,6 +6,7 @@ from . import account, views
 urlpatterns = [
     path("", views.index, name="index"),
     path("optimize", views.optimize, name="optimize"),
+    path("learn", views.learn, name="learn"),
     path("login", auth_views.LoginView.as_view(
         template_name="explorer/login.html",
         redirect_authenticated_user=True), name="login"),
