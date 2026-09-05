@@ -6,7 +6,7 @@
 <title>{% block title %}Condor Funds{% endblock %}</title>
 <link rel="icon" type="image/svg+xml" href="{% static 'explorer/brand/favicon.svg' %}">
 <link rel="stylesheet" href="{% static 'explorer/style.css' %}">
-<script src="{% static 'explorer/plotly.min.js' %}"></script>
+{% block headscripts %}<script src="{% static 'explorer/plotly.min.js' %}"></script>{% endblock %}
 </head>
 <body>
 
@@ -17,7 +17,7 @@
     <span class="proto">v2 prototype</span>
   </div>
   <nav class="pillars">
-    <span class="soon" title="Coming soon">Learn</span>
+    <a href="{% url 'learn' %}" class="{% block nav_learn %}{% endblock %}">Learn</a>
     <a href="{% url 'index' %}" class="{% block nav_explore %}{% endblock %}">Explore</a>
     <a href="{% url 'account' %}" class="{% block nav_portfolio %}{% endblock %}">My portfolio{% if contribution_due %}
       <span class="duedot" title="Your regular contribution is due">●</span>{% endif %}</a>

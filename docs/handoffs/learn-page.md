@@ -160,19 +160,117 @@ fetch anything from YouTube at build time.
 ## Status
 
 <!-- Branch agent keeps this current. Checklist + short dated notes. -->
-- [ ] Baseline suites recorded
-- [ ] /learn route + template, public, anonymous-safe base
-- [ ] Sessions card + facade embed + transcript disclosure
-- [ ] Glossary (13 entries, anchors, :target highlight)
-- [ ] Why-card (founder embed + quotes)
-- [ ] In-app Learn → links (5 sites) + login-page line
-- [ ] Tests (public 200, auth regression, anchors, no-iframe-in-HTML)
-- [ ] Suites re-run; counts vs baseline recorded here
+- [x] Baseline suites recorded
+- [x] /learn route + template, public, anonymous-safe base
+- [x] Sessions card + facade embed + transcript disclosure
+- [x] Glossary (13 entries, anchors, :target highlight)
+- [x] Why-card (founder embed + quotes)
+- [x] In-app Learn → links (5 sites) + login-page line
+- [x] Tests (public 200, auth regression, anchors, no-iframe-in-HTML)
+- [x] Suites re-run; counts vs baseline recorded here
+
+**2026-09-05 — done, committed locally, not pushed.**
+
+### Test counts
+
+| Suite | Baseline | After |
+|---|---|---|
+| `pytest tests/` | 217 passed, 4 skipped | 217 passed, 4 skipped |
+| `manage.py test explorer` | 78 OK | 93 OK (15 new, all in `LearnPageTests`) |
+| `check` | clean | clean |
+| `makemigrations --check --dry-run` | no changes | no changes |
+
+### What landed where
+
+- `web/explorer/learn.py` — new. All copy as constants: `SESSIONS`
+  (a list, so the next video is an appended dict), `GLOSSARY` (13
+  entries, ids in the specced order), `WHY`, and `learn_context()`
+  which resolves in-sentence links at render time.
+- `web/explorer/views.py` — `learn(request)`, the one view with no
+  `@login_required`; nothing else in the auth setup was touched.
+- `urls.py` — `path("learn", views.learn, name="learn")`.
+- Templates — `learn.html`, `_facade.html` (the click-to-load embed,
+  used twice); `base.html` nav chip → link; `login.html` line.
+- `static/explorer/learn.js` — builds the player on click.
+- `style.css` — one appended `Learn` section, tokens only, no new
+  colors.
+
+### Deviations / decisions worth a look
+
+1. **`learn.js` sets `referrerPolicy="strict-origin-when-cross-origin"`
+   on the iframe.** Found in the browser, not in review: the site
+   answers with `Referrer-Policy: same-origin` (Django's default), the
+   player gets no referrer, and YouTube refuses to start — *"Video
+   player configuration error, Error 153"*. Relaxing it on that one
+   element hands YouTube the origin and nothing else; the site-wide
+   header is untouched. Verified before/after in Chrome: error card →
+   the video plays. A test pins the string so it can't be tidied away.
+2. **`base.html`'s plotly `<script>` is now inside
+   `{% block headscripts %}`** so `/learn` can skip the chart library it
+   has no use for. Default block content is the old tag verbatim —
+   every other page renders byte-identically.
+3. **The facade caption "Plays from YouTube" is a link** to the video's
+   watch page. Same words as specced; it just means a visitor without
+   JS still has a way to the video.
+4. **Only the four "In the app:" lines the appendix actually gives**
+   (portfolio, weight, whole-shares, anchor) shipped. I had drafted
+   three more (robust, frontier, bands) and removed them — the brief
+   says ship this text, don't invent content. Say the word and they're
+   a five-line addition.
+5. **Facade capped at 620px wide** — full column width made the page
+   read like a video site rather than a page of prose.
+6. **"Both themes legible"**: the app is dark-only today
+   (`color-scheme: dark`, no light rules anywhere in `style.css`). The
+   Learn CSS adds no color of its own — only existing tokens — so it
+   follows whatever a future light theme does.
+7. **Transcript shipped verbatim from Appendix A** — RT's proofread is
+   still outstanding, as the brief anticipated. It lives in one place
+   (`SESSIONS[0]["transcript"]`, a list of five paragraphs).
+8. **Keyboard**: the facade is a real `<button>` with the handler bound
+   to it, and the transcript is a native `<details>`, so both activate
+   from the keyboard by construction. Synthetic keystrokes never
+   reached the automation tab (an unfocused-window artifact — the page
+   saw no `keydown` at all), so that leg was verified by construction
+   and a mouse click, not by a keystroke landing.
+
+### User-facing strings (before → after)
+
+| Where | Before | After |
+|---|---|---|
+| `base.html` nav | `Learn` (dimmed "Coming soon" chip, not clickable) | `Learn` (link to `/learn`, active state on the page) |
+| `login.html` | *(nothing under the form)* | "New to investing? **Start with Learn →**" |
+| Optimize · Settings gloss | "…change one and re-run." | "…change one and re-run. **What robust means — Learn →**" |
+| Optimize · Risk & Reward | "…The key above the chart names each marker." | "…names each marker. **The frontier, in plain words — Learn →**" |
+| Optimize · Forecast | "…an honest range, not a promise." | "…not a promise. **Why the bands are wide — Learn →**" |
+| Optimize · Advanced priors | "…It applies to both models." | "…both models. **Return to normal, explained — Learn →**" |
+| Explore · empty draft | "Nothing yet — search above, or try a starter below." | same, plus "**New here? Watch the 3-minute session on portfolios →**" |
+
+Nothing was renamed or removed; every change is an addition except the
+nav chip becoming a link.
+
+### Verified in the browser (localhost:8001)
+
+`/learn` anonymous 200; thumbnail facade with no player in the HTML;
+click → `youtube-nocookie` iframe, video plays; `/learn#robust` lands
+on a highlighted entry; transcript disclosure opens; why-card shows the
+founder embed and both pull-quotes; login page shows the new line.
+`/`, `/optimize`, `/account` still bounce anonymous visitors to
+`/login` (also regression-tested).
+
+### Noticed, not fixed
+
+- Nothing outside this bucket. The Error 153 referrer interaction
+  (deviation 1) is the only pre-existing config wrinkle this work ran
+  into, and it is fixed at the element rather than by touching the
+  site-wide header.
 
 ## Questions for the handoff session
 
 <!-- Anything needing the human or main. Don't guess — park it here and continue with what doesn't depend on it. -->
--
+- RT's transcript proofread is still open (Appendix A shipped as-is).
+- Want the three extra "In the app:" glossary lines I removed
+  (robust → Settings, frontier → the chart, bands → the forecast card)?
+  Deviation 4 above.
 
 ## Return protocol
 

@@ -1,0 +1,84 @@
+{% extends "explorer/base.html" %}
+{% load static %}
+{% block title %}Condor Funds — Learn{% endblock %}
+{% block nav_learn %}active{% endblock %}
+{# Public page, no charts: skip the plotly payload the app pages need. #}
+{% block headscripts %}{% endblock %}
+{% block content %}
+<main class="learnmain">
+  <div class="pagehead">
+    <h1>Learn</h1>
+    <p class="sub">Short sessions from the Condor Funds channel, and the
+       plain-words meaning of every term the app uses. No account needed —
+       start here, then go build something.</p>
+  </div>
+
+  <section class="learnsection" aria-labelledby="sessions">
+    <h2 class="learnhead" id="sessions">Sessions</h2>
+
+    {% for s in sessions %}
+    <article class="card sessioncard" id="{{ s.id }}">
+      <h3>{{ s.title }} <span class="runtime">{{ s.length }}</span></h3>
+      <p class="sub">{{ s.hook }}</p>
+
+      {% include "explorer/_facade.html" with video_id=s.video_id title=s.title thumb=s.thumb watch=s.watch length=s.length %}
+
+      <p class="covers"><span class="coverslabel">Covers</span>
+        {% for c in s.covers %}<a class="termchip" href="#{{ c.id }}">{{ c.term }}</a>{% endfor %}
+      </p>
+
+      <details class="transcript">
+        <summary>Prefer reading? Full transcript</summary>
+        <div class="transcriptbody">
+          {% for para in s.transcript %}<p>{{ para }}</p>{% endfor %}
+        </div>
+      </details>
+    </article>
+    {% endfor %}
+
+    <p class="nudge">More sessions are on the way —
+      <a href="{{ channel_url }}" rel="noopener">subscribe on YouTube</a>.</p>
+  </section>
+
+  <section class="learnsection" aria-labelledby="plainwords">
+    <h2 class="learnhead" id="plainwords">Plain words</h2>
+    <p class="sub learnsub">What we mean by each term — including the two we
+       are fussy about, <a href="#expected-return">expected return</a> and
+       <a href="#dispersion">dispersion</a>.</p>
+
+    <div class="card glossary">
+      {% for e in glossary %}
+      <div class="glossentry" id="{{ e.id }}">
+        <h3>{{ e.term }}</h3>
+        <p>{{ e.body }}</p>
+        {% if e.in_app %}
+        <p class="inapp"><span class="inapplabel">In the app:</span>
+          {% for part in e.in_app %}{% if part.href %}<a href="{{ part.href }}">{{ part.label }}</a>{% else %}{{ part }}{% endif %}{% endfor %}
+        </p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="learnsection" aria-labelledby="why">
+    <h2 class="learnhead" id="why">Why Condor exists</h2>
+    <article class="card whycard">
+      <p class="sub">{{ why.line }}</p>
+
+      {% include "explorer/_facade.html" with video_id=why.video_id title=why.title thumb=why.thumb watch=why.watch length=why.length %}
+
+      <blockquote class="pullquote">
+        {% for q in why.quotes %}<p>{{ q }}</p>{% endfor %}
+      </blockquote>
+    </article>
+  </section>
+
+  <footer>
+    Educational prototype — not investment advice. Sessions are hosted on
+    YouTube; nothing loads from them until you press play.
+  </footer>
+</main>
+
+<script src="{% static 'explorer/learn.js' %}"></script>
+{% endblock %}

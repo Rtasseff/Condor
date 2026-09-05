@@ -1,0 +1,18 @@
+{% comment %}
+Click-to-load video facade: a thumbnail and a real <button>, nothing else.
+No YouTube player, script or player URL is in this HTML — learn.js builds
+the youtube-nocookie embed from `data-video` on the click, so a visitor who
+never presses play never talks to a player. Keyboard-operable by being a
+button; without JS the caption is still a working link to the video.
+
+Pass `video_id`, `title`, `thumb`, `watch`, `length`.
+{% endcomment %}
+<div class="facade" data-video="{{ video_id }}" data-title="{{ title }}">
+  <button type="button" class="facadebtn">
+    <img src="{{ thumb }}" alt="Title card of the video “{{ title }}”"
+         width="480" height="360" loading="lazy">
+    <span class="playicon" aria-hidden="true"></span>
+    <span class="facadelabel">Play <b>{{ title }}</b> <span class="runtime">{{ length }}</span></span>
+  </button>
+  <p class="facadecap"><a href="{{ watch }}" rel="noopener">Plays from YouTube</a></p>
+</div>
