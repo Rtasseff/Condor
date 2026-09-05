@@ -119,7 +119,12 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 - [ ] **API/UX robustness:** async fetch with progress, rate-limit and
   retry on yfinance, request timeouts, cache warming for the quick-add list.
 
-## Later (deck vision)
+## Later
+
+- Draft PUT race: rapid adds on Build fire overlapping whole-list
+  `PUT /api/draft` calls; last writer wins (script-speed only, found
+  during flow-clarity's click-through 2026-09-05). Fix = sequencing or a
+  version token. (deck vision)
 
 - [ ] **Learn integration** — info boxes with "learning clips" / "technical
   details" links on every concept (Market Expectations, Easy Choice, Tangent

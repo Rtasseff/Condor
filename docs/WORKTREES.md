@@ -80,7 +80,7 @@ adds **one** layer matched to risk, not two:
 |---|---|
 | Docs, copy, small UI | Read the diff; run the suites. No automated review. |
 | Ordinary features | Run the suites; targeted read of the risky files. |
-| Engine numerics (anything that computes money, returns, bands, or plans), auth/permission changes, migrations touching account/ledger tables, deploy config (`Dockerfile`, `fly.toml`, `web/config/settings.py`) | **One** `/code-review` at *medium*, ideally run **by the branch session on its own branch before opening the PR** so findings and fixes land in the PR. The handoff session then reads only what was flagged plus the money-math paths. |
+| Engine numerics (anything that computes money, returns, bands, or plans), auth/permission changes, migrations touching account/ledger tables, deploy config (`Dockerfile`, `fly.toml`, `web/config/settings.py`) | **One** `/code-review` at *medium*, run **by the branch session on its own branch before reporting done** — the brief orders it explicitly, so the reviewer has full context and the fixes land as the branch's final commit. The handoff session then spot-checks only what was flagged plus the money-math paths. |
 
 Always, before merge (the branch records these as its baseline before
 starting and must not make them worse):
@@ -152,25 +152,32 @@ that branch. It is the first thing an agent in that dir should read
 - **Questions for the handoff session** — anything that needs the human
   or `main`; the branch agent should not guess on these.
 - **Conflict watchlist** — files also moving on `main`; rebase early.
-- **Return protocol** — push, open a PR against `main`, summarise in the
-  handoff doc's Status.
+- **Return protocol** — commit locally, keep Status current, report
+  back. **Branch sessions never push, never open PRs, never merge** —
+  worktrees share one object store, so local commits are already visible
+  to the handoff session, which reviews and merges.
 
 After merge the doc lands on `main` under `docs/handoffs/` as a record;
 mark it *Merged YYYY-MM-DD* at the top rather than deleting it.
 
 ## Merging and deploying (handoff session only)
 
-After the proportionate review: merge the PR, then from the **main
-checkout**:
+The division of labour: the handoff session writes the brief; the branch
+session does the work and **stops at "done"** (local commits + updated
+Status — no push, no PR, no merge); the human relays "done"; the handoff
+session reviews proportionately (spot-checks, never a redo), merges the
+local branch, and pushes. From the **main checkout**:
 
 ```bash
-git pull
+git merge --no-ff feature/<slug>
 python -m pytest tests/ && python web/manage.py test explorer
+git push origin main
 fly deploy          # ~10-30s downtime; migrations run on boot
 ```
 
-A worktree session must never run `fly` commands at all — deploy authority
-stays with the handoff session, always from `main`.
+Only `main` is ever pushed to origin. A worktree session must never run
+`git push` or `fly` commands — publish and deploy authority stay with
+the handoff session (the human deploys if the session can't).
 
 ## Finishing / removing a worktree
 
@@ -188,4 +195,5 @@ Mark the registry row merged (or remove it) in the same commit.
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
 
-| `flow-clarity/` | `feature/flow-clarity` | 8001 | 2026-09-04 | Active (brief v2, not yet started). User-testing rounds 1+2: Explore/Real worlds, account starter bridge, hypothetical forecast, gating, sources, honest labels, Advanced priors. Brief: `docs/handoffs/flow-clarity.md` on the branch. |
+
+*(none — flow-clarity merged 2026-09-05)*

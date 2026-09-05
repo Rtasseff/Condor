@@ -69,16 +69,18 @@ directory; deploys happen from `main` after merge.
    Engine changes need a verification-style test (closed form / hand case /
    legacy agreement); model changes need an "equals the engine" test
    (CLAUDE.md rules apply on branches too).
-3. If this bucket touches engine numerics, auth/permissions, migrations on
-   account/ledger tables, or deploy config: run **one** `/code-review` at
-   *medium* on this branch before opening the PR, and land the fixes here.
-4. Push the branch and open a PR against `main`. PR body = the review
-   packet: what changed and why, deviations from this brief, the test
-   counts vs baseline, anything user-facing quoted for review, and any
-   pre-existing bug you noticed but did not fix.
-5. The handoff session reviews proportionately to risk
-   (`docs/WORKTREES.md` § Review policy), merges, deploys from `main`,
-   and updates the registry.
+3. If this brief orders a `/code-review` (it will say so explicitly when
+   the bucket touches engine numerics, auth/permissions, ledger
+   migrations, or deploy config): run it at *medium* on this branch and
+   land the fixes as your final commit, summarised in Status.
+4. **Do not push, do not open a PR, do not merge.** Your report packet
+   is THIS doc: Status checklist current, deviations listed, every
+   renamed user-facing string quoted (before → after), test counts vs
+   baseline, any pre-existing bug noticed but not fixed. Commit it all
+   locally and tell the human you are done.
+5. The handoff session reviews proportionately — spot-checks, never a
+   redo (`docs/WORKTREES.md` § Review policy) — merges your local
+   branch, pushes `main`, and the human deploys.
 
 ## Running locally (this worktree)
 

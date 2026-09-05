@@ -1,5 +1,7 @@
 # Handoff — `feature/flow-clarity` (v2)
 
+**Merged 2026-09-05.**
+
 <!-- v2, rewritten 2026-09-04 after a second feedback round, before any
      implementation started. v1's five fixes are all still here (§fixes
      1–5); v2 adds the Explore/Real worlds and the account bridge. -->
