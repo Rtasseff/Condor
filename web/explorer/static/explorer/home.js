@@ -47,7 +47,11 @@ async function api(url, opts = {}) {
     ...opts,
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Server error (${res.status})`);
+    err.status = res.status;   // callers that treat a 429 differently
+    throw err;
+  }
   return data;
 }
 
@@ -184,7 +188,13 @@ async function syncDraft() {
 async function fetchInfo(symbol) {
   try {
     state.info[symbol] = await api(`/api/asset?symbol=${encodeURIComponent(symbol)}`);
-  } catch {
+  } catch (err) {
+    // One lookup per asset per load, against a per-IP cap: a big mix
+    // reloaded a few times in a minute can hit it. Saying "No price
+    // history yet." on every row would be a lie about the assets, so
+    // pass the real reason on (throttle.TOO_MANY) and let the rows say
+    // they have nothing rather than why.
+    if (err && err.status === 429) showError(err.message);
     state.info[symbol] = { ok: false };
   }
   renderDraft();

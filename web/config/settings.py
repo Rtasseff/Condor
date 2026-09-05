@@ -96,6 +96,12 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "condor-ratelimit",
+        # LocMem defaults to 300 entries and culls a third of them at
+        # random when full. A counter is one entry per (endpoint, IP,
+        # window), so a burst of traffic from many addresses would evict
+        # live counters and quietly hand people a fresh allowance. Room
+        # for a few thousand costs nothing on a box this size.
+        "OPTIONS": {"MAX_ENTRIES": 10000},
     }
 }
 

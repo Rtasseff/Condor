@@ -1462,6 +1462,15 @@ class SignInBoundaryTests(TestCase):
         # adopting a point into your own draft needs no account at all
         self.assertIn('id="adoptpoint"', html)
 
+    def test_signing_in_returns_you_to_the_page_you_were_on(self):
+        """Including its query string: someone who followed Build's
+        "see the range" deep link and signed in from there should land
+        back on the forecast they were looking at, not a bare /optimize."""
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            html = self.client.get(
+                "/optimize?forecast=10000&years=5").content.decode()
+        self.assertIn("next=/optimize%3Fforecast%3D10000%26years%3D5", html)
+
     def test_save_and_share_are_replaced_by_a_quiet_line(self):
         html = self.optimize_html()
         self.assertIn("to save &amp; share this mix", html)
@@ -1653,6 +1662,15 @@ class RateLimitTests(TestCase):
         for _ in range(2):
             self.assertEqual(self.post("/api/forecast").status_code, 200)
         self.assert_limited(self.post("/api/forecast"))
+
+    def test_requests_that_never_reach_the_view_cost_nothing(self):
+        """The quota meters work. A GET to a POST-only endpoint earns a
+        405 and does no work, so it must not spend anyone's budget."""
+        for _ in range(5):
+            self.assertEqual(self.client.get("/api/analyze").status_code, 405)
+        for _ in range(2):
+            self.assertEqual(self.post("/api/analyze").status_code, 200)
+        self.assert_limited(self.post("/api/analyze"))
 
     def test_each_endpoint_has_its_own_bucket(self):
         """Burning through analyze must not lock someone out of forecast —

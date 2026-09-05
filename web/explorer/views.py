@@ -335,7 +335,7 @@ def _clean_weights(raw):
 # ---------------------------------------------------------------- analyze
 
 
-@json_rate_limit("analyze", "15/m")
+@json_rate_limit("analyze", "15/m", method="POST")
 @require_POST
 def api_analyze(request):
     """Analyze a mix. Public — it computes from public price data and
@@ -374,7 +374,7 @@ def api_analyze(request):
     return JsonResponse(result)
 
 
-@json_rate_limit("forecast", "15/m")
+@json_rate_limit("forecast", "15/m", method="POST")
 @require_POST
 def api_forecast(request):
     """Forecast the given mix: a fan chart from the model the caller picks.
@@ -569,7 +569,7 @@ def _downsample(closes, n=SERIES_POINTS, recent_days=SERIES_RECENT_DAYS):
     return closes.iloc[older_positions + list(range(recent_start, len(closes)))]
 
 
-@json_rate_limit("asset", "60/m")
+@json_rate_limit("asset", "60/m", method="GET")
 @require_http_methods(["GET"])
 def api_asset(request):
     """`GET /api/asset?symbol=X` — plain facts for one Explore mix row:

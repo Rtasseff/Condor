@@ -1151,8 +1151,14 @@ async function syncDraft(weights) {
   if (!assets.length) return;
   try {
     await CondorDraft.put(assets);
-  } catch {
-    /* best effort */
+  } catch (err) {
+    // Signed in this really is best effort — the mix is still on the
+    // page and the next edit writes again. Anonymous it is not: this
+    // browser is the draft's only home, so a refused write (private
+    // browsing, storage full) means the mix will be gone the moment
+    // they navigate, and they should hear that here rather than find
+    // an empty Build page later.
+    if (!CondorDraft.authenticated) showError(err.message);
   }
 }
 
@@ -1235,11 +1241,17 @@ function deepLinkForecast() {
   wireChartClicks();
   await loadTickers();
   const presetEl = $("preset"); // /p/<uuid> injects the saved config
+  const prefilled = presetEl ? false : await loadDraftPrefill();
   if (presetEl) {
     applyConfig(JSON.parse(presetEl.textContent));
-    $("sharelink").value = window.location.href;
-    $("sharerow").hidden = false;
-  } else if (await loadDraftPrefill()) {
+    // The share row lives inside the save panel, which only opens from
+    // the Save button — a control a visitor without an account doesn't
+    // get. Revealing it inside a panel that can never open is dead UI.
+    if ($("save")) {
+      $("sharelink").value = window.location.href;
+      $("sharerow").hidden = false;
+    }
+  } else if (prefilled) {
     state.source = "draft";
   } else if (SOURCES.real) {
     // no draft, but the account holds something — optimize that rather
@@ -1252,6 +1264,16 @@ function deepLinkForecast() {
       // seven assets the user never picked, with no hint why
       showError(`Couldn't load your real portfolio — ${err.message}`);
     }
+  }
+  // The head script only glanced at the stored draft; draft.js validates
+  // it, and is stricter (real ticker shapes, at least one weight above
+  // zero). If nothing survived that, this visitor has nothing of their
+  // own here after all — show the signpost rather than fall through to
+  // the example deck, which is the one thing fix 1 promised never to do.
+  if (!presetEl && !prefilled && !SOURCES.real && !CondorDraft.authenticated) {
+    document.documentElement.classList.remove("hasdraft");
+    document.documentElement.classList.add("nodraft");
+    return;
   }
   renderAssets();
   renderQuickAdd();

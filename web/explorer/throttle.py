@@ -60,6 +60,11 @@ def json_rate_limit(name, default, method=ratelimit.ALL):
     Over the limit the view never runs and the caller gets a JSON 429 the
     front end already knows how to display (same `{"error": ...}` shape as
     every other refusal here).
+
+    Pass the `method` the view actually answers. The quota is meant to
+    meter work, and a request that only ever earns a 405 does none — left
+    on ALL, a GET to a POST-only endpoint would spend someone's budget
+    without ever reaching the code that costs anything.
     """
     def decorate(view):
         @functools.wraps(view)

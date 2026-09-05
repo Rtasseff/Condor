@@ -86,7 +86,7 @@
       {% else %}
       {# Saving and sharing are account things — say so where the buttons #}
       {# would have been, rather than offering a button that fails. #}
-      <span class="sub"><a href="{% url 'login' %}?next={{ request.path|urlencode }}">Sign in</a>
+      <span class="sub"><a href="{% url 'login' %}?next={{ request.get_full_path|urlencode }}">Sign in</a>
         to save &amp; share this mix</span>
       {% endif %}
       <span id="status" class="status" role="status"></span>
@@ -189,7 +189,7 @@
         {# making it real is the one thing that needs an account. Signing in #}
         {# brings the mix with them (draft.js). #}
         <a id="settargetsignin" class="ghost small"
-           href="{% url 'login' %}?next={{ request.path|urlencode }}"
+           href="{% url 'login' %}?next={{ request.get_full_path|urlencode }}"
            title="Making a mix real means tracking it against money — that part needs an account.">
           Sign in to make it real →</a>
         {% endif %}

@@ -161,24 +161,24 @@ draft that lives in their browser.
 - [x] Import on sign-in
 - [x] Sign-in boundary copy/controls (4 sites + userbox)
 - [x] django-ratelimit wired, Fly-Client-IP key fn, 429 JSON + JS copy
-- [ ] `/code-review` at medium run; fixes landed
+- [x] `/code-review` at medium run; fixes landed
 - [x] Suites re-run; counts vs baseline recorded here
 
-**2026-09-05 — implementation complete, in review.**
+**2026-09-05 — complete. Implementation, review and fixes are committed locally; nothing pushed.**
 
 ### Test counts
 
 | Suite | Baseline | Now |
 |---|---|---|
 | `pytest tests/` | 217 passed, 4 skipped | 217 passed, 4 skipped (untouched — no engine change) |
-| `manage.py test explorer` | 93 | 120 |
+| `manage.py test explorer` | 93 | 122 |
 | `check` | clean | clean |
 | `makemigrations --check` | no changes | no changes |
 
 The engine suite reports 217+4 here, not the brief's "219+2": two of the
 four skips are the network tests, which this machine skips.
 
-27 new Django tests: `AnonymousExploreTests` (public routes, share links,
+29 new Django tests: `AnonymousExploreTests` (public routes, share links,
 an analyze+forecast round trip with no login, CSRF cookies, and the
 explicit list of routes that still 401), `SignInBoundaryTests` (the four
 copy sites + the userbox, and that a signed-in visitor sees exactly what
@@ -260,6 +260,44 @@ the account's draft left untouched. The signpost renders clean for an
 anonymous visitor with nothing stored (no console errors; `app.js` bails
 rather than analyzing behind it). Over the limit, the page shows the
 "Whoa —" line in its error card.
+
+### `/code-review` at medium — all seven findings landed
+
+No high-severity correctness bug. Every finding was real; all seven are
+fixed in the follow-up commit, and the two that a test can see got one.
+
+1. **`/api/asset` failures lied.** One lookup per asset per Build load
+   against a 60/min cap: a big mix reloaded a few times in a minute
+   trips it, and `fetchInfo`'s bare `catch` turned that into "No price
+   history yet." on every row — a false statement about the assets. The
+   error now carries its status and a 429 says what actually happened.
+   **For RT:** 60/min is the brief's number and I kept it, but it is the
+   limit an honest visitor is most likely to meet (15 assets = 15 calls
+   per load). Worth revisiting if anyone reports blank rows.
+2. **The head-script gate was laxer than the adapter.** It only checked
+   `assets.length`, while `draft.js` also requires a ticker-shaped symbol
+   and a non-zero weight. A malformed stored draft therefore painted the
+   workbench, the prefill then failed, and `init()` fell through to
+   analyzing the built-in example deck — exactly what fix 1 forbids.
+   `init()` now flips the page back to the signpost when nothing
+   survived validation. Verified in the browser with a hand-corrupted
+   `condor.draft.v1`.
+3. **Anonymous storage failures were swallowed on Optimize.** `app.js`'s
+   `syncDraft` caught everything as "best effort" — true when the account
+   API is the draft's home, false when this browser is. Private browsing
+   or full storage now shows the message; the signed-in path is unchanged.
+4. **LocMem culls at 300 entries**, evicting live rate-limit counters
+   under load. `MAX_ENTRIES` is now 10000.
+5. **The limiter counted requests that never reached the view.** A GET to
+   `/api/analyze` earns a 405 and does no work, but was spending the
+   caller's quota. The compute limiters now name their method.
+6. **Dead share row.** `#sharerow` sits inside the save panel, which only
+   opens from the Save button — absent for anonymous visitors — so
+   revealing it on `/p/<uuid>` did nothing. Guarded.
+7. **Signing in dropped the query string.** `request.path` lost
+   `?forecast=…&years=…`, so someone signing in from Build's deep link
+   came back to a bare `/optimize`. All three sign-in links now use
+   `request.get_full_path`.
 
 ### Noticed, not fixed (pre-existing)
 
