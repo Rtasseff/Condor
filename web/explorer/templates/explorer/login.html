@@ -26,7 +26,11 @@
     <p class="sub">Build a portfolio, see its risk-and-reward trade-offs, and
        track a pretend account against a setpoint.</p>
     <p class="sub">Accounts are created by the team admin — ask if you need one.</p>
-    {% if form.errors %}
+    {% if request.limited %}
+      {# Too many attempts from this IP (views.ThrottledLoginView). #}
+      <div class="error card">Too many sign-in attempts from here. Give it a
+        minute, then try again.</div>
+    {% elif form.errors %}
       <div class="error card">Wrong username or password.</div>
     {% endif %}
     <form method="post" class="loginform">

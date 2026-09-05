@@ -155,14 +155,121 @@ draft that lives in their browser.
 ## Status
 
 <!-- Branch agent keeps this current. Checklist + short dated notes. -->
-- [ ] Baseline suites recorded
-- [ ] Public routes + CSRF cookies; regression tests for what stays private
-- [ ] Draft storage adapter (localStorage anon / API authed)
-- [ ] Import on sign-in
-- [ ] Sign-in boundary copy/controls (4 sites + userbox)
-- [ ] django-ratelimit wired, Fly-Client-IP key fn, 429 JSON + JS copy
+- [x] Baseline suites recorded
+- [x] Public routes + CSRF cookies; regression tests for what stays private
+- [x] Draft storage adapter (localStorage anon / API authed)
+- [x] Import on sign-in
+- [x] Sign-in boundary copy/controls (4 sites + userbox)
+- [x] django-ratelimit wired, Fly-Client-IP key fn, 429 JSON + JS copy
 - [ ] `/code-review` at medium run; fixes landed
-- [ ] Suites re-run; counts vs baseline recorded here
+- [x] Suites re-run; counts vs baseline recorded here
+
+**2026-09-05 — implementation complete, in review.**
+
+### Test counts
+
+| Suite | Baseline | Now |
+|---|---|---|
+| `pytest tests/` | 217 passed, 4 skipped | 217 passed, 4 skipped (untouched — no engine change) |
+| `manage.py test explorer` | 93 | 120 |
+| `check` | clean | clean |
+| `makemigrations --check` | no changes | no changes |
+
+The engine suite reports 217+4 here, not the brief's "219+2": two of the
+four skips are the network tests, which this machine skips.
+
+27 new Django tests: `AnonymousExploreTests` (public routes, share links,
+an analyze+forecast round trip with no login, CSRF cookies, and the
+explicit list of routes that still 401), `SignInBoundaryTests` (the four
+copy sites + the userbox, and that a signed-in visitor sees exactly what
+they saw before), `AnonymousDraftGateTests` (who decides "nothing to
+optimize yet"), `DraftStorageAdapterTests` (both pages wired to the
+adapter; neither talks to `/api/draft` behind it), `RateLimitTests`.
+
+Seven existing tests asserted the old boundary and now assert the new one
+— renamed where the name was the assertion:
+`AuthTests.test_anonymous_page_redirects_to_login` →
+`test_anonymous_can_explore`, `ForecastApiTests.test_requires_login` →
+`test_is_public`, `AssetInfoApiTests.test_anonymous_gets_401` →
+`test_anonymous_is_served`, `PageTests.test_optimize_anonymous_redirects_to_login`
+→ `test_optimize_renders_for_anonymous_visitors`,
+`LearnPageTests.test_every_other_page_still_requires_a_login` →
+`test_my_portfolio_still_requires_a_login`, plus
+`AuthTests.test_anonymous_api_gets_json_401` and
+`LearnPageTests.test_base_template_survives_anonymous_users` updated in
+place. No test was deleted.
+
+### User-facing strings (before → after)
+
+All four are **anonymous-only variants**; every signed-in string is
+untouched, and a test asserts that.
+
+| Where | Signed in (unchanged) | Anonymous |
+|---|---|---|
+| Optimize point card | "Make this my real portfolio →" | **"Sign in to make it real →"** → `/login?next=/optimize` |
+| Optimize toolbar | "Save" / "Saved" buttons | **"Sign in to save & share this mix"** |
+| Build, My-portfolio card | "You don't have a tracked portfolio yet — head to My portfolio…" + "Go to My portfolio →" | **"Have an account? Sign in — or just keep exploring."** |
+| `base.html` userbox | username + "Log out" | **"Sign in"** (ghost link, `?next=` the current page) |
+
+New strings: the rate-limit line **"Whoa — that's a lot of number
+crunching. Give it a minute and try again."** (`throttle.TOO_MANY`), and
+on a throttled sign-in **"Too many sign-in attempts from here. Give it a
+minute, then try again."**
+
+### Deviations and judgement calls
+
+1. **The import runs on both Explore pages, not just Build.** As written,
+   scope 3 ("on Build page load") and scope 4 (`/login?next=/optimize`)
+   contradict each other: signing in from the point card lands you back
+   on Optimize, where the server draft is still empty, so the server
+   renders "Nothing to optimize yet" — the dead end the brief forbids.
+   The import is therefore part of the adapter (`CondorDraft.get()`), and
+   `signpost.js` runs it on the signed-in signpost page: if it populated
+   the account's draft, the page reloads into the workbench. Verified in
+   the browser end to end.
+2. **`client_gated` (anonymous Optimize).** The server cannot see
+   localStorage, so for anonymous visitors only, the page ships both the
+   signpost and the workbench and an inline head script picks between
+   them from `condor.draft.v1` before first paint — no flash, same
+   promise fix 1 made. Signed-in rendering is byte-for-byte as it was
+   (still server-decided, still no `app.js` on the signpost).
+3. **The 429 copy lives server-side.** Both pages already render
+   `data.error` from a failed fetch, so the friendly line is the `error`
+   field of the JSON 429 rather than a second copy in JS.
+4. **Rate limits apply to signed-in visitors too** (they are per IP, as
+   the brief says). Simpler, and 15 analyses a minute is not a person.
+5. **Rate limiting is off under `manage.py test`** (`RATELIMIT_ENABLE`),
+   because one shared LocMem counter would leak between tests;
+   `RateLimitTests` turns it back on with `override_settings`. That class
+   also pins django-ratelimit's `_get_window`: a counting window that
+   rolls over between two requests resets the count, which made the tests
+   flaky roughly once a run before it was pinned.
+6. **Ran `manage.py migrate` on this worktree's dev DB.** The copy taken
+   at creation time was one migration behind (`0005_draftportfolio`), so
+   the Build page 500'd on a real browser. Local, gitignored, no new
+   migration files — `makemigrations --check` is still clean.
+
+### Verified in the browser (dev server, port 8001)
+
+Logged out: built SPY/GLD, survived a reload (localStorage), Optimize
+prefilled from it and analyzed, a point click showed "Sign in to make it
+real →", the forecast ran. Signing in from that link imported the mix
+into the account, cleared the browser copy and landed on the workbench.
+With a non-empty account draft, a stale browser copy was discarded and
+the account's draft left untouched. The signpost renders clean for an
+anonymous visitor with nothing stored (no console errors; `app.js` bails
+rather than analyzing behind it). Over the limit, the page shows the
+"Whoa —" line in its error card.
+
+### Noticed, not fixed (pre-existing)
+
+`style.css` styles buttons as `button.primary` / `button.ghost`, so the
+existing links that borrow those classes — "Optimize this mix →"
+(`.ctacard a.primary`) and "Pick your assets in Explore →"
+(`.emptystate a.primary`) — render as default-coloured links, not
+buttons. Predates this branch; I styled only the links I added
+(`.userbox a.ghost`, `#settargetsignin`) and left those two alone rather
+than change the look of pages this bucket is not about.
 
 ## Questions for the handoff session
 

@@ -13,15 +13,17 @@ import logging
 import math
 import re
 
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth import views as auth_views
 from django.contrib.staticfiles import finders
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.http import Http404, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
+from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods, require_POST
+from django_ratelimit.decorators import ratelimit
 
 from condor import (AssetSet, DataFetchError, Forecast, PriceStore,
                     compute_analysis, fetch_prices, risk_free_rate)
@@ -31,6 +33,7 @@ from condor.stats import METHODS
 
 from .learn import learn_context
 from .models import DraftPortfolio, SavedPortfolio
+from .throttle import client_ip, json_rate_limit, rate_for
 
 log = logging.getLogger(__name__)
 
@@ -71,7 +74,6 @@ def rf_context() -> dict:
     return {"rf": rf, "rf_pct": round(rf["rate"] * 100, 2) if rf else 4.0}
 
 
-@login_required
 @ensure_csrf_cookie
 def index(request):
     """`/` — Explore's entry point: pick assets, see the draft as a pie.
@@ -79,7 +81,15 @@ def index(request):
     and `/api/asset`; this view just renders the shell. `has_real` tells
     the client whether an empty draft should offer "Load my portfolio" —
     read-only, same check `/optimize` uses (fix 1/2's promise applies
-    here too: don't invent a starting mix)."""
+    here too: don't invent a starting mix).
+
+    Public: a stranger can build a mix before they have an account. Their
+    draft lives in their own browser (`condor.draft.v1` in localStorage,
+    see `draft.js`) rather than in `/api/draft`, which still requires a
+    login — nothing here reads or writes another person's data. The CSRF
+    cookie matters more than ever now: an anonymous visitor's very first
+    POST to `/api/analyze` needs a token, and this is where they get one.
+    """
     return render(request, "explorer/home.html",
                   {"has_real": _has_holdings(request.user)})
 
@@ -91,11 +101,14 @@ def _has_holdings(user) -> bool:
     Read-only on purpose: this runs on every `GET /optimize`, and a page
     render must not create an Account row as a side effect — the account
     page creates it lazily when it is actually wanted. A user who has
-    never opened that page simply has no holdings.
+    never opened that page simply has no holdings. Neither does an
+    anonymous visitor, who has no account to replay at all.
     """
     from condor import accounting as acct
 
     from .models import Account
+    if not user.is_authenticated:
+        return False
     account = Account.objects.filter(owner=user).first()
     if account is None:
         return False
@@ -118,14 +131,27 @@ def _render_optimize(request, preset=None):
     no preset there is nothing to optimize, so the page renders a signpost
     back to Build instead of the toolbar, chart and example assets. The
     flags are server-side so a fresh user never sees the form flash first.
+
+    An anonymous visitor's draft is in their browser, where the server
+    cannot see it, so `has_source` alone would send someone who has just
+    built a mix to the signpost. `client_gated` hands that one decision to
+    the page: it renders both and an inline head script picks between them
+    from localStorage before first paint — still no flash, just a client
+    that knows something the server can't. Signed-in visitors keep the
+    server-only gate exactly as it was; the one case where their browser
+    knows better (a draft carried in from an anonymous session) is handled
+    by importing it and reloading, see `signpost.js`.
     """
-    has_draft = bool(_draft_for(request.user).assets)
-    has_real = _has_holdings(request.user)
+    user = request.user
+    has_draft = bool(user.is_authenticated and _draft_for(user).assets)
+    has_real = _has_holdings(user)
+    has_source = bool(preset) or has_draft or has_real
     ctx = {
         "preset": preset,
         "has_draft": has_draft,
         "has_real": has_real,
-        "has_source": bool(preset) or has_draft or has_real,
+        "has_source": has_source,
+        "client_gated": not has_source and not user.is_authenticated,
         # what the source picker may offer (fix 2); a preset is neither
         "sources": {"draft": has_draft, "real": has_real,
                     "preset": bool(preset)},
@@ -135,16 +161,22 @@ def _render_optimize(request, preset=None):
     return render(request, "explorer/optimize.html", ctx)
 
 
-@login_required
 @ensure_csrf_cookie
 def optimize(request):
+    """`/optimize` — public, like Build: the whole Explore journey works
+    without an account (see `index`)."""
     return _render_optimize(request)
 
 
-@login_required
 @ensure_csrf_cookie
 def shared_portfolio(request, pid):
-    """`/p/<uuid>` — the Optimize page, preloaded with a saved portfolio."""
+    """`/p/<uuid>` — the Optimize page, preloaded with a saved portfolio.
+
+    Public on purpose: a share link is *meant* to be sent to someone who
+    has no account — that is the whole point of sharing one. The uuid is
+    the capability; holding the link is the permission. Nothing here
+    exposes the owner, and editing still needs a login (`api_portfolios`).
+    """
     portfolio = _get_portfolio(pid)
     if portfolio is None:
         raise Http404("No saved portfolio with that id.")
@@ -153,16 +185,45 @@ def shared_portfolio(request, pid):
 
 
 def learn(request):
-    """`/learn` — the only page that does not need a login.
+    """`/learn` — the public front door.
 
     The videos are public and education is the front door: someone who has
     not been given an account can still watch the sessions and read the
     glossary. Nothing user-specific renders here, so anonymous is the
-    normal case rather than a degraded one; every other route keeps its
-    `login_required`. Content is static copy from `explorer.learn` — no
-    fetches, and the embeds are click-to-load facades.
+    normal case rather than a degraded one. Explore is now public too, so
+    Learn -> play -> sign in is one unbroken funnel; what still needs a
+    login is anything touching a user's own data. Content is static copy
+    from `explorer.learn` — no fetches, and the embeds are click-to-load
+    facades.
     """
     return render(request, "explorer/learn.html", learn_context())
+
+
+@method_decorator(
+    ratelimit(key=client_ip, rate=rate_for("login", "10/m"),
+              method="POST", block=False),
+    name="dispatch")
+class ThrottledLoginView(auth_views.LoginView):
+    """The sign-in page, with a per-IP cap on attempts.
+
+    Registration is closed (the admin makes accounts), so the only thing
+    an unlimited login form buys a stranger is password guessing. The cap
+    counts POSTs only — reading the page is free, and someone who mistypes
+    a password twice never meets it.
+
+    A blocked attempt re-renders the form with a note rather than a bare
+    429 body: this is the one rate-limited endpoint a human meets as a
+    page, not as a fetch(). The status code is still 429.
+    """
+
+    template_name = "explorer/login.html"
+    redirect_authenticated_user = True
+
+    def post(self, request, *args, **kwargs):
+        if getattr(request, "limited", False):
+            return self.render_to_response(
+                self.get_context_data(form=self.get_form()), status=429)
+        return super().post(request, *args, **kwargs)
 
 
 # ------------------------------------------------------------ validation
@@ -274,9 +335,12 @@ def _clean_weights(raw):
 # ---------------------------------------------------------------- analyze
 
 
-@api_login_required
+@json_rate_limit("analyze", "15/m")
 @require_POST
 def api_analyze(request):
+    """Analyze a mix. Public — it computes from public price data and
+    carries no user state — and rate-limited per IP because it can trigger
+    a cold price download."""
     body, err = _json_body(request)
     if err:
         return _bad(err)
@@ -310,10 +374,14 @@ def api_analyze(request):
     return JsonResponse(result)
 
 
-@api_login_required
+@json_rate_limit("forecast", "15/m")
 @require_POST
 def api_forecast(request):
     """Forecast the given mix: a fan chart from the model the caller picks.
+
+    Public and rate-limited for the same reasons as `api_analyze`, plus
+    one of its own: a bootstrap forecast is the most CPU this box spends
+    on a single request.
 
     Same input contract as api_analyze plus `horizon_years` (1-30),
     `model` ("steady"/"bootstrap") and the expected-return `anchor`
@@ -435,7 +503,12 @@ def _clean_draft_assets(raw):
 def api_draft(request):
     """`GET`: the caller's draft. `PUT`: replace it wholesale — the Build
     page round-trips its whole asset list on every change, and Optimize's
-    'Make this my portfolio' writes the adopted mix here too."""
+    'Make this my portfolio' writes the adopted mix here too.
+
+    Login required, and it stays that way: this is a *user's* stored data.
+    An anonymous visitor's draft never comes here — it lives in their own
+    browser under `condor.draft.v1`, and `draft.js` imports it into this
+    endpoint once, on the first page load after they sign in."""
     draft = _draft_for(request.user)
     if request.method == "GET":
         return JsonResponse(_draft_dict(draft))
@@ -496,7 +569,7 @@ def _downsample(closes, n=SERIES_POINTS, recent_days=SERIES_RECENT_DAYS):
     return closes.iloc[older_positions + list(range(recent_start, len(closes)))]
 
 
-@api_login_required
+@json_rate_limit("asset", "60/m")
 @require_http_methods(["GET"])
 def api_asset(request):
     """`GET /api/asset?symbol=X` — plain facts for one Explore mix row:

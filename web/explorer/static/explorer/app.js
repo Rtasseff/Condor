@@ -22,6 +22,14 @@ const C = {
 };
 
 const $ = (id) => document.getElementById(id);
+// Some controls only exist for signed-in visitors (Save, "Make this my
+// real portfolio"); anonymous pages render the way in instead. Wiring
+// them unconditionally would throw here and take the rest of the page
+// down with it, so wire what is actually on the page.
+const on = (id, event, fn) => {
+  const el = $(id);
+  if (el) el.addEventListener(event, fn);
+};
 
 // ---------- state ----------
 const state = {
@@ -534,8 +542,10 @@ function renderPoint(sel) {
   // explain the split instead — with a warning in the borrowing region.
   const note = $("calnote");
   const adopt = $("adoptpoint");
-  $("settarget").hidden = false;
-  $("settargetconfirm").hidden = true;   // a new selection retires any open confirm
+  if ($("settarget")) {
+    $("settarget").hidden = false;
+    $("settargetconfirm").hidden = true; // a new selection retires any open confirm
+  }
   if (sel.kind === "cal") {
     adopt.hidden = true;
     note.hidden = false;
@@ -1014,14 +1024,14 @@ for (const id of ["fanchor", "fanchorvalue"]) {
 // slips here mean 'I thought I was playing'") — a confirmation restating
 // the consequence, not a silent POST-and-redirect. No window.confirm():
 // it blocks automation and this codebase avoids it elsewhere too.
-$("settarget").addEventListener("click", () => {
+on("settarget", "click", () => {
   if (!state.selected) return;
   $("settargetconfirm").hidden = false;
 });
-$("settargetcancel").addEventListener("click", () => {
+on("settargetcancel", "click", () => {
   $("settargetconfirm").hidden = true;
 });
-$("settargetgo").addEventListener("click", async () => {
+on("settargetgo", "click", async () => {
   // Send the considered mix to the real portfolio as its new setpoint,
   // then open the trade plan there. Weights are total-wealth fractions,
   // so a CAL mix carries its cash share implicitly.
@@ -1129,32 +1139,29 @@ async function switchSource(next) {
 }
 
 // ---------- draft (Build page) sync ----------
-// Optimize prefills from /api/draft on load (see init(), below) and
-// writes back here on adopt — the two pages share one draft. Best
-// effort: adopting the mix here still works even if the sync fails.
+// Optimize prefills the draft on load (see init(), below) and writes back
+// here on adopt — the two pages share one draft, wherever it lives: the
+// account behind /api/draft, or this browser for a visitor without one
+// (draft.js). Best effort: adopting the mix here still works even if the
+// write fails.
 async function syncDraft(weights) {
   const assets = Object.entries(weights)
     .filter(([, w]) => w > 0)
     .map(([symbol, weight]) => ({ symbol, weight }));
   if (!assets.length) return;
   try {
-    await fetch("/api/draft", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
-      body: JSON.stringify({ assets }),
-    });
+    await CondorDraft.put(assets);
   } catch {
     /* best effort */
   }
 }
 
-// A brand-new user has no draft yet -> keep the deck's example on the
+// A brand-new visitor has no draft yet -> keep the deck's example on the
 // sidebar (state.assets' initial value) rather than clearing it.
 async function loadDraftPrefill() {
   try {
-    const res = await fetch("/api/draft");
-    const draft = await res.json();
-    if (!res.ok || !draft.assets || !draft.assets.length) return false;
+    const draft = await CondorDraft.get();
+    if (!draft.assets || !draft.assets.length) return false;
     state.assets = draft.assets.map((a) => a.symbol).slice(0, 15);
     state.weights = {};
     for (const a of draft.assets) {
@@ -1169,7 +1176,7 @@ async function loadDraftPrefill() {
   return false;
 }
 
-$("save").addEventListener("click", () => showSavePanel($("savepanel").hidden));
+on("save", "click", () => showSavePanel($("savepanel").hidden));
 $("savecancel").addEventListener("click", () => showSavePanel(false));
 $("saveform").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -1188,7 +1195,7 @@ $("copylink").addEventListener("click", async () => {
   $("copylink").textContent = "Copied";
   setTimeout(() => { $("copylink").textContent = "Copy"; }, 1500);
 });
-$("saved").addEventListener("click", () => {
+on("saved", "click", () => {
   const open = $("savedpanel").hidden;
   $("savedpanel").hidden = !open;
   $("saved").setAttribute("aria-expanded", String(open));
@@ -1215,6 +1222,11 @@ function deepLinkForecast() {
 }
 
 (async function init() {
+  // Anonymous with nothing stored: the head script (optimize.html) has
+  // already decided this page is the signpost back to Build, and the
+  // workbench behind it is hidden. Analyzing an invented mix there would
+  // spend a price fetch on a page nobody is looking at.
+  if (document.documentElement.classList.contains("nodraft")) return;
   if (!localStorage.getItem("condor_hint_done")) $("hintstrip").hidden = false;
   $("hintdismiss").addEventListener("click", () => {
     localStorage.setItem("condor_hint_done", "1");

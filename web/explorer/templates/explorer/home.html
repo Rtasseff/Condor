@@ -88,6 +88,7 @@
        still pretend money.</p>
   </section>
 
+{% if user.is_authenticated %}
   <section class="card" id="acctcard" aria-label="My portfolio">
     <h2>My portfolio</h2>
     <p class="sub" id="acct-empty"></p>
@@ -97,6 +98,16 @@
     </div>
     <a href="{% url 'account' %}" class="ghost small">Go to My portfolio →</a>
   </section>
+{% else %}
+  {# No account: the same slot, quiet. An invitation, not a locked door — #}
+  {# nothing here is gated, and the mix above is theirs to keep playing with. #}
+  <section class="card" id="acctcard" aria-label="My portfolio">
+    <h2>My portfolio</h2>
+    <p class="sub">Have an account?
+      <a href="{% url 'login' %}?next={% url 'index' %}">Sign in</a>
+      — or just keep exploring.</p>
+  </section>
+{% endif %}
 
   <footer>
     Historical daily prices via Yahoo Finance; statistics are estimates from past data.
@@ -105,5 +116,7 @@
 </main>
 
 {{ has_real|json_script:"has_real" }}
+{{ user.is_authenticated|json_script:"is_authenticated" }}
+<script src="{% static 'explorer/draft.js' %}"></script>
 <script src="{% static 'explorer/home.js' %}"></script>
 {% endblock %}
