@@ -26,7 +26,21 @@ const CHART_CONFIG = {
 const $ = (id) => document.getElementById(id);
 const money = (x) => "$" + (+x).toLocaleString(undefined, {
   minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money0 = (x) => "$" + Math.round(+x).toLocaleString();
 const pct = (x, d = 1) => (100 * x).toFixed(d) + "%";
+
+// The cash sleeve of a hypothetical forecast earns this (server-rendered
+// from FRED, same number the Optimize field prefills with).
+const RF = (() => {
+  const raw = parseFloat(document.querySelector("main").dataset.rf);
+  return isFinite(raw) ? raw / 100 : 0.04;
+})();
+
+// Does the ledger say we actually hold anything? Everything about the two
+// bridges hangs off this one question.
+const hasHoldings = (d) => (d.positions || []).some((p) => p.shares > 0);
+const setpointRows = (d) =>
+  (d.positions || []).filter((p) => p.target_weight > 0);
 
 function csrftoken() {
   const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
@@ -60,6 +74,8 @@ function render(data) {
   renderPositions();
   renderEvents();
   renderSchedule();
+  renderStarter();
+  renderForecastMode();
 }
 
 function renderTiles() {
@@ -73,11 +89,79 @@ function renderTiles() {
   const r = $("a-twr");
   r.textContent = (d.twr >= 0 ? "+" : "") + pct(d.twr);
   r.classList.toggle("neg", d.twr < 0);
+  // the empty-account copy folded into the starter card above (bridge 1)
   $("a-asof").textContent = d.events.length
     ? `Valued at the ${d.as_of} close. Money you put in counts as ` +
       `contribution, not return — the return above is time-weighted.`
-    : "Empty account — record a deposit below, or set a setpoint and ask " +
-      "for a plan.";
+    : "Nothing recorded yet — the card above gets you started.";
+}
+
+// ---------- bridge 1: the starter card ----------
+// An empty account with a plan is the confusing case: everything reads
+// zero and nothing says why. This card crosses the border in one click,
+// through the ledger — deposit, then the whole-share buys — never around
+// it. Chains three endpoints that already exist; adds no new writer.
+function renderStarter() {
+  const d = state.data;
+  const card = $("startercard");
+  const empty = !d.events.length;
+  card.hidden = !empty;
+  if (!empty) return;
+  const planned = setpointRows(d).length > 0;
+  $("starterfund").hidden = !planned;
+  $("starterguide").hidden = planned;
+  syncStarterButton();
+}
+
+function syncStarterButton() {
+  const amount = Math.max(1, parseFloat($("starter-amount").value) || 10000);
+  $("startergo").textContent = `Start with ${money0(amount)} →`;
+}
+
+async function startAccount() {
+  const amount = Math.max(1, parseFloat($("starter-amount").value) || 10000);
+  const btn = $("startergo");
+  btn.disabled = true;
+  showError("");
+  let deposited = false;
+  try {
+    $("starterstatus").textContent = "Recording the deposit…";
+    await api("/api/account/events", {
+      method: "POST",
+      body: JSON.stringify({ kind: "deposit", amount, note: "opening deposit" }),
+    });
+    deposited = true;   // from here on, a failure leaves money in the ledger
+    $("starterstatus").textContent = "Pricing your plan at the last close…";
+    const plan = await api("/api/account/plan");
+    const trades = plan.rows
+      .filter((r) => r.trade_shares !== 0)
+      .map((r) => ({ ticker: r.ticker, shares: r.trade_shares, price: r.price }));
+    if (!trades.length) {
+      throw new Error(`${money0(amount)} doesn't buy a whole share of `
+        + "anything in your plan — try a larger amount.");
+    }
+    $("starterstatus").textContent = "Booking the buys…";
+    render(await api("/api/account/plan/confirm", {
+      method: "POST", body: JSON.stringify({ trades }) }));
+    $("starterstatus").textContent = "";
+  } catch (err) {
+    if (deposited) {
+      // deposit-only is a real, recoverable state — say so plainly rather
+      // than implying nothing happened. Refresh FIRST: render() clears the
+      // error banner, so the message has to land after the ledger state it
+      // is describing, or the user is told nothing at all.
+      const msg = `Your money is in, but the buys didn't book — ${err.message} `
+        + "Use the rebalancing plan below to finish.";
+      try { render(await api("/api/account")); } catch { /* show it anyway */ }
+      showError(msg);
+    } else {
+      showError(err.message);
+    }
+  } finally {
+    btn.disabled = false;
+    if ($("starterstatus").textContent.endsWith("…"))
+      $("starterstatus").textContent = "";
+  }
 }
 
 function renderChart() {
@@ -514,9 +598,82 @@ async function confirmContribution() {
 function anchorParams() {
   const mode = $("af-anchor").value;
   $("af-anchorcustom").hidden = mode !== "custom";
+  renderPriorChip();
   return mode === "custom"
     ? { anchor: mode, anchor_value: parseFloat($("af-anchorvalue").value) / 100 }
     : { anchor: mode };
+}
+
+// Same discoverability guard as the Optimize card: a non-default prior has
+// to be legible while the disclosure is shut.
+function renderPriorChip() {
+  const chip = $("af-priorchip");
+  const sel = $("af-anchor");
+  if (!chip) return;
+  const mode = sel.value;
+  if (mode === "historical") {
+    chip.hidden = true;
+    chip.textContent = "";
+    return;
+  }
+  const typed = parseFloat($("af-anchorvalue").value);
+  if (mode === "custom" && !Number.isFinite(typed)) {
+    chip.hidden = true;      // mid-edit: an empty box is not a prior
+    chip.textContent = "";
+    return;
+  }
+  const value = mode === "market"
+    ? sel.dataset.market
+    : String(+typed.toFixed(1));
+  chip.textContent = `prior: ${mode === "market" ? "return to normal" :
+    "my own number"}, ${value}%`;
+  chip.hidden = false;
+}
+
+// ---------- bridge 2: forecasting a plan that isn't real yet ----------
+// With no holdings the account forecast used to refuse. It still can't
+// pretend the money exists — but it can project the *setpoint*, clearly
+// labelled, so an empty account isn't a dead end.
+let forecastMode = null;   // "hypothetical" | "real" — what the fan shows
+
+function clearForecastFan() {
+  for (const id of ["afchart", "afmu", "afnote", "afguard"]) $(id).hidden = true;
+}
+
+function renderForecastMode() {
+  const d = state.data;
+  const hypo = !hasHoldings(d);
+  const planned = setpointRows(d).length > 0;
+  const starterVisible = !$("startercard").hidden;
+  $("afintro").hidden = hypo;
+  $("afhypo").hidden = !(hypo && planned);
+  $("afnoplan").hidden = !(hypo && !planned);
+  $("af-amountwrap").hidden = !hypo;
+  $("aforecast").disabled = hypo && !planned;
+
+  // A chart drawn in one mode must never be relabelled as the other. The
+  // obvious way in: project the hypothetical, then fund from the starter
+  // card — the fan is still "your plan" but the badge now says "whole
+  // account". Any flip drops the old fan.
+  const mode = hypo ? "hypothetical" : "real";
+  if (mode !== forecastMode) clearForecastFan();
+  forecastMode = mode;
+
+  if (hypo) {
+    // Cash already on the ledger has nowhere to go through the starter
+    // card (it retires once events exist), so send them to the holdings
+    // table's plan instead, and start the projection from what is
+    // actually there rather than the input's stock $10,000.
+    const link = $("afhypolink");
+    link.setAttribute("href", starterVisible ? "#startercard" : "#holdings");
+    link.textContent = starterVisible
+      ? "Make it real above →" : "Put your cash to work below →";
+    if (!starterVisible && d.total_value > 0) {
+      $("af-amount").value = Math.round(d.total_value);
+    }
+  } else {
+    $("afbadge").textContent = "whole account";
+  }
 }
 
 const pctpt = (x) => (100 * x).toFixed(1);
@@ -524,46 +681,92 @@ const pctnum = (x) => String(+(100 * x).toFixed(1));
 
 function assumptionSentence(f) {
   const a = f.anchor;
-  const cash = `${pct(f.cash_weight, 0)} of the account is cash at the `
-    + `${pctpt(f.risk_free_rate)}% T-bill rate`;
+  const whole = f.hypothetical ? "your plan" : "the whole account";
+  // a fully invested mix has no cash sleeve to explain — saying "0% is
+  // cash at the 0.0% T-bill rate" is noise, and reads as a claim
+  const cash = f.cash_weight > 0.005
+    ? `${pct(f.cash_weight, 0)} of ${f.hypothetical ? "it" : "the account"}`
+      + ` is cash at the ${pctpt(f.risk_free_rate)}% T-bill rate`
+    : "";
   const error = `good to about ±${pctpt(f.mu_se_annual)} points; plausibly `
     + `${pctpt(f.mu_ci95[0])}% to ${pctpt(f.mu_ci95[1])}%`;
   const dispersion = ` Dispersion: ${pctpt(f.sigma_annual)}%/yr.`;
   if (a.mode === "historical") {
-    return `Middle line: ${pctpt(f.mu_annual)}%/yr for the whole account `
-      + `(${cash}) — what your holdings averaged over `
+    return `Middle line: ${pctpt(f.mu_annual)}%/yr for ${whole}`
+      + (cash ? ` (${cash})` : "")
+      + ` — what ${f.hypothetical ? "that mix" : "your holdings"} `
+      + `averaged over `
       + `${f.span_years.toFixed(1)} years of data, and nothing else. `
       + `That estimate is ${error}.` + dispersion;
   }
   const source = a.mode === "market"
     ? `the long-run market anchor of ${pctnum(a.value)}%`
     : `your own ${pctnum(a.value)}% assumption`;
-  return `Middle line: ${pctpt(f.mu_annual)}%/yr for the whole account — its `
+  return `Middle line: ${pctpt(f.mu_annual)}%/yr for ${whole} — its `
     + `${pctpt(a.mu_historical)}%/yr over ${f.span_years.toFixed(1)} years `
     + `blended with ${source} (held to ±${pctnum(a.prior_sd)} points), each `
-    + `weighted by how well it is known. Because ${cash}, that anchor counts `
-    + `as ${pctpt(a.effective)}%/yr — held to ±${pctpt(a.prior_sd_effective)} `
-    + `points — across the account. History alone was good only to `
+    + `weighted by how well it is known. `
+    + (cash
+        ? `Because ${cash}, that anchor counts as ${pctpt(a.effective)}%/yr `
+          + `— held to ±${pctpt(a.prior_sd_effective)} points — across `
+          + `${whole}. `
+        : "")
+    + `History alone was good only to `
     + `±${pctpt(a.mu_se_historical)} points; the blend is ${error}.`
     + dispersion;
 }
 
 let forecastSeq = 0;   // only the newest request may paint the card
 
+// The plan through the same engine the Build page uses: the setpoint's
+// weights are fractions of the whole account, so whatever they leave over
+// is the cash sleeve. Lookback and method are left at the endpoint's
+// defaults — the same ones /api/account/forecast uses — so the two agree.
+async function projectSetpoint() {
+  const d = state.data;
+  const rows = setpointRows(d);
+  const weights = {};
+  for (const p of rows) weights[p.ticker] = p.target_weight;
+  const f = await api("/api/forecast", {
+    method: "POST",
+    body: JSON.stringify({
+      tickers: rows.map((p) => p.ticker),
+      weights,
+      cash_weight: Math.max(0, Math.min(1, d.target_cash_weight)),
+      risk_free_rate: RF,
+      horizon_years: parseInt($("af-horizon").value, 10),
+      model: $("af-model").value,
+      ...anchorParams(),
+    }),
+  });
+  f.start_value = Math.max(1, parseFloat($("af-amount").value) || 10000);
+  f.hypothetical = true;    // nothing here is held; the labels must say so
+  return f;
+}
+
+function projectAccount() {
+  return api("/api/account/forecast", {
+    method: "POST",
+    body: JSON.stringify({
+      horizon_years: parseInt($("af-horizon").value, 10),
+      model: $("af-model").value,
+      ...anchorParams() }),
+  });
+}
+
 async function runAccountForecast() {
   showError("");
+  if (!state.data) {   // the initial /api/account never landed
+    showError("Your account hasn't loaded yet — reload the page to try again.");
+    return;
+  }
   const seq = ++forecastSeq;
   const btn = $("aforecast");
   btn.disabled = true;
   $("afstatus").textContent = "Projecting…";
   try {
-    const f = await api("/api/account/forecast", {
-      method: "POST",
-      body: JSON.stringify({
-        horizon_years: parseInt($("af-horizon").value, 10),
-        model: $("af-model").value,
-        ...anchorParams() }),
-    });
+    const f = await (hasHoldings(state.data)
+      ? projectAccount() : projectSetpoint());
     if (seq !== forecastSeq) return;       // a later change already won
     renderAccountForecast(f);
   } catch (err) {
@@ -630,15 +833,18 @@ function renderAccountForecast(f) {
     hoverlabel: { bgcolor: "#182238", font: { color: C.ink, size: 13 } },
   }, CHART_CONFIG);
 
-  $("afbadge").textContent = (f.model === "block-bootstrap"
-    ? `model 2 — resampled history (${f.block}-day blocks)`
-    : "model 1 — steady rates") + " · whole account"
-    + (f.anchor.mode === "historical" ? ""
-       : ` · anchored ${pctnum(f.anchor.effective)}%`
-         + ` ± ${pctnum(f.anchor.prior_sd_effective)} pp`);
+  $("afbadge").textContent = f.hypothetical
+    ? `not yet real — your plan with ${money0(f.start_value)}`
+    : (f.model === "block-bootstrap"
+        ? `resampled history (${f.block}-day blocks)`
+        : "steady rates (simplest)") + " · whole account"
+      + (f.anchor.mode === "historical" ? ""
+         : ` · prior ${pctnum(f.anchor.effective)}%`
+           + ` ± ${pctnum(f.anchor.prior_sd_effective)} pp`);
   $("afguard").hidden = !f.guarded;
   $("af-anchor").options[0].textContent =
-    `Historical (${pctpt(f.anchor.mu_historical)}%)`;
+    `My mix's own history (${pctpt(f.anchor.mu_historical)}%)`;
+  renderPriorChip();
   $("afmu").textContent = assumptionSentence(f);
   for (const id of ["afchart", "afmu", "afnote"]) $(id).hidden = false;
 }
@@ -669,6 +875,18 @@ $("duego").addEventListener("click", () => {
 $("contribcancel").addEventListener("click", () => { $("contribpanel").hidden = true; });
 $("contribconfirm").addEventListener("click", confirmContribution);
 $("aforecast").addEventListener("click", runAccountForecast);
+$("startergo").addEventListener("click", startAccount);
+$("starter-amount").addEventListener("input", syncStarterButton);
+// the hypothetical's starting amount only scales the fan — no refetch
+$("af-amount").addEventListener("change", () => {
+  if (!$("afchart").hidden) runAccountForecast();
+});
+// "all at once" jumps to the ledger form with the right kind preselected
+$("depositjump").addEventListener("click", () => {
+  $("ev-kind").value = "deposit";
+  syncEventForm();
+  setTimeout(() => $("ev-amount").focus(), 0);
+});
 // changing the assumption redraws the fan straight away
 for (const id of ["af-anchor", "af-anchorvalue"]) {
   $(id).addEventListener("change", () => {
@@ -681,11 +899,16 @@ $("planconfirm").addEventListener("click", confirmPlan);
 
 (async function init() {
   syncEventForm();
+  renderPriorChip();
   $("a-asof").textContent = "Valuing your account at the last close…";
   try {
     render(await api("/api/account"));
-    // arriving from Build with a fresh draft target: show the plan
-    if (new URLSearchParams(location.search).get("plan")) loadPlan();
+    // arriving from Optimize's "Make this my real portfolio": show the plan,
+    // under a heading that echoes the button that got us here (fix 3)
+    if (new URLSearchParams(location.search).get("plan")) {
+      $("plantitle").textContent = "How to get there from what you hold";
+      loadPlan();
+    }
   } catch (err) {
     showError(err.message);
   }

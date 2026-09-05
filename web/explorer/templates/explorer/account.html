@@ -3,7 +3,36 @@
 {% block title %}Condor Funds — My account{% endblock %}
 {% block nav_account %}active{% endblock %}
 {% block content %}
-<main>
+<main data-rf="{{ rf_pct }}">
+  <div class="pagehead">
+    <h1>My account</h1>
+    <span class="worldchip real"><b>Real</b> the record of what this account
+      actually holds.</span>
+  </div>
+
+  <section class="card startercard" id="startercard" hidden
+           aria-label="Start your account">
+    <h2 id="startertitle">Start your account</h2>
+    <div id="starterfund" hidden>
+      <p class="sub">Put in the amount below and we'll record the deposit and
+         the whole-share buys that match your plan at the last close. Pretend
+         money or a mirror of a real deposit — your call; nothing real is
+         traded.</p>
+      <div class="fcontrols">
+        <label>Starting amount
+          <span class="pctwrap">$ <input id="starter-amount" type="number"
+            value="10000" min="1" step="500"></span>
+        </label>
+        <button id="startergo" class="primary" type="button">Start with $10,000 →</button>
+        <span id="starterstatus" class="status" role="status"></span>
+      </div>
+    </div>
+    <p class="sub" id="starterguide" hidden>Pick a mix in
+       <a href="{% url 'index' %}">Build</a>, fine-tune it in
+       <a href="{% url 'optimize' %}">Optimize</a>, then
+       <b>Make this my real portfolio</b> — the plan lands back here.</p>
+  </section>
+
   <section class="card">
     <h2 id="acctname">My account</h2>
     <p class="sub">A ledger-tracked account — pretend money, or a mirror of a real
@@ -17,6 +46,8 @@
       <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="a-twr">–</span><span class="gloss">growth of a dollar — deposits don't count as return</span></div>
     </div>
     <p class="sub" id="a-asof"></p>
+    <p class="nudge">Curious where it could go?
+       <a href="#forecast">Forecast your account →</a></p>
   </section>
 
   <div id="duebanner" class="card duebanner" hidden>
@@ -33,7 +64,7 @@
     <div id="achart" role="img" aria-label="Account value over time"></div>
   </section>
 
-  <section class="card">
+  <section class="card" id="holdings">
     <h2>Holdings &amp; setpoint</h2>
     <p class="sub">Actual % drifts as prices move; setpoint % is where you want
        it. Ask for a plan to get back — whole shares at the last close.</p>
@@ -60,8 +91,8 @@
     <div id="targetpanel" class="subpanel" hidden>
       <h3>Setpoint allocation (%)</h3>
       <p class="sub">Percent of total account value per asset; whatever is left
-         is cash/T-bills. You can also send any point from the Build page here
-         ("Use as account setpoint").</p>
+         is cash/T-bills. You can also send any point over from Optimize with
+         "Make this my real portfolio".</p>
       <div id="targetrows" class="targetrows"></div>
       <form id="targetadd" class="inline" autocomplete="off">
         <input id="targetticker" placeholder="Add ticker" spellcheck="false">
@@ -101,7 +132,7 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="schedule">
     <h2>Regular contributions <span class="modeltag">dollar-cost averaging</span></h2>
     <p class="sub">A fixed amount on a schedule. When it's due you get a reminder
        on login and a whole-share plan for where to put it — new money goes to
@@ -153,16 +184,23 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="forecast">
     <h2>Forecast <span class="modeltag" id="afbadge">whole account</span></h2>
-    <p class="sub">Where the <b>whole</b> account could go — holdings at their
-       current mix plus your cash share earning the T-bill rate.</p>
+    <p class="sub" id="afintro">Where the <b>whole</b> account could go — holdings
+       at their current mix plus your cash share earning the T-bill rate.</p>
+    <p class="sub" id="afhypo" hidden>Nothing is held yet, so this projects your
+       <b>setpoint</b> — the mix you plan to hold — starting from the amount
+       below. <a href="#startercard" id="afhypolink">Make it real above →</a></p>
+    <p class="sub" id="afnoplan" hidden>There's no plan to project yet. Pick a
+       mix in <a href="{% url 'index' %}">Build</a>, fine-tune it in
+       <a href="{% url 'optimize' %}">Optimize</a>, then <b>Make this my real
+       portfolio</b> — the plan lands back here.</p>
     <details class="explain">
       <summary>How these models work</summary>
-      <p class="sub">Same two models as the Build page: steady rates (model 1)
-         or resampled history (model 2, never narrower than model 1). Shaded
-         bands are market randomness; the dashed band adds the uncertainty in
-         the return estimate itself.</p>
+      <p class="sub">The same two models as the Optimize page: <b>steady
+         rates</b>, or <b>resampled history</b> (never narrower than steady
+         rates). Shaded bands are market randomness; the dashed band adds the
+         uncertainty in the return estimate itself.</p>
       <p class="sub">The middle line hangs off one number — the return you
          assume. Your holdings' own history is a noisy estimate of it, so you
          can blend that with a long-run market anchor
@@ -174,21 +212,9 @@
     <div class="fcontrols">
       <label>Model
         <select id="af-model">
-          <option value="steady" selected>1 — steady rates (simplest)</option>
-          <option value="bootstrap">2 — resampled history</option>
+          <option value="steady" selected>steady rates (simplest)</option>
+          <option value="bootstrap">resampled history (21-day blocks)</option>
         </select>
-      </label>
-      <label>Expected return
-        <select id="af-anchor">
-          <option value="historical" selected>Historical</option>
-          <option value="market">Long-run market ({{ market_anchor_pct }}%)</option>
-          <option value="custom">Custom</option>
-        </select>
-      </label>
-      <label id="af-anchorcustom" hidden>Your assumption
-        <span class="pctwrap"><input id="af-anchorvalue" type="number"
-          value="{{ market_anchor_pct }}" step="0.5"
-          min="{{ anchor_min_pct }}" max="{{ anchor_max_pct }}"> %/yr</span>
       </label>
       <label>Horizon
         <select id="af-horizon">
@@ -198,21 +224,52 @@
           <option value="10">10 years</option>
         </select>
       </label>
+      <label id="af-amountwrap" hidden>Starting amount
+        <span class="pctwrap">$ <input id="af-amount" type="number"
+          value="10000" min="1" step="1000"></span>
+      </label>
       <button id="aforecast" class="primary small" type="button">Project</button>
       <span id="afstatus" class="status" role="status"></span>
     </div>
+    <details class="advanced" id="af-advanced">
+      <summary><b>Advanced</b> — set your expectations (priors)<span
+        class="priorchip" id="af-priorchip" hidden></span></summary>
+      <div class="advbody">
+        <div class="fcontrols">
+          <label>What to assume about returns
+            <select id="af-anchor" data-market="{{ market_anchor_pct }}">
+              <option value="historical" selected>My mix's own history</option>
+              <option value="market">Return to normal ({{ market_anchor_pct }}%/yr)</option>
+              <option value="custom">My own number…</option>
+            </select>
+          </label>
+          <label id="af-anchorcustom" hidden>Your number
+            <span class="pctwrap"><input id="af-anchorvalue" type="number"
+              value="{{ market_anchor_pct }}" step="0.5"
+              min="{{ anchor_min_pct }}" max="{{ anchor_max_pct }}"> %/yr</span>
+          </label>
+        </div>
+        <p class="controlgloss">A belief about the future, blended with your
+           data by how sure each is — never swapped in. It applies to both
+           models.</p>
+      </div>
+    </details>
     <div id="afchart" role="img" aria-label="Whole-account forecast fan chart" hidden></div>
-    <p class="sub warn" id="afguard" hidden>Model 2's resampled bands came out
-       narrower than model 1 allows — one decade holds too few multi-year
-       stretches to trust that — so they were widened to model 1's floor.</p>
+    <p class="sub warn" id="afguard" hidden>The resampled bands came out
+       narrower than steady rates allows — one decade holds too few
+       multi-year stretches to trust that — so they were widened to the
+       steady-rates floor.</p>
     <p class="sub" id="afmu" hidden></p>
     <p class="sub" id="afnote" hidden>Assumes the future resembles the lookback
        window in kind and your mix stays as it is today. The middle line is an
        estimate, not a promise.</p>
   </section>
 
-  <section class="card">
+  <section class="card" id="ledger">
     <h2>Ledger</h2>
+    <p class="chooser"><b>Add money:</b> all at once →
+       <a href="#eventform" id="depositjump">record a deposit below</a> ·
+       over time → <a href="#schedule">set a schedule</a></p>
     <form id="eventform" class="eventform" autocomplete="off">
       <label>Type
         <select id="ev-kind">

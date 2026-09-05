@@ -9,6 +9,8 @@
     <p class="sub">Search for assets, check the ones you like, and see your
        mix take shape. No jargon here — <a href="{% url 'optimize' %}">Optimize</a>
        is where the curves and fine-tuning live.</p>
+    <span class="worldchip explore"><b>Exploring</b> pretend money; nothing
+      here touches your account.</span>
   </div>
 
   <div id="error" class="error card" hidden></div>
@@ -41,6 +43,27 @@
          starter below.</p>
     </section>
   </div>
+
+  <section class="card" id="fcastcta" aria-label="Forecast this mix" hidden>
+    <h2>What could it become?</h2>
+    <div class="fcontrols">
+      <label>Starting amount
+        <span class="pctwrap">$ <input id="fc-amount" type="number"
+          value="10000" min="1" step="1000"></span>
+      </label>
+      <label>Over
+        <select id="fc-years">
+          <option value="1">1 year</option>
+          <option value="2" selected>2 years</option>
+          <option value="5">5 years</option>
+          <option value="10">10 years</option>
+        </select>
+      </label>
+      <button id="fc-go" class="primary small" type="button">See the range →</button>
+    </div>
+    <p class="sub">Opens Optimize and projects an honest range for this mix —
+       still pretend money.</p>
+  </section>
 
   <section class="card" id="acctcard" aria-label="Your account">
     <h2>Your account</h2>

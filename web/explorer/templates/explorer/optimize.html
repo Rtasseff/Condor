@@ -8,12 +8,25 @@
     <h1>Optimize</h1>
     <p class="sub">The curves and fine-tuning behind your mix — starts from
        your <a href="{% url 'index' %}">Build</a> draft if you have one.</p>
+    <span class="worldchip explore"><b>Exploring</b> pretend money; nothing
+      here touches your account.</span>
   </div>
+
+{% if not has_source %}
+  <section class="card emptystate" id="optimize-empty"
+           aria-label="Nothing to optimize yet">
+    <h2>Nothing to optimize yet</h2>
+    <p class="sub">Optimize fine-tunes a mix you have already picked — it
+       won't invent one for you. Choose a few assets first and they'll be
+       waiting here.</p>
+    <a href="{% url 'index' %}" class="primary">Pick your assets in Build →</a>
+  </section>
+{% else %}
   <section class="controls card" aria-label="Analysis settings">
     <label>Method
       <select id="method">
-        <option value="robust" selected>Robust (median / CoMAD)</option>
-        <option value="normal">Normal (mean / Ledoit-Wolf)</option>
+        <option value="robust" selected>Robust statistics (outlier-resistant)</option>
+        <option value="normal">Classic statistics (mean / SD)</option>
       </select>
     </label>
     <label>Lookback
@@ -32,6 +45,8 @@
     <button id="save" class="ghost" type="button">Save</button>
     <button id="saved" class="ghost" type="button" aria-expanded="false">Saved</button>
     <span id="status" class="status" role="status"></span>
+    <p class="controlgloss">How we measure history — not a view about the
+       economy.</p>
   </section>
 
   <section class="card hintstrip" id="hintstrip" hidden aria-label="Getting started">
@@ -90,9 +105,11 @@
             rate.</li>
           <li><b>Sharpe ratio</b> = reward earned per unit of risk, after
             setting aside what T-bills pay for free. Higher is better.</li>
-          <li><b>Method</b>: <i>Robust</i> uses medians, so one wild day can't
-            distort the picture — steadier for volatile stocks. <i>Normal</i>
-            is the textbook mean/covariance approach.</li>
+          <li><b>Method</b> is how we measure your history, not a view about
+            the economy. <i>Robust statistics</i> use medians, so one wild day
+            can't distort the picture — steadier for volatile stocks.
+            <i>Classic statistics</i> are the textbook mean/covariance
+            approach.</li>
         </ul>
       </details>
       <div id="chart" role="img" aria-label="Efficient frontier chart"></div>
@@ -112,14 +129,22 @@
         <p class="sub" id="calnote" hidden></p>
         <button id="adoptpoint" class="primary small">Make this my portfolio</button>
         <button id="settarget" class="ghost small" type="button"
-                title="Copy this mix to your account's setpoint and open the transition plan">
-          Use as account setpoint →</button>
+                title="Copies this mix to your account and opens the plan — whole shares at the last close — for turning what you hold now into this.">
+          Make this my real portfolio →</button>
       </section>
     </section>
 
     <aside class="card sidecard" aria-label="Your portfolio">
       <h2>Your portfolio <small class="sub" id="exampletag">— starts as an
         example; swap these out</small></h2>
+      <div class="sourcepick" id="sourcepick" hidden>
+        <span>Optimizing:</span>
+        <button type="button" class="srcbtn" id="src-draft"
+                aria-pressed="true">Your draft</button>
+        <button type="button" class="srcbtn" id="src-real"
+                aria-pressed="false" hidden>Your real portfolio</button>
+        <p class="sub forked" id="srcnote" hidden></p>
+      </div>
       <form id="addform" autocomplete="off">
         <input id="addticker" list="tickerlist" placeholder="Add asset — ticker or name"
                spellcheck="false" aria-label="Add asset">
@@ -143,17 +168,17 @@
   </section>
 
   <section class="card" id="forecastcard" hidden aria-label="Forecast">
-    <h2>Forecast <span class="modeltag" id="fbadge">model 1 of 3 — simplest: steady rates</span></h2>
+    <h2>Forecast <span class="modeltag" id="fbadge">steady rates (simplest)</span></h2>
     <p class="sub">Where your mix could take a starting amount — an honest
        range, not a promise.</p>
     <details class="explain">
       <summary>How these models work</summary>
       <ul>
-        <li><b>Model 1 — steady rates</b>: projects a constant expected return
-          and dispersion. The simplest honest model.</li>
-        <li><b>Model 2 — resampled history</b>: replays 21-day stretches of
-          your actual history, so streaks and crashes look like they really
-          did. Its bands are never allowed to be narrower than model 1's.</li>
+        <li><b>Steady rates</b>: projects a constant expected return and
+          dispersion. The simplest honest model.</li>
+        <li><b>Resampled history</b>: replays 21-day stretches of your actual
+          history, so streaks and crashes look like they really did. Its
+          bands are never allowed to be narrower than steady rates'.</li>
         <li><b>The bands</b>: shaded = market randomness; the dashed outer
           band adds the uncertainty in the return estimate itself — at
           multi-year horizons, the biggest unknown.</li>
@@ -169,21 +194,9 @@
     <div class="fcontrols">
       <label>Model
         <select id="fmodel">
-          <option value="steady" selected>1 — steady rates (simplest)</option>
-          <option value="bootstrap">2 — resampled history</option>
+          <option value="steady" selected>steady rates (simplest)</option>
+          <option value="bootstrap">resampled history (21-day blocks)</option>
         </select>
-      </label>
-      <label>Expected return
-        <select id="fanchor">
-          <option value="historical" selected>Historical</option>
-          <option value="market">Long-run market ({{ market_anchor_pct }}%)</option>
-          <option value="custom">Custom</option>
-        </select>
-      </label>
-      <label id="fanchorcustom" hidden>Your assumption
-        <span class="pctwrap"><input id="fanchorvalue" type="number"
-          value="{{ market_anchor_pct }}" step="0.5"
-          min="{{ anchor_min_pct }}" max="{{ anchor_max_pct }}"> %/yr</span>
       </label>
       <label>Horizon
         <select id="fhorizon">
@@ -199,10 +212,34 @@
       <button id="forecast" class="primary small" type="button">Project</button>
       <span id="fstatus" class="status" role="status"></span>
     </div>
+    <details class="advanced" id="fadvanced">
+      <summary><b>Advanced</b> — set your expectations (priors)<span
+        class="priorchip" id="fpriorchip" hidden></span></summary>
+      <div class="advbody">
+        <div class="fcontrols">
+          <label>What to assume about returns
+            <select id="fanchor" data-market="{{ market_anchor_pct }}">
+              <option value="historical" selected>My mix's own history</option>
+              <option value="market">Return to normal ({{ market_anchor_pct }}%/yr)</option>
+              <option value="custom">My own number…</option>
+            </select>
+          </label>
+          <label id="fanchorcustom" hidden>Your number
+            <span class="pctwrap"><input id="fanchorvalue" type="number"
+              value="{{ market_anchor_pct }}" step="0.5"
+              min="{{ anchor_min_pct }}" max="{{ anchor_max_pct }}"> %/yr</span>
+          </label>
+        </div>
+        <p class="controlgloss">A belief about the future, blended with your
+           data by how sure each is — never swapped in. It applies to both
+           models.</p>
+      </div>
+    </details>
     <div id="fchart" role="img" aria-label="Forecast fan chart" hidden></div>
-    <p class="sub warn" id="fguard" hidden>Model 2's resampled bands came out
-       narrower than model 1 allows — one decade holds too few multi-year
-       stretches to trust that — so they were widened to model 1's floor.</p>
+    <p class="sub warn" id="fguard" hidden>The resampled bands came out
+       narrower than steady rates allows — one decade holds too few
+       multi-year stretches to trust that — so they were widened to the
+       steady-rates floor.</p>
     <p class="sub" id="fmu" hidden></p>
     <p class="sub" id="fnote" hidden>These bands assume the future resembles your
        lookback window in kind, if not in detail — they can't anticipate a change
@@ -226,12 +263,17 @@
     <p class="sub" id="datarange"></p>
   </section>
 
+{% endif %}
+
   <footer>
     Historical daily prices via Yahoo Finance; statistics are estimates from past data.
     Educational prototype — not investment advice.
   </footer>
 </main>
 
+{% if has_source %}
 {% if preset %}{{ preset|json_script:"preset" }}{% endif %}
+{{ sources|json_script:"sources" }}
 <script src="{% static 'explorer/app.js' %}"></script>
+{% endif %}
 {% endblock %}

@@ -56,6 +56,20 @@ def anchor_context() -> dict:
     }
 
 
+def rf_context() -> dict:
+    """Template context for the risk-free rate (FRED 3-month Treasury,
+    cached ~12h next to the price store). Both the Optimize field and the
+    account page's hypothetical forecast — whose cash sleeve earns this —
+    read it from here; if FRED and the cache are both out, callers fall
+    back to the field default."""
+    rf = None
+    try:
+        rf = risk_free_rate()
+    except Exception:
+        log.warning("risk-free rate unavailable; using field default")
+    return {"rf": rf, "rf_pct": round(rf["rate"] * 100, 2) if rf else 4.0}
+
+
 @login_required
 @ensure_csrf_cookie
 def index(request):
@@ -65,22 +79,52 @@ def index(request):
     return render(request, "explorer/home.html")
 
 
+def _has_holdings(user) -> bool:
+    """Does the account hold any shares right now? Ledger replay is the
+    only truth about that (ADR 0004), so ask the account engine.
+
+    Read-only on purpose: this runs on every `GET /optimize`, and a page
+    render must not create an Account row as a side effect — the account
+    page creates it lazily when it is actually wanted. A user who has
+    never opened that page simply has no holdings.
+    """
+    from condor import accounting as acct
+
+    from .models import Account
+    account = Account.objects.filter(owner=user).first()
+    if account is None:
+        return False
+    try:
+        shares, _, _ = acct.replay(account.events_frame())
+    except Exception:
+        # the page still has to render; a draft (or a preset) keeps the
+        # workbench open regardless, and the client re-checks /api/account
+        log.exception("holdings check failed for %s", user.pk)
+        return False
+    return any(n > 1e-9 for n in shares.values())
+
+
 def _render_optimize(request, preset=None):
     """The frontier/CAL page (`/optimize`, and `/p/<uuid>`). Prefills the
-    risk-free field from FRED (3-month Treasury constant maturity); if
-    FRED and the cache are both unavailable, the template's hardcoded
-    default stands. `preset` is a saved config injected for the JS to
-    load on first paint, taking priority over the user's draft."""
+    risk-free field from FRED. `preset` is a saved config injected for the
+    JS to load on first paint, taking priority over the user's draft.
 
-    rf = None
-    try:
-        rf = risk_free_rate()  # cached ~12h next to the price store
-    except Exception:
-        log.warning("risk-free rate unavailable; using field default")
+    Optimize refuses to invent a portfolio: with no draft, no holdings and
+    no preset there is nothing to optimize, so the page renders a signpost
+    back to Build instead of the toolbar, chart and example assets. The
+    flags are server-side so a fresh user never sees the form flash first.
+    """
+    has_draft = bool(_draft_for(request.user).assets)
+    has_real = _has_holdings(request.user)
     ctx = {
-        "rf": rf,
-        "rf_pct": round(rf["rate"] * 100, 2) if rf else 4.0,
         "preset": preset,
+        "has_draft": has_draft,
+        "has_real": has_real,
+        "has_source": bool(preset) or has_draft or has_real,
+        # what the source picker may offer (fix 2); a preset is neither
+        "sources": {"draft": has_draft, "real": has_real,
+                    "preset": bool(preset)},
+        **rf_context(),
         **anchor_context(),
     }
     return render(request, "explorer/optimize.html", ctx)
@@ -258,6 +302,12 @@ def api_forecast(request):
     ("historical"/"market"/"custom" + `anchor_value`).
     Boundary is lenient about weights exactly like AssetSet.analysis():
     unknown tickers ignored, negatives clipped, all-zero -> equal.
+
+    `cash_weight` (0-1, default 0) forecasts the *complete* portfolio —
+    this mix constant-mixed with a cash sleeve earning `risk_free_rate`,
+    the engine option `Portfolio.forecast` has always had. The account
+    page's hypothetical forecast needs it: a setpoint's weights are
+    fractions of the whole account, so whatever they leave over is cash.
     """
     body, err = _json_body(request)
     if err:
@@ -280,6 +330,12 @@ def api_forecast(request):
     model = body.get("model", "steady")
     if model not in ("steady", "bootstrap"):
         return _bad("model must be 'steady' or 'bootstrap'.")
+    try:
+        cash_weight = float(body.get("cash_weight") or 0.0)
+    except (TypeError, ValueError):
+        return _bad("cash_weight must be a number.")
+    if not math.isfinite(cash_weight) or not 0 <= cash_weight <= 1:
+        return _bad("cash_weight must be a fraction between 0 and 1.")
     anchor, err = _clean_anchor(body)
     if err:
         return _bad(err)
@@ -293,8 +349,13 @@ def api_forecast(request):
                      for t in aset.tickers}
             if sum(clean.values()) <= 0:
                 clean = None
+        # only a cash sleeve makes the rate matter; passing it otherwise
+        # would change the all-risky payload's reported risk_free_rate
+        sleeve = ({"cash_weight": cash_weight,
+                   "risk_free_rate": settings["risk_free_rate"]}
+                  if cash_weight else {})
         result = aset.portfolio(clean).forecast(horizon_years=horizon,
-                                                model=model,
+                                                model=model, **sleeve,
                                                 **anchor).to_dict()
     except DataFetchError as e:
         return _bad(str(e))

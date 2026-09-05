@@ -496,3 +496,93 @@ h2 small.sub { font-weight: 400; font-size: 12.5px; margin-left: 6px; }
 .ctacard a.primary { text-decoration: none; white-space: nowrap; }
 
 #acctcard .tile .value.neg { color: var(--danger); }
+
+/* ---- the two worlds (docs/handoffs/flow-clarity.md) ----
+   Build and Optimize are a pretend world; My account is a ledger of
+   money and shares. Nothing used to say where the border was. One chip
+   component, two variants, sitting quietly in each page header — a
+   label, not a banner. Both hues are existing series tokens, so a
+   restyle is still an edit to :root alone. */
+.worldchip {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 4px 13px 4px 11px;
+  border: 1px solid var(--ring); border-radius: 999px;
+  background: var(--surface); color: var(--ink-2);
+  font-size: 12.5px; line-height: 1.4;
+}
+.worldchip::before {
+  content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--world-hue);
+}
+.worldchip b {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--world-hue);
+}
+.worldchip.explore { --world-hue: var(--accent-hi); }
+.worldchip.real    { --world-hue: var(--series-you); }
+.worldchip.real    { border-color: rgba(201, 133, 0, 0.35); }
+.worldchip.explore { border-color: rgba(31, 198, 163, 0.30); }
+
+/* ---- Optimize: nothing to optimize yet (fix 1) ---- */
+.emptystate { text-align: center; padding: 40px 20px 44px; }
+.emptystate h2 { font-size: 18px; }
+.emptystate .sub { max-width: 44ch; margin: 0 auto 16px; }
+.emptystate a.primary { text-decoration: none; display: inline-block; }
+
+/* ---- Optimize: which mix am I working on? (fix 2) ---- */
+.sourcepick {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 12px; font-size: 12px; color: var(--muted);
+}
+.sourcepick .srcbtn {
+  background: var(--surface-2); border: 1px solid var(--ring);
+  color: var(--ink-2); border-radius: 999px; padding: 3px 12px;
+  font-size: 12px; cursor: pointer;
+}
+.sourcepick .srcbtn:hover { color: var(--ink); border-color: var(--accent); }
+.sourcepick .srcbtn[aria-pressed="true"] {
+  background: rgba(23, 166, 137, 0.14); border-color: var(--accent);
+  color: var(--ink);
+}
+.sourcepick .forked { margin: 0; font-size: 12px; flex-basis: 100%; }
+
+/* ---- Advanced priors disclosure (fix 5) ----
+   The anchor control went missing twice in user testing, so the summary
+   row is always on screen under the model picker and a non-default
+   prior shows as a chip even while collapsed. */
+details.advanced { margin: 0 0 12px; }
+details.advanced > summary {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  cursor: pointer; list-style: none;
+  font-size: 12.5px; color: var(--ink-2);
+  border: 1px dashed var(--ring); border-radius: 10px; padding: 7px 12px;
+}
+details.advanced > summary::-webkit-details-marker { display: none; }
+details.advanced > summary::before {
+  content: "▸"; color: var(--muted); font-size: 11px;
+}
+details.advanced[open] > summary::before { content: "▾"; }
+details.advanced > summary:hover { color: var(--ink); border-color: var(--accent); }
+details.advanced .priorchip {
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--accent-hi); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 1px 9px;
+}
+details.advanced .advbody {
+  border: 1px solid var(--ring); border-top: none;
+  border-radius: 0 0 10px 10px; margin: -6px 8px 0; padding: 14px 12px 4px;
+}
+.controlgloss { margin: -6px 0 12px; color: var(--muted); font-size: 12px; }
+
+/* ---- My account: the starter card (bridge 1) ---- */
+.startercard { border-color: var(--accent); }
+.startercard h2 { font-size: 17px; }
+.startercard .sub { max-width: 62ch; }
+.startercard .fcontrols { margin-bottom: 4px; }
+
+/* ---- one-line choosers and nudges (fix 4) ---- */
+.chooser {
+  margin: 0 0 10px; font-size: 13px; color: var(--ink-2);
+}
+.chooser a, .nudge a { color: var(--accent-hi); }
+.nudge { margin: 12px 0 0; font-size: 13px; color: var(--ink-2); }

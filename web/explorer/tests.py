@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 
-from explorer.models import Holding, SavedPortfolio
+from explorer.models import DraftPortfolio, Holding, SavedPortfolio
 
 
 def make_user(name="rt"):
@@ -376,6 +376,29 @@ class ForecastApiTests(TestCase):
                              "anchor": "custom", "anchor_value": 0.06}).json()
         self.assertEqual(cus["anchor"]["value"], 0.06)
 
+    def test_cash_sleeve_reaches_the_model(self):
+        """`cash_weight` forecasts the complete portfolio — the engine
+        option the account page's hypothetical needs (bridge 2). A cash
+        sleeve must damp both the centre and the spread, and the payload
+        has to report the sleeve it actually used."""
+        risky = self.forecast({"tickers": ["AAA", "BBB"], "horizon_years": 2,
+                               "risk_free_rate": 0.04}).json()
+        mixed = self.forecast({"tickers": ["AAA", "BBB"], "horizon_years": 2,
+                               "risk_free_rate": 0.04,
+                               "cash_weight": 0.5}).json()
+        self.assertEqual(risky["cash_weight"], 0.0)
+        self.assertEqual(mixed["cash_weight"], 0.5)
+        self.assertEqual(mixed["risk_free_rate"], 0.04)
+        self.assertLess(mixed["sigma_annual"], risky["sigma_annual"])
+        # ...and the all-risky payload is untouched by the new parameter
+        self.assertEqual(risky["risk_free_rate"], 0.0)
+
+    def test_rejects_bad_cash_weight(self):
+        for bad in (-0.1, 1.5, "half"):
+            res = self.forecast({"tickers": ["AAA"], "horizon_years": 2,
+                                 "cash_weight": bad})
+            self.assertEqual(res.status_code, 400, bad)
+
     def test_rejects_bad_anchor(self):
         for body in ({"anchor": "vibes"},
                      {"anchor": "custom"},                   # no value
@@ -539,7 +562,11 @@ class AccountTests(TestCase):
     def test_pages_render_the_anchor_control_from_engine_constants(self):
         """Both forecast cards get the control, and the long-run number in
         the copy comes from the engine — an empty {{ }} here would be a
-        silently blank label."""
+        silently blank label. Optimize only renders its card when there is
+        something to optimize, so give this user a draft first (fix 1)."""
+        draft = DraftPortfolio.objects.create(owner=self.user)
+        draft.set_assets([("AAA", 1.0)])
+        draft.save()
         with patch("explorer.views.risk_free_rate",
                    return_value={"rate": 0.04, "as_of": "2026-09-01"}):
             build = self.client.get("/optimize").content.decode()
@@ -548,9 +575,13 @@ class AccountTests(TestCase):
                           (account, ("af-anchor", "af-anchorvalue"))):
             for element_id in ids:
                 self.assertIn(f'id="{element_id}"', html)
-            self.assertIn("Long-run market (8%)", html)
+            self.assertIn("Return to normal (8%/yr)", html)
             self.assertIn('max="30"', html)
             self.assertIn('min="-20"', html)
+            # the control lives behind a disclosure now; it must still be
+            # on the page unconditionally, not swapped for a third model
+            self.assertIn("Advanced", html)
+            self.assertNotIn("of 3", html)
 
     def test_anonymous_gets_401_and_page_redirects(self):
         self.client.logout()
@@ -774,6 +805,71 @@ class PageTests(TestCase):
             res = self.client.get("/optimize")
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, "Optimize")
+
+    def test_optimize_refuses_to_invent_a_portfolio(self):
+        """Fix 1: a user with no draft and no holdings gets a signpost back
+        to Build — not a toolbar, a chart and seven example assets they
+        never chose."""
+        self.client.force_login(self.user)
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            res = self.client.get("/optimize")
+        html = res.content.decode()
+        self.assertIn('id="optimize-empty"', html)
+        self.assertIn("Nothing to optimize yet", html)
+        for absent in ('id="addform"', 'id="analyze"', 'id="chart"',
+                       'id="method"', "app.js"):
+            self.assertNotIn(absent, html)
+
+    def test_optimize_renders_the_workbench_once_a_draft_exists(self):
+        """...and the moment there is something to optimize, the page is
+        exactly what it always was."""
+        self.client.force_login(self.user)
+        draft = DraftPortfolio.objects.create(owner=self.user)
+        draft.set_assets([("AAA", 0.6), ("BBB", 0.4)])
+        draft.save()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            html = self.client.get("/optimize").content.decode()
+        self.assertNotIn('id="optimize-empty"', html)
+        for present in ('id="addform"', 'id="analyze"', 'id="chart"',
+                        'id="sourcepick"', "app.js"):
+            self.assertIn(present, html)
+
+    def test_optimize_opens_for_a_funded_account_with_no_draft(self):
+        """Holdings are a source too (fix 2) — someone who funded an
+        account elsewhere still has something to optimize."""
+        from explorer.models import Account, AccountEvent
+        self.client.force_login(self.user)
+        account = Account.objects.create(owner=self.user)
+        AccountEvent.objects.create(account=account, date="2026-01-05",
+                                    kind="deposit", amount=1000)
+        AccountEvent.objects.create(account=account, date="2026-01-06",
+                                    kind="buy", ticker="AAA", shares=5,
+                                    price=100)
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            html = self.client.get("/optimize").content.decode()
+        self.assertNotIn('id="optimize-empty"', html)
+        self.assertIn('id="analyze"', html)
+
+    def test_no_phantom_third_forecast_model_is_served(self):
+        """Fix 5: the numbered model labels sent the owner hunting for a
+        third model twice. The numbering must be gone from the templates
+        *and* the served JS — this deliberately checks the bytes we serve,
+        comments included, so it can't creep back in as a stale label."""
+        self.client.force_login(self.user)
+        draft = DraftPortfolio.objects.create(owner=self.user)
+        draft.set_assets([("AAA", 1.0)])
+        draft.save()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            pages = [self.client.get("/optimize").content.decode(),
+                     self.client.get("/account").content.decode()]
+        from django.contrib.staticfiles import finders
+        for name in ("explorer/app.js", "explorer/account.js"):
+            with open(finders.find(name)) as fh:
+                pages.append(fh.read())
+        for text in pages:
+            self.assertNotIn("of 3", text)
+            self.assertNotIn("model 1", text)
+            self.assertNotIn("model 2", text)
 
     def test_optimize_anonymous_redirects_to_login(self):
         res = self.client.get("/optimize")
