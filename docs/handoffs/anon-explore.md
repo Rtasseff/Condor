@@ -1,5 +1,7 @@
 # Handoff — `feature/anon-explore`
 
+**Merged 2026-09-06**; branch and worktree removed.
+
 <!-- Copy of docs/handoffs/_template.md, seeded by scripts/new-worktree.sh.
      Lives at docs/handoffs/anon-explore.md on the branch. Keep "Status" current. -->
 

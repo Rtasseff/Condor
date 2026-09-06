@@ -194,4 +194,5 @@ Mark the registry row merged (or remove it) in the same commit.
 
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
-| `anon-explore` | `feature/anon-explore` | 8001 | 2026-09-05 | briefed — Explore without an account + per-IP rate limiting (Sonnet) |
+
+*(none — anon-explore merged 2026-09-06)*
