@@ -11,7 +11,8 @@ import uuid
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.core.cache import cache
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from explorer.models import DraftPortfolio, Holding, SavedPortfolio
@@ -233,16 +234,20 @@ class AuthTests(TestCase):
         self.assertEqual(res.status_code, 201, res.content)
         return res.json()["id"]
 
-    def test_anonymous_page_redirects_to_login(self):
-        res = self.client.get("/")
-        self.assertEqual(res.status_code, 302)
-        self.assertTrue(res.url.startswith("/login"))
+    def test_anonymous_can_explore(self):
+        """Explore is open: Build and Optimize render for a stranger."""
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            for path in ("/", "/optimize"):
+                self.assertEqual(self.client.get(path).status_code, 200, path)
 
     def test_anonymous_api_gets_json_401(self):
+        """...but a user's own data still needs a login, as JSON."""
         for call in (
             lambda: self.client.get("/api/portfolios"),
-            lambda: self.client.post("/api/analyze", data="{}",
-                                     content_type="application/json"),
+            lambda: self.client.get("/api/draft"),
+            lambda: self.client.put("/api/draft", data="{}",
+                                    content_type="application/json"),
+            lambda: self.client.get("/api/account"),
         ):
             res = call()
             self.assertEqual(res.status_code, 401)
@@ -419,11 +424,17 @@ class ForecastApiTests(TestCase):
         self.assertLessEqual(d["bands_est"][1]["lo"][-1], d["bands"][1]["lo"][-1])
         self.assertLessEqual(d["bands"][1]["lo"][-1], d["median"][-1])
 
-    def test_requires_login(self):
+    def test_is_public(self):
+        """No login: it computes from public price data and holds no user
+        state. A bad body still gets the ordinary 400, not a 401."""
         self.client.logout()
         res = self.client.post("/api/forecast", data="{}",
                                content_type="application/json")
-        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.status_code, 400)
+        res = self.forecast({"tickers": ["AAA", "BBB"], "years": 3,
+                             "method": "robust", "risk_free_rate": 0.04,
+                             "horizon_years": 2})
+        self.assertEqual(res.status_code, 200, res.content)
 
 
 class AccountTests(TestCase):
@@ -872,10 +883,11 @@ class PageTests(TestCase):
             self.assertNotIn("model 1", text)
             self.assertNotIn("model 2", text)
 
-    def test_optimize_anonymous_redirects_to_login(self):
-        res = self.client.get("/optimize")
-        self.assertEqual(res.status_code, 302)
-        self.assertTrue(res.url.startswith("/login"))
+    def test_optimize_renders_for_anonymous_visitors(self):
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            res = self.client.get("/optimize")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Optimize")
 
     def test_login_redirect_lands_on_build(self):
         res = self.client.post(
@@ -1129,9 +1141,17 @@ class AssetInfoApiTests(TestCase):
         res = self.client.get("/api/asset?symbol=not a ticker!")
         self.assertEqual(res.status_code, 400)
 
-    def test_anonymous_gets_401(self):
+    def test_anonymous_is_served(self):
+        """Public: plain facts about a public ticker, no user state."""
+        import datetime as dt
+
+        import pandas as pd
         self.client.logout()
-        self.assertEqual(self.client.get("/api/asset?symbol=AAPL").status_code, 401)
+        idx = pd.bdate_range(end=dt.date.today(), periods=400)
+        with self.fake_store({"AAPL": pd.Series(100.0, index=idx, dtype=float)}):
+            res = self.client.get("/api/asset?symbol=AAPL")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()["ok"])
 
 
 class LearnPageTests(TestCase):
@@ -1164,17 +1184,20 @@ class LearnPageTests(TestCase):
 
     def test_base_template_survives_anonymous_users(self):
         """The nav, the contribution-due dot and the user box all render
-        off `request.user`; the public page is the first time they meet an
-        AnonymousUser. Links to the private pages still show — they just
-        redirect at the door."""
+        off `request.user`. Links to the private pages still show — they
+        just redirect at the door — and the user box now carries the way
+        in rather than nothing at all."""
         html = self.learn_html()
         self.assertIn('href="/"', html)
         self.assertIn('href="/account"', html)
-        self.assertNotIn('class="userbox"', html)
+        self.assertIn('class="userbox"', html)
+        self.assertIn('href="/login?next=/learn"', html)
+        self.assertNotIn("Log out", html)
         self.assertNotIn("duedot", html)
 
-    def test_every_other_page_still_requires_a_login(self):
-        for path in ("/", "/optimize", "/account"):
+    def test_my_portfolio_still_requires_a_login(self):
+        """Explore opened up; the account world did not."""
+        for path in ("/account",):
             res = self.client.get(path)
             self.assertEqual(res.status_code, 302, path)
             self.assertTrue(res.url.startswith("/login"), path)
@@ -1302,3 +1325,422 @@ class LearnPageTests(TestCase):
         self.assertNotIn("worldchip", html)
         self.assertNotIn("stepper", html)
         self.assertNotIn("plotly", html)
+
+
+class AnonymousExploreTests(TestCase):
+    """feature/anon-explore: the whole Explore journey without an account.
+
+    The funnel is Learn -> play on Explore -> sign in at the moment you
+    want a mix to be real. What did *not* move is the identity boundary:
+    anything that reads or writes a user's own data still needs a login,
+    and the tests below say so one route at a time."""
+
+    def setUp(self):
+        self.user = make_user()
+
+    def analyze(self, body):
+        with patch("explorer.views.fetch_prices",
+                   side_effect=ForecastApiTests.fake_prices):
+            return self.client.post("/api/analyze", data=json.dumps(body),
+                                    content_type="application/json")
+
+    def forecast(self, body):
+        with patch("explorer.views.fetch_prices",
+                   side_effect=ForecastApiTests.fake_prices):
+            return self.client.post("/api/forecast", data=json.dumps(body),
+                                    content_type="application/json")
+
+    # ------------------------------------------------------------ public
+
+    def test_explore_pages_render_without_an_account(self):
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            for path in ("/", "/optimize", "/learn"):
+                self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_share_links_are_readable_by_people_without_accounts(self):
+        """The viral loop: a link is *meant* to be sent to a stranger, and
+        the uuid is the capability that carries the permission."""
+        saved = SavedPortfolio.objects.create(owner=self.user, name="Sent to a friend",
+                                              method="robust", years=10,
+                                              risk_free_rate=0.04)
+        saved.set_holdings({"AAPL": 0.6, "MSFT": 0.4})
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            res = self.client.get(f"/p/{saved.id}")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Sent to a friend")
+
+    def test_analyze_and_forecast_round_trip_with_no_login(self):
+        mix = {"tickers": ["AAA", "BBB"], "years": 3, "method": "robust",
+               "risk_free_rate": 0.04, "weights": {"AAA": 60, "BBB": 40}}
+        res = self.analyze(mix)
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertIn("frontier", res.json())
+        res = self.forecast({**mix, "horizon_years": 2})
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertIn("median", res.json())
+
+    def test_public_pages_hand_out_a_csrf_cookie(self):
+        """An anonymous visitor's first act is a fetch() POST to analyze,
+        which needs a token — so every public Explore page must mint one."""
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            for path in ("/", "/optimize"):
+                res = self.client.get(path)
+                self.assertIn("csrftoken", res.cookies, path)
+
+    # ----------------------------------------------------------- private
+
+    def test_a_users_own_data_still_needs_a_login(self):
+        """Explicit regression list: every route that reads or writes
+        something belonging to a person stays shut to anonymous callers."""
+        json_routes = [
+            ("get", "/api/draft"),
+            ("put", "/api/draft"),
+            ("get", "/api/portfolios"),
+            ("post", "/api/portfolios"),
+            ("get", "/api/account"),
+            ("post", "/api/account/events"),
+            ("post", "/api/account/target"),
+            ("get", "/api/account/plan"),
+            ("post", "/api/account/plan/confirm"),
+            ("post", "/api/account/schedule"),
+            ("get", "/api/account/contribution"),
+            ("post", "/api/account/contribution/confirm"),
+            ("get", "/api/account/forecast"),
+        ]
+        for method, path in json_routes:
+            call = getattr(self.client, method)
+            res = (call(path) if method == "get" else
+                   call(path, data="{}", content_type="application/json"))
+            self.assertEqual(res.status_code, 401, path)
+            self.assertIn("error", res.json(), path)
+
+        res = self.client.get("/account")
+        self.assertEqual(res.status_code, 302)
+        self.assertTrue(res.url.startswith("/login"))
+
+    def test_a_saved_portfolio_of_someone_elses_is_still_theirs(self):
+        """Reading a share link is public; the collection behind it is not."""
+        saved = SavedPortfolio.objects.create(owner=self.user, name="Mine",
+                                              method="robust", years=10,
+                                              risk_free_rate=0.04)
+        saved.set_holdings({"AAPL": 1})
+        self.assertEqual(self.client.get(f"/api/portfolios/{saved.id}").status_code, 401)
+        self.assertEqual(self.client.delete(f"/api/portfolios/{saved.id}").status_code, 401)
+        self.assertTrue(SavedPortfolio.objects.filter(pk=saved.id).exists())
+
+
+class SignInBoundaryTests(TestCase):
+    """The identity moments as a visitor without an account meets them:
+    visible and aspirational, never a dead end, and never a control that
+    would fail if pressed."""
+
+    def setUp(self):
+        self.user = make_user()
+
+    def optimize_html(self):
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            return self.client.get("/optimize").content.decode()
+
+    def test_userbox_offers_the_way_in(self):
+        html = self.client.get("/learn").content.decode()
+        self.assertIn('href="/login?next=/learn"', html)
+        self.assertIn("Sign in", html)
+
+    def test_build_swaps_the_account_card_for_an_invitation(self):
+        html = self.client.get("/").content.decode()
+        self.assertIn("Have an account?", html)
+        self.assertIn("or just keep exploring", html)
+        self.assertNotIn("Go to My portfolio", html)
+        self.assertNotIn('id="acct-tiles"', html)
+
+    def test_the_point_card_asks_for_a_sign_in_instead_of_a_target(self):
+        html = self.optimize_html()
+        self.assertIn("Sign in to make it real", html)
+        self.assertIn('href="/login?next=/optimize"', html)
+        self.assertNotIn('id="settarget"', html)
+        self.assertNotIn('id="settargetconfirm"', html)
+        # adopting a point into your own draft needs no account at all
+        self.assertIn('id="adoptpoint"', html)
+
+    def test_signing_in_returns_you_to_the_page_you_were_on(self):
+        """Including its query string: someone who followed Build's
+        "see the range" deep link and signed in from there should land
+        back on the forecast they were looking at, not a bare /optimize."""
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            html = self.client.get(
+                "/optimize?forecast=10000&years=5").content.decode()
+        self.assertIn("next=/optimize%3Fforecast%3D10000%26years%3D5", html)
+
+    def test_save_and_share_are_replaced_by_a_quiet_line(self):
+        html = self.optimize_html()
+        self.assertIn("to save &amp; share this mix", html)
+        self.assertNotIn('id="save"', html)
+        self.assertNotIn('id="saved"', html)
+
+    def test_signed_in_visitors_see_exactly_what_they_always_did(self):
+        self.client.force_login(self.user)
+        draft = DraftPortfolio.objects.create(owner=self.user)
+        draft.set_assets([("AAA", 1.0)])
+        draft.save()
+        html = self.optimize_html()
+        for present in ('id="settarget"', 'id="settargetconfirm"',
+                        'id="save"', 'id="saved"', "Make this my real portfolio"):
+            self.assertIn(present, html)
+        for absent in ("Sign in to make it real", "to save &amp; share this mix"):
+            self.assertNotIn(absent, html)
+        build = self.client.get("/").content.decode()
+        self.assertIn("Go to My portfolio", build)
+        self.assertNotIn("Have an account?", build)
+
+
+class AnonymousDraftGateTests(TestCase):
+    """Optimize refuses to invent a portfolio (fix 1) — but an anonymous
+    visitor's draft lives in their browser, where the server cannot see
+    it. Who decides, and how the page avoids a flash of the wrong half."""
+
+    def setUp(self):
+        self.user = make_user()
+
+    def optimize_html(self):
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            return self.client.get("/optimize").content.decode()
+
+    def test_anonymous_ships_both_halves_and_a_head_script_to_choose(self):
+        html = self.optimize_html()
+        self.assertIn('id="optimize-empty"', html)      # the signpost
+        self.assertIn('id="workbench"', html)           # ...and the workbench
+        self.assertIn("condor.draft.v1", html)          # the head script
+        self.assertIn("nodraft", html)
+        # the choice is made in <head>, before any of it can be painted
+        self.assertLess(html.index("condor.draft.v1"), html.index("<body>"))
+
+    def test_signed_in_with_nothing_is_unchanged_and_imports_instead(self):
+        """No client gate for a signed-in visitor: the server still knows
+        the whole answer. The one thing it cannot know — a draft carried
+        in from an anonymous session — is imported, then the page reloads
+        into the workbench (signpost.js)."""
+        self.client.force_login(self.user)
+        html = self.optimize_html()
+        self.assertIn('id="optimize-empty"', html)
+        self.assertNotIn('id="workbench"', html)
+        self.assertNotIn("app.js", html)
+        self.assertNotIn("nodraft", html)               # no client gate
+        self.assertIn("signpost.js", html)
+
+    def test_signed_in_with_a_draft_gets_the_workbench_only(self):
+        self.client.force_login(self.user)
+        draft = DraftPortfolio.objects.create(owner=self.user)
+        draft.set_assets([("AAA", 1.0)])
+        draft.save()
+        html = self.optimize_html()
+        self.assertNotIn('id="optimize-empty"', html)
+        self.assertNotIn("nodraft", html)
+        self.assertIn('id="workbench"', html)
+        self.assertIn("app.js", html)
+
+    def test_a_share_link_is_a_source_of_its_own(self):
+        """A stranger following /p/<uuid> has something to optimize even
+        with an empty browser — so no gate, no signpost."""
+        saved = SavedPortfolio.objects.create(owner=self.user, name="Shared",
+                                              method="robust", years=10,
+                                              risk_free_rate=0.04)
+        saved.set_holdings({"AAPL": 1})
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            html = self.client.get(f"/p/{saved.id}").content.decode()
+        self.assertNotIn('id="optimize-empty"', html)
+        self.assertNotIn("nodraft", html)
+        self.assertIn("app.js", html)
+
+
+class DraftStorageAdapterTests(TestCase):
+    """One draft, two homes (draft.js). The server can only see half of
+    this, so these check the half it can: that both Explore pages are
+    wired to the adapter, tell it who the visitor is, and that neither
+    page talks to /api/draft behind its back. The browser half is
+    verified by hand (see the handoff doc)."""
+
+    def setUp(self):
+        self.user = make_user()
+
+    @staticmethod
+    def served(name):
+        from django.contrib.staticfiles import finders
+        with open(finders.find(name)) as fh:
+            return fh.read()
+
+    def test_both_pages_load_the_adapter_and_say_who_is_here(self):
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            pages = [self.client.get("/").content.decode(),
+                     self.client.get("/optimize").content.decode()]
+        for html in pages:
+            self.assertIn("draft.js", html)
+            self.assertIn('id="is_authenticated"', html)
+        self.client.force_login(self.user)
+        draft = DraftPortfolio.objects.create(owner=self.user)
+        draft.set_assets([("AAA", 1.0)])
+        draft.save()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            authed = [self.client.get("/").content.decode(),
+                      self.client.get("/optimize").content.decode()]
+        for html in authed:
+            self.assertIn(">true<", html)
+
+    def test_no_page_writes_the_draft_api_behind_the_adapter(self):
+        """Every read and write of the draft goes through draft.js — a
+        direct fetch("/api/draft") in either page would silently do
+        nothing for a visitor without an account."""
+        for name in ("explorer/home.js", "explorer/app.js"):
+            self.assertNotIn('"/api/draft"', self.served(name), name)
+        adapter = self.served("explorer/draft.js")
+        self.assertIn('"/api/draft"', adapter)
+        self.assertIn("condor.draft.v1", adapter)
+
+    def test_the_import_is_one_shot_and_the_account_wins(self):
+        """The contract the browser half implements, asserted where it is
+        written down: import once per load, and a non-empty account draft
+        is never overwritten by the browser's copy."""
+        adapter = self.served("explorer/draft.js")
+        self.assertIn("if (importing) return importing", adapter)
+        self.assertIn("clearLocal();                        // the account's draft wins",
+                      adapter)
+
+    def test_the_draft_api_still_round_trips_for_signed_in_visitors(self):
+        """The import's server half: a straight PUT of the same payload
+        shape the browser stores, into an empty account draft."""
+        self.client.force_login(self.user)
+        stored = {"assets": [{"symbol": "AAA", "weight": 0.6},
+                             {"symbol": "BBB", "weight": 0.4}],
+                  "updated_at": "2026-09-05T00:00:00.000Z"}
+        self.assertEqual(self.client.get("/api/draft").json()["assets"], [])
+        res = self.client.put("/api/draft", data=json.dumps(stored),
+                              content_type="application/json")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual([a["symbol"] for a in res.json()["assets"]], ["AAA", "BBB"])
+
+
+@override_settings(RATELIMIT_ENABLE=True, CONDOR_RATE_LIMITS={
+    "analyze": "2/m", "forecast": "2/m", "asset": "2/m", "login": "2/m"})
+# django-ratelimit counts inside a wall-clock window, and a window that
+# rolls over between two requests resets the count — a real 1-in-a-suite
+# flake, not a real bug. Pin the window so these tests are about counting.
+@patch("django_ratelimit.core._get_window", lambda value, period: 10 ** 9)
+class RateLimitTests(TestCase):
+    """Per-IP caps on the public compute endpoints (explorer.throttle).
+
+    Explore is open to strangers, so nothing but these caps stands between
+    one script and a $12/mo box's CPU and price-data quota. Limits are
+    overridden down to 2/minute here; the production numbers live in
+    settings.CONDOR_RATE_LIMITS."""
+
+    def setUp(self):
+        cache.clear()      # counters are cache state, shared across tests
+
+    def tearDown(self):
+        cache.clear()
+
+    MIX = {"tickers": ["AAA", "BBB"], "years": 3, "method": "robust",
+           "risk_free_rate": 0.04, "horizon_years": 2}
+
+    def post(self, path, **extra):
+        with patch("explorer.views.fetch_prices",
+                   side_effect=ForecastApiTests.fake_prices):
+            return self.client.post(path, data=json.dumps(self.MIX),
+                                    content_type="application/json", **extra)
+
+    def assert_limited(self, res):
+        self.assertEqual(res.status_code, 429, res.content)
+        self.assertIn("number crunching", res.json()["error"])
+
+    # ------------------------------------------------------------ limits
+
+    def test_analyze_is_capped(self):
+        for _ in range(2):
+            self.assertEqual(self.post("/api/analyze").status_code, 200)
+        self.assert_limited(self.post("/api/analyze"))
+
+    def test_forecast_is_capped(self):
+        for _ in range(2):
+            self.assertEqual(self.post("/api/forecast").status_code, 200)
+        self.assert_limited(self.post("/api/forecast"))
+
+    def test_requests_that_never_reach_the_view_cost_nothing(self):
+        """The quota meters work. A GET to a POST-only endpoint earns a
+        405 and does no work, so it must not spend anyone's budget."""
+        for _ in range(5):
+            self.assertEqual(self.client.get("/api/analyze").status_code, 405)
+        for _ in range(2):
+            self.assertEqual(self.post("/api/analyze").status_code, 200)
+        self.assert_limited(self.post("/api/analyze"))
+
+    def test_each_endpoint_has_its_own_bucket(self):
+        """Burning through analyze must not lock someone out of forecast —
+        they are different costs and different groups."""
+        for _ in range(3):
+            self.post("/api/analyze")
+        self.assertEqual(self.post("/api/forecast").status_code, 200)
+
+    def test_asset_info_is_capped(self):
+        import datetime as dt
+
+        import pandas as pd
+        idx = pd.bdate_range(end=dt.date.today(), periods=400)
+        store = AssetInfoApiTests.fake_store(
+            {"AAPL": pd.Series(100.0, index=idx, dtype=float)})
+        with store:
+            for _ in range(2):
+                self.assertEqual(
+                    self.client.get("/api/asset?symbol=AAPL").status_code, 200)
+            self.assert_limited(self.client.get("/api/asset?symbol=AAPL"))
+
+    def test_the_login_form_is_capped(self):
+        """Registration is closed, so an unlimited login form buys a
+        stranger nothing but password guesses."""
+        creds = {"username": "nobody", "password": "wrong"}
+        for _ in range(2):
+            self.assertEqual(self.client.post("/login", creds).status_code, 200)
+        res = self.client.post("/login", creds)
+        self.assertEqual(res.status_code, 429)
+        self.assertContains(res, "Too many sign-in attempts", status_code=429)
+        # reading the page is free — only attempts are counted
+        self.assertEqual(self.client.get("/login").status_code, 200)
+
+    # --------------------------------------------------------- the key fn
+
+    def test_the_bucket_is_the_real_client_not_the_proxy(self):
+        """On Fly every request's REMOTE_ADDR is the proxy. Keying on that
+        would put the whole internet in one bucket, so one visitor's burst
+        would throttle everybody — the bug this test exists to prevent."""
+        for _ in range(3):
+            self.post("/api/analyze", headers={"fly-client-ip": "203.0.113.7"})
+        # a different visitor behind the same proxy is unaffected
+        self.assertEqual(
+            self.post("/api/analyze",
+                      headers={"fly-client-ip": "203.0.113.9"}).status_code, 200)
+        # ...and the one who burst through is still held
+        self.assert_limited(
+            self.post("/api/analyze", headers={"fly-client-ip": "203.0.113.7"}))
+
+    def test_client_ip_prefers_fly_and_never_trusts_x_forwarded_for(self):
+        from django.test import RequestFactory
+
+        from explorer.throttle import client_ip
+        rf = RequestFactory()
+
+        req = rf.get("/", headers={"fly-client-ip": "203.0.113.7"},
+                     REMOTE_ADDR="10.0.0.1")
+        self.assertEqual(client_ip("g", req), "203.0.113.7")
+
+        # X-Forwarded-For is client-suppliable: ignoring it is the point
+        req = rf.get("/", headers={"x-forwarded-for": "9.9.9.9"},
+                     REMOTE_ADDR="10.0.0.1")
+        self.assertEqual(client_ip("g", req), "10.0.0.1")
+
+        # off Fly (dev), REMOTE_ADDR is the real peer
+        req = rf.get("/", REMOTE_ADDR="127.0.0.1")
+        self.assertEqual(client_ip("g", req), "127.0.0.1")
+
+    def test_a_spoofed_forwarding_header_does_not_buy_a_fresh_bucket(self):
+        for _ in range(3):
+            self.post("/api/analyze")
+        self.assert_limited(
+            self.post("/api/analyze", headers={"x-forwarded-for": "9.9.9.9"}))

@@ -7,9 +7,7 @@ urlpatterns = [
     path("", views.index, name="index"),
     path("optimize", views.optimize, name="optimize"),
     path("learn", views.learn, name="learn"),
-    path("login", auth_views.LoginView.as_view(
-        template_name="explorer/login.html",
-        redirect_authenticated_user=True), name="login"),
+    path("login", views.ThrottledLoginView.as_view(), name="login"),
     path("logout", auth_views.LogoutView.as_view(next_page="login"),
          name="logout"),
     path("p/<uuid:pid>", views.shared_portfolio, name="shared_portfolio"),

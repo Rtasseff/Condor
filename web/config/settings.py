@@ -83,6 +83,43 @@ DATABASES = {
     }
 }
 
+# --- rate limiting (django-ratelimit) --------------------------------
+# Explore is public (anonymous visitors can analyze and forecast), so the
+# compute endpoints need a per-IP cap. Counters live in this cache.
+#
+# Known softness: LocMem is per-process and the Dockerfile runs 2 gunicorn
+# workers, so a visitor whose requests land on both workers gets roughly
+# 2x the nominal rate. That is fine for v1 abuse protection — the point is
+# to stop a script, not to meter honest use. A shared cache (Redis, or
+# Fly's) is the upgrade when there is a reason for one.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "condor-ratelimit",
+        # LocMem defaults to 300 entries and culls a third of them at
+        # random when full. A counter is one entry per (endpoint, IP,
+        # window), so a burst of traffic from many addresses would evict
+        # live counters and quietly hand people a fresh allowance. Room
+        # for a few thousand costs nothing on a box this size.
+        "OPTIONS": {"MAX_ENTRIES": 10000},
+    }
+}
+
+# Per-IP limits, by name (explorer.throttle). Overridable in tests.
+CONDOR_RATE_LIMITS = {
+    "analyze": "15/m",
+    "forecast": "15/m",
+    "asset": "60/m",
+    "login": "10/m",
+}
+
+# One shared LocMem counter would leak between tests — the suite is one
+# process making hundreds of requests from one IP. The rate-limit tests
+# turn it back on explicitly with override_settings.
+_TESTING = "test" in sys.argv
+RATELIMIT_ENABLE = os.environ.get(
+    "CONDOR_RATELIMIT", "0" if _TESTING else "1") == "1"
+
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"          # collectstatic target
 STORAGES = {
@@ -105,10 +142,13 @@ if not DEBUG:
     X_FRAME_OPTIONS = "DENY"
 
 # ---- accounts -------------------------------------------------------
-# Multi-user from the start of the team release: everything requires a
-# login; accounts are created by the admin (see README). Saved
-# portfolios belong to their creator; /p/<uuid> links are readable by
-# any logged-in user.
+# Multi-user from the start of the team release; accounts are created by
+# the admin (see README). Explore (Build/Optimize/Forecast) and /learn are
+# public — a stranger can play with pretend money before signing up, and
+# their draft lives in their own browser. Everything that reads or writes
+# a *user's* data still requires a login: the draft API, saved portfolios,
+# and everything under My portfolio. Saved portfolios belong to their
+# creator; a /p/<uuid> link is a capability, readable by anyone holding it.
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "/"
 

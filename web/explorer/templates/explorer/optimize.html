@@ -2,6 +2,28 @@
 {% load static %}
 {% block title %}Condor Funds — Optimize{% endblock %}
 {% block nav_explore %}active{% endblock %}
+{% block headscripts %}{{ block.super }}
+{# The condition belongs inside the block, not around it: block tags are #}
+{# collected at compile time, so an if-tag wrapping this one would be #}
+{# ignored and the script would run on every Optimize page. #}
+{% if client_gated %}
+<script>
+/* No account, so the draft is in this browser and only this browser knows
+   whether there is anything to optimize (views._render_optimize). Decide
+   here, in the head, so the right half of the page is the only half ever
+   painted — the signed-in path answers the same question server-side.
+   Deliberately duplicates draft.js's key rather than waiting for it: a
+   script at the end of the body is one paint too late. */
+(function () {
+  var has = false;
+  try {
+    var raw = JSON.parse(localStorage.getItem("condor.draft.v1") || "null");
+    has = !!(raw && raw.assets && raw.assets.length);
+  } catch (e) { has = false; }
+  document.documentElement.classList.add(has ? "hasdraft" : "nodraft");
+})();
+</script>
+{% endif %}{% endblock %}
 {% block content %}
 <main>
   <div class="pagehead">
@@ -23,7 +45,11 @@
        waiting here.</p>
     <a href="{% url 'index' %}" class="primary">Pick your assets in Explore →</a>
   </section>
-{% else %}
+{% endif %}
+{% if has_source or client_gated %}
+{# display:contents (style.css) — a handle for the head script to hide the #}
+{# whole workbench with, without changing how any of it lays out. #}
+<div id="workbench">
   <section class="card toolbar" aria-label="Analysis settings">
     <details class="advanced" id="settingsdetails">
       <summary><b>Settings</b> — method, lookback, risk-free rate</summary>
@@ -54,8 +80,15 @@
       </div>
     </details>
     <div class="quietrow">
+      {% if user.is_authenticated %}
       <button id="save" class="ghost small" type="button">Save</button>
       <button id="saved" class="ghost small" type="button" aria-expanded="false">Saved</button>
+      {% else %}
+      {# Saving and sharing are account things — say so where the buttons #}
+      {# would have been, rather than offering a button that fails. #}
+      <span class="sub"><a href="{% url 'login' %}?next={{ request.get_full_path|urlencode }}">Sign in</a>
+        to save &amp; share this mix</span>
+      {% endif %}
       <span id="status" class="status" role="status"></span>
     </div>
   </section>
@@ -140,6 +173,7 @@
         <div id="pointweights" class="wbars"></div>
         <p class="sub" id="calnote" hidden></p>
         <button id="adoptpoint" class="primary small">Make this my portfolio</button>
+        {% if user.is_authenticated %}
         <button id="settarget" class="ghost small" type="button"
                 title="Sets this as your real portfolio's target and opens the trade plan — whole shares at the last close — for turning what you hold now into this.">
           Make this my real portfolio →</button>
@@ -150,6 +184,15 @@
           <button id="settargetgo" class="primary small" type="button">Yes, set my real portfolio</button>
           <button id="settargetcancel" class="ghost small" type="button">Cancel</button>
         </div>
+        {% else %}
+        {# The moment the funnel exists for: they have a mix they like, and #}
+        {# making it real is the one thing that needs an account. Signing in #}
+        {# brings the mix with them (draft.js). #}
+        <a id="settargetsignin" class="ghost small"
+           href="{% url 'login' %}?next={{ request.get_full_path|urlencode }}"
+           title="Making a mix real means tracking it against money — that part needs an account.">
+          Sign in to make it real →</a>
+        {% endif %}
       </section>
     </section>
 
@@ -283,7 +326,7 @@
     </div>
     <p class="sub" id="datarange"></p>
   </section>
-
+</div>
 {% endif %}
 
   <footer>
@@ -292,9 +335,15 @@
   </footer>
 </main>
 
-{% if has_source %}
+{{ user.is_authenticated|json_script:"is_authenticated" }}
+<script src="{% static 'explorer/draft.js' %}"></script>
+{% if has_source or client_gated %}
 {% if preset %}{{ preset|json_script:"preset" }}{% endif %}
 {{ sources|json_script:"sources" }}
 <script src="{% static 'explorer/app.js' %}"></script>
+{% else %}
+{# Signed in with nothing to optimize — except, maybe, a mix this browser #}
+{# is still carrying from before they had an account. #}
+<script src="{% static 'explorer/signpost.js' %}"></script>
 {% endif %}
 {% endblock %}

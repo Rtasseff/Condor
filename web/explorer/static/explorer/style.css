@@ -797,3 +797,28 @@ details.transcript > summary:hover { color: var(--ink); }
 .learnlink:hover { color: var(--accent-hi); border-bottom-color: var(--accent); }
 .logincard .loginlearn { margin: 14px 0 0; text-align: center; }
 .logincard .loginlearn a { color: var(--accent-hi); text-decoration: none; }
+
+/* ---- signed out (docs/handoffs/anon-explore.md) ----
+   Explore is open to strangers, so every place that used to be an account
+   action is now a way in. Quiet by design: a link that looks like a ghost
+   button, never a second primary competing with the page's real action. */
+.userbox a.ghost, #settargetsignin {
+  display: inline-block; padding: 6px 12px; font-size: 13px;
+  color: var(--ink-2); text-decoration: none;
+  border: 1px solid var(--ring); border-radius: 9px;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.userbox a.ghost:hover, #settargetsignin:hover {
+  background: var(--surface-2); color: var(--ink); border-color: var(--accent);
+}
+.quietrow .sub { margin: 0; font-size: 13px; color: var(--muted); }
+.quietrow .sub a, #acctcard .sub a { color: var(--accent-hi); }
+
+/* Anonymous Optimize ships both the signpost and the workbench and lets
+   an inline head script pick one before first paint (optimize.html) —
+   the draft is in localStorage, where the server can't see it.
+   display:contents keeps this wrapper out of the layout entirely, so the
+   cards inside lay out exactly as they do for a signed-in visitor. */
+#workbench { display: contents; }
+.nodraft #workbench { display: none; }
+.hasdraft #optimize-empty { display: none; }

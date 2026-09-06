@@ -31,6 +31,11 @@
       <button type="submit" class="ghost small">Log out</button>
     </form>
   </div>
+  {% else %}
+  {# Explore is open to strangers; the way in is a link, not a wall. #}
+  <div class="userbox">
+    <a class="ghost small" href="{% url 'login' %}?next={{ request.get_full_path|urlencode }}">Sign in</a>
+  </div>
   {% endif %}
 </header>
 

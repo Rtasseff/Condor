@@ -47,7 +47,11 @@ async function api(url, opts = {}) {
     ...opts,
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Server error (${res.status})`);
+    err.status = res.status;   // callers that treat a 429 differently
+    throw err;
+  }
   return data;
 }
 
@@ -162,12 +166,13 @@ function setWeight(t, weightPct) {
   syncDraft();
 }
 
-// ---------- server round-trip ----------
-// Every edit round-trips the whole list. Leaving happens on a click, so
-// the last PUT can still be in flight — and Optimize now decides
-// server-side whether there is anything to optimize, which would strand
-// the user on "Nothing to optimize yet". Anything that navigates awaits
-// this instead of racing it.
+// ---------- draft round-trip ----------
+// Every edit writes the whole list back to wherever this visitor's draft
+// lives — the account behind /api/draft, or this browser (draft.js knows
+// which). Leaving happens on a click, so the last write can still be in
+// flight, and Optimize decides up front whether there is anything to
+// optimize, which would strand the user on "Nothing to optimize yet".
+// Anything that navigates awaits this instead of racing it.
 let pendingSync = Promise.resolve();
 
 async function syncDraft() {
@@ -175,16 +180,21 @@ async function syncDraft() {
     .filter((a) => a.weight > 0)
     .map((a) => ({ symbol: a.symbol, weight: a.weight }));
   if (!assets.length) return;
-  pendingSync = api("/api/draft", {
-    method: "PUT", body: JSON.stringify({ assets }),
-  }).catch((err) => { showError(err.message); });
+  pendingSync = CondorDraft.put(assets)
+    .catch((err) => { showError(err.message); });
   await pendingSync;
 }
 
 async function fetchInfo(symbol) {
   try {
     state.info[symbol] = await api(`/api/asset?symbol=${encodeURIComponent(symbol)}`);
-  } catch {
+  } catch (err) {
+    // One lookup per asset per load, against a per-IP cap: a big mix
+    // reloaded a few times in a minute can hit it. Saying "No price
+    // history yet." on every row would be a lie about the assets, so
+    // pass the real reason on (throttle.TOO_MANY) and let the rows say
+    // they have nothing rather than why.
+    if (err && err.status === 429) showError(err.message);
     state.info[symbol] = { ok: false };
   }
   renderDraft();
@@ -492,9 +502,12 @@ async function loadAccount() {
 }
 
 // ---------- initial draft ----------
+// CondorDraft.get() also runs the one-shot import: someone who explored
+// without an account and has just signed in finds their mix waiting here
+// rather than on the machine they left it on (draft.js).
 async function loadDraft() {
   try {
-    const d = await api("/api/draft");
+    const d = await CondorDraft.get();
     state.assets = (d.assets || []).map((a) => ({ symbol: a.symbol, weight: a.weight }));
     for (const a of state.assets) colorFor(a.symbol);
   } catch (err) {
@@ -558,5 +571,7 @@ $("loadreal").addEventListener("click", async () => {
   renderAll();
   renderQuickAdd();
   await Promise.all(state.assets.map((a) => fetchInfo(a.symbol)));
-  loadAccount();
+  // No account, no summary card to fill — the template put an invitation
+  // to sign in there instead (home.html).
+  if (CondorDraft.authenticated) loadAccount();
 })();

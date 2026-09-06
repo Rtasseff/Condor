@@ -22,6 +22,14 @@ const C = {
 };
 
 const $ = (id) => document.getElementById(id);
+// Some controls only exist for signed-in visitors (Save, "Make this my
+// real portfolio"); anonymous pages render the way in instead. Wiring
+// them unconditionally would throw here and take the rest of the page
+// down with it, so wire what is actually on the page.
+const on = (id, event, fn) => {
+  const el = $(id);
+  if (el) el.addEventListener(event, fn);
+};
 
 // ---------- state ----------
 const state = {
@@ -534,8 +542,10 @@ function renderPoint(sel) {
   // explain the split instead — with a warning in the borrowing region.
   const note = $("calnote");
   const adopt = $("adoptpoint");
-  $("settarget").hidden = false;
-  $("settargetconfirm").hidden = true;   // a new selection retires any open confirm
+  if ($("settarget")) {
+    $("settarget").hidden = false;
+    $("settargetconfirm").hidden = true; // a new selection retires any open confirm
+  }
   if (sel.kind === "cal") {
     adopt.hidden = true;
     note.hidden = false;
@@ -1014,14 +1024,14 @@ for (const id of ["fanchor", "fanchorvalue"]) {
 // slips here mean 'I thought I was playing'") — a confirmation restating
 // the consequence, not a silent POST-and-redirect. No window.confirm():
 // it blocks automation and this codebase avoids it elsewhere too.
-$("settarget").addEventListener("click", () => {
+on("settarget", "click", () => {
   if (!state.selected) return;
   $("settargetconfirm").hidden = false;
 });
-$("settargetcancel").addEventListener("click", () => {
+on("settargetcancel", "click", () => {
   $("settargetconfirm").hidden = true;
 });
-$("settargetgo").addEventListener("click", async () => {
+on("settargetgo", "click", async () => {
   // Send the considered mix to the real portfolio as its new setpoint,
   // then open the trade plan there. Weights are total-wealth fractions,
   // so a CAL mix carries its cash share implicitly.
@@ -1129,32 +1139,35 @@ async function switchSource(next) {
 }
 
 // ---------- draft (Build page) sync ----------
-// Optimize prefills from /api/draft on load (see init(), below) and
-// writes back here on adopt — the two pages share one draft. Best
-// effort: adopting the mix here still works even if the sync fails.
+// Optimize prefills the draft on load (see init(), below) and writes back
+// here on adopt — the two pages share one draft, wherever it lives: the
+// account behind /api/draft, or this browser for a visitor without one
+// (draft.js). Best effort: adopting the mix here still works even if the
+// write fails.
 async function syncDraft(weights) {
   const assets = Object.entries(weights)
     .filter(([, w]) => w > 0)
     .map(([symbol, weight]) => ({ symbol, weight }));
   if (!assets.length) return;
   try {
-    await fetch("/api/draft", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
-      body: JSON.stringify({ assets }),
-    });
-  } catch {
-    /* best effort */
+    await CondorDraft.put(assets);
+  } catch (err) {
+    // Signed in this really is best effort — the mix is still on the
+    // page and the next edit writes again. Anonymous it is not: this
+    // browser is the draft's only home, so a refused write (private
+    // browsing, storage full) means the mix will be gone the moment
+    // they navigate, and they should hear that here rather than find
+    // an empty Build page later.
+    if (!CondorDraft.authenticated) showError(err.message);
   }
 }
 
-// A brand-new user has no draft yet -> keep the deck's example on the
+// A brand-new visitor has no draft yet -> keep the deck's example on the
 // sidebar (state.assets' initial value) rather than clearing it.
 async function loadDraftPrefill() {
   try {
-    const res = await fetch("/api/draft");
-    const draft = await res.json();
-    if (!res.ok || !draft.assets || !draft.assets.length) return false;
+    const draft = await CondorDraft.get();
+    if (!draft.assets || !draft.assets.length) return false;
     state.assets = draft.assets.map((a) => a.symbol).slice(0, 15);
     state.weights = {};
     for (const a of draft.assets) {
@@ -1169,7 +1182,7 @@ async function loadDraftPrefill() {
   return false;
 }
 
-$("save").addEventListener("click", () => showSavePanel($("savepanel").hidden));
+on("save", "click", () => showSavePanel($("savepanel").hidden));
 $("savecancel").addEventListener("click", () => showSavePanel(false));
 $("saveform").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -1188,7 +1201,7 @@ $("copylink").addEventListener("click", async () => {
   $("copylink").textContent = "Copied";
   setTimeout(() => { $("copylink").textContent = "Copy"; }, 1500);
 });
-$("saved").addEventListener("click", () => {
+on("saved", "click", () => {
   const open = $("savedpanel").hidden;
   $("savedpanel").hidden = !open;
   $("saved").setAttribute("aria-expanded", String(open));
@@ -1215,6 +1228,11 @@ function deepLinkForecast() {
 }
 
 (async function init() {
+  // Anonymous with nothing stored: the head script (optimize.html) has
+  // already decided this page is the signpost back to Build, and the
+  // workbench behind it is hidden. Analyzing an invented mix there would
+  // spend a price fetch on a page nobody is looking at.
+  if (document.documentElement.classList.contains("nodraft")) return;
   if (!localStorage.getItem("condor_hint_done")) $("hintstrip").hidden = false;
   $("hintdismiss").addEventListener("click", () => {
     localStorage.setItem("condor_hint_done", "1");
@@ -1223,11 +1241,17 @@ function deepLinkForecast() {
   wireChartClicks();
   await loadTickers();
   const presetEl = $("preset"); // /p/<uuid> injects the saved config
+  const prefilled = presetEl ? false : await loadDraftPrefill();
   if (presetEl) {
     applyConfig(JSON.parse(presetEl.textContent));
-    $("sharelink").value = window.location.href;
-    $("sharerow").hidden = false;
-  } else if (await loadDraftPrefill()) {
+    // The share row lives inside the save panel, which only opens from
+    // the Save button — a control a visitor without an account doesn't
+    // get. Revealing it inside a panel that can never open is dead UI.
+    if ($("save")) {
+      $("sharelink").value = window.location.href;
+      $("sharerow").hidden = false;
+    }
+  } else if (prefilled) {
     state.source = "draft";
   } else if (SOURCES.real) {
     // no draft, but the account holds something — optimize that rather
@@ -1240,6 +1264,16 @@ function deepLinkForecast() {
       // seven assets the user never picked, with no hint why
       showError(`Couldn't load your real portfolio — ${err.message}`);
     }
+  }
+  // The head script only glanced at the stored draft; draft.js validates
+  // it, and is stricter (real ticker shapes, at least one weight above
+  // zero). If nothing survived that, this visitor has nothing of their
+  // own here after all — show the signpost rather than fall through to
+  // the example deck, which is the one thing fix 1 promised never to do.
+  if (!presetEl && !prefilled && !SOURCES.real && !CondorDraft.authenticated) {
+    document.documentElement.classList.remove("hasdraft");
+    document.documentElement.classList.add("nodraft");
+    return;
   }
   renderAssets();
   renderQuickAdd();
