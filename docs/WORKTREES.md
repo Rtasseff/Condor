@@ -194,4 +194,5 @@ Mark the registry row merged (or remove it) in the same commit.
 
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
-| `signup` | `feature/signup` | 8001 | 2026-09-07 | briefed — self-serve accounts: email verification + password reset (Sonnet) |
+
+*(none — signup merged 2026-09-07)*

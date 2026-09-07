@@ -1,5 +1,7 @@
 # Handoff — `feature/signup`
 
+**Merged 2026-09-07**; branch and worktree removed.
+
 <!-- Copy of docs/handoffs/_template.md, seeded by scripts/new-worktree.sh.
      Lives at docs/handoffs/signup.md on the branch. Keep "Status" current. -->
 
