@@ -158,6 +158,21 @@ button.small { padding: 6px 12px; font-size: 13px; }
   background: var(--danger-bg);
 }
 
+/* one-time flash messages (django.contrib.messages), e.g. after activation */
+.flashwrap { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+.notice {
+  border-color: var(--accent); color: var(--ink);
+  background: rgba(23, 166, 137, 0.12);
+}
+
+/* signup's consent checkbox: a row, not the stacked label/input of the
+   text fields around it */
+.loginform label.consent {
+  flex-direction: row; align-items: flex-start; gap: 8px; font-size: 13px;
+  color: var(--ink-2);
+}
+.loginform label.consent input { margin-top: 3px; }
+
 /* save & share */
 .savecard { padding: 14px 20px; }
 .saverow {
@@ -327,11 +342,12 @@ footer {
 .loginform { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
 .loginform label { display: flex; flex-direction: column; gap: 6px;
   font-size: 12px; color: var(--muted); }
-.loginform input {
+.loginform input:not([type="checkbox"]) {
   background: var(--surface-2); color: var(--ink);
   border: 1px solid var(--ring); border-radius: 8px;
   padding: 9px 12px; font-size: 15px;
 }
+.loginform input[type="checkbox"] { width: 16px; height: 16px; flex: none; }
 .loginform button { margin-top: 4px; }
 .loginmain footer { margin-top: 18px; text-align: center; }
 

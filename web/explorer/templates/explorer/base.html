@@ -39,6 +39,14 @@
   {% endif %}
 </header>
 
+{% if messages %}
+<div class="flashwrap">
+  {% for message in messages %}
+  <div class="notice card">{{ message }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% block content %}{% endblock %}
 </body>
 </html>

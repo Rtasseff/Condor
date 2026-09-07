@@ -12,15 +12,24 @@ import json
 import logging
 import math
 import re
+import smtplib
 
+from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth import login as auth_login
 from django.contrib.auth import views as auth_views
+from django.contrib.auth.models import User
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.staticfiles import finders
 from django.core.exceptions import ValidationError
-from django.db import models, transaction
+from django.core.mail import send_mail
+from django.db import IntegrityError, models, transaction
 from django.http import Http404, JsonResponse
-from django.shortcuts import render
-from django.urls import reverse
+from django.shortcuts import redirect, render
+from django.urls import reverse, reverse_lazy
 from django.utils.decorators import method_decorator
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods, require_POST
 from django_ratelimit.decorators import ratelimit
@@ -31,6 +40,7 @@ from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
 from condor.stats import METHODS
 
+from .forms import ALREADY_REGISTERED, SignupForm
 from .learn import learn_context
 from .models import DraftPortfolio, SavedPortfolio
 from .throttle import client_ip, json_rate_limit, rate_for
@@ -199,17 +209,28 @@ def learn(request):
     return render(request, "explorer/learn.html", learn_context())
 
 
+class ThrottledFormViewMixin:
+    """Re-renders the bound form with a 429 instead of processing the POST
+    when django-ratelimit has set `request.limited` — shared by every
+    rate-limited Django auth FormView so the check/response shape lives
+    in one place."""
+
+    def post(self, request, *args, **kwargs):
+        if getattr(request, "limited", False):
+            return self.render_to_response(
+                self.get_context_data(form=self.get_form()), status=429)
+        return super().post(request, *args, **kwargs)
+
+
 @method_decorator(
     ratelimit(key=client_ip, rate=rate_for("login", "10/m"),
               method="POST", block=False),
     name="dispatch")
-class ThrottledLoginView(auth_views.LoginView):
+class ThrottledLoginView(ThrottledFormViewMixin, auth_views.LoginView):
     """The sign-in page, with a per-IP cap on attempts.
 
-    Registration is closed (the admin makes accounts), so the only thing
-    an unlimited login form buys a stranger is password guessing. The cap
-    counts POSTs only — reading the page is free, and someone who mistypes
-    a password twice never meets it.
+    The cap counts POSTs only — reading the page is free, and someone who
+    mistypes a password twice never meets it.
 
     A blocked attempt re-renders the form with a note rather than a bare
     429 body: this is the one rate-limited endpoint a human meets as a
@@ -219,11 +240,149 @@ class ThrottledLoginView(auth_views.LoginView):
     template_name = "explorer/login.html"
     redirect_authenticated_user = True
 
-    def post(self, request, *args, **kwargs):
-        if getattr(request, "limited", False):
-            return self.render_to_response(
-                self.get_context_data(form=self.get_form()), status=429)
-        return super().post(request, *args, **kwargs)
+
+# ----------------------------------------------------- signup & activation
+
+
+class ActivationTokenGenerator(PasswordResetTokenGenerator):
+    """A distinct key_salt from Django's `default_token_generator` (used for
+    password resets) so an activation link and a reset link are never
+    interchangeable — check_token() salts its HMAC with this class's
+    dotted path, so a token minted by one generator always fails the
+    other's check_token(), even for the same user/timestamp."""
+
+    key_salt = "explorer.views.ActivationTokenGenerator"
+
+
+activation_token_generator = ActivationTokenGenerator()
+
+
+def _send_activation_email(request, user):
+    """One line of what it is, the link, one line of who to ignore it as —
+    the same plain-text voice as everywhere else."""
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = activation_token_generator.make_token(user)
+    link = request.build_absolute_uri(reverse("activate", args=[uid, token]))
+    body = (
+        "Confirm your Condor Funds account by opening this link:\n\n"
+        f"{link}\n\n"
+        "If you didn't try to sign up, ignore this email."
+    )
+    send_mail("Confirm your Condor Funds account", body, None, [user.email])
+
+
+@ratelimit(key=client_ip, rate=rate_for("signup", "5/h"), method="POST", block=False)
+def signup(request):
+    """`GET/POST /signup` — public, self-serve account creation.
+
+    Closed in production until SMTP is configured (`SIGNUPS_ENABLED`):
+    minting an inactive account whose activation link goes to a log file
+    would just strand a real person.
+
+    The honeypot check runs before the form does, on the raw POST body —
+    a filled `website` field gets the exact same "check your email"
+    response as a real signup, with nothing created and nothing logged
+    that would tell a bot which part of the form it tripped.
+    """
+    if not settings.SIGNUPS_ENABLED:
+        return render(request, "explorer/signup.html", {"closed": True})
+
+    if request.method != "POST":
+        return render(request, "explorer/signup.html", {"form": SignupForm()})
+
+    if getattr(request, "limited", False):
+        return render(request, "explorer/signup.html",
+                      {"form": SignupForm(request.POST)}, status=429)
+
+    if request.POST.get("website"):
+        return render(request, "explorer/signup.html", {
+            "sent": True, "email": request.POST.get("email", ""),
+        })
+
+    form = SignupForm(request.POST)
+    if not form.is_valid():
+        return render(request, "explorer/signup.html", {"form": form})
+
+    email = form.cleaned_data["email"]
+    is_retry = form.retry_user is not None
+    old_password_hash = form.retry_user.password if is_retry else None
+    try:
+        with transaction.atomic():
+            if is_retry:
+                user = form.retry_user
+                user.set_password(form.cleaned_data["password1"])
+                user.save()
+            else:
+                user = form.save(commit=False)
+                user.is_active = False
+                user.save()
+    except IntegrityError:
+        # Two concurrent signups for the same not-yet-existing username
+        # both pass form validation's (non-atomic) collision check before
+        # either commits — the DB's own unique constraint is what actually
+        # catches the second one.
+        form.add_error("username", "That username is " + ALREADY_REGISTERED)
+        return render(request, "explorer/signup.html", {"form": form})
+
+    # SMTP is a blocking network call, deliberately made outside the
+    # transaction above: this app runs on SQLite (a single writer), and
+    # holding a write transaction open for the length of that call would
+    # serialize every other request behind a slow or hung mail server. A
+    # send failure is undone by hand instead of relying on a DB rollback.
+    try:
+        _send_activation_email(request, user)
+    except (smtplib.SMTPException, OSError):
+        log.exception("activation email failed for %s", email)
+        if is_retry:
+            user.password = old_password_hash
+            user.save(update_fields=["password"])
+        else:
+            user.delete()
+        return render(request, "explorer/signup.html",
+                      {"send_failed": True}, status=502)
+
+    return render(request, "explorer/signup.html", {"sent": True, "email": email})
+
+
+def activate(request, uidb64, token):
+    """`GET /activate/<uidb64>/<token>` — the other half of signup.
+
+    A used-up or garbage token fails `check_token` the same way an
+    expired one does (Django doesn't distinguish), so all three land on
+    the same sorry page. `login()` below bumps `last_login`, which the
+    token's hash covers — that alone stops the same link from being
+    replayed after first use, no extra bookkeeping needed.
+    """
+    try:
+        user = User.objects.get(pk=force_str(urlsafe_base64_decode(uidb64)))
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        user = None
+
+    if user is None or not activation_token_generator.check_token(user, token):
+        return render(request, "explorer/activate_invalid.html")
+
+    user.is_active = True
+    user.save(update_fields=["is_active"])
+    auth_login(request, user)
+    messages.success(request, "You're in — pretend money, go play.")
+    return redirect("index")
+
+
+@method_decorator(
+    ratelimit(key=client_ip, rate=rate_for("reset", "5/h"), method="POST", block=False),
+    name="dispatch")
+class ThrottledPasswordResetView(ThrottledFormViewMixin, auth_views.PasswordResetView):
+    """`/password-reset/` — Django's own view, our templates, our cap.
+
+    Django's don't-reveal-existence behavior (always "check your email",
+    whether or not the address has an account) is untouched — nothing
+    here overrides `form_valid`.
+    """
+
+    template_name = "explorer/password_reset.html"
+    email_template_name = "explorer/email/password_reset_email.txt"
+    subject_template_name = "explorer/email/password_reset_subject.txt"
+    success_url = reverse_lazy("password_reset_done")
 
 
 # ------------------------------------------------------------ validation

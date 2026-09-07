@@ -25,7 +25,9 @@
     <h2>Sign in</h2>
     <p class="sub">Build a portfolio, see its risk-and-reward trade-offs, and
        track a pretend account against a setpoint.</p>
+    {% if not SIGNUPS_ENABLED %}
     <p class="sub">Accounts are created by the team admin — ask if you need one.</p>
+    {% endif %}
     {% if request.limited %}
       {# Too many attempts from this IP (views.ThrottledLoginView). #}
       <div class="error card">Too many sign-in attempts from here. Give it a
@@ -46,6 +48,11 @@
       <input type="hidden" name="next" value="{{ next }}">
       <button type="submit" class="primary">Sign in</button>
     </form>
+    <p class="sub loginlearn"><a href="{% url 'password_reset' %}">Forgot password?</a></p>
+    {% if SIGNUPS_ENABLED %}
+    <p class="sub loginlearn">No account?
+      <a href="{% url 'signup' %}">Create one</a></p>
+    {% endif %}
     <p class="sub loginlearn">New to investing?
       <a href="{% url 'learn' %}">Start with Learn →</a></p>
   </section>

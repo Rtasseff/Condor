@@ -7,13 +7,17 @@ asks FRED for the risk-free rate, so that call is patched out.
 
 import json
 import re
+import smtplib
 import uuid
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core import mail
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 from explorer.models import DraftPortfolio, Holding, SavedPortfolio
 
@@ -1619,7 +1623,8 @@ class DraftStorageAdapterTests(TestCase):
 
 
 @override_settings(RATELIMIT_ENABLE=True, CONDOR_RATE_LIMITS={
-    "analyze": "2/m", "forecast": "2/m", "asset": "2/m", "login": "2/m"})
+    "analyze": "2/m", "forecast": "2/m", "asset": "2/m", "login": "2/m",
+    "signup": "2/m", "reset": "2/m"})
 # django-ratelimit counts inside a wall-clock window, and a window that
 # rolls over between two requests resets the count — a real 1-in-a-suite
 # flake, not a real bug. Pin the window so these tests are about counting.
@@ -1744,3 +1749,215 @@ class RateLimitTests(TestCase):
             self.post("/api/analyze")
         self.assert_limited(
             self.post("/api/analyze", headers={"x-forwarded-for": "9.9.9.9"}))
+
+    def test_the_signup_form_is_capped(self):
+        def body(n):  # distinct username/email so each call is its own signup
+            return {
+                "username": f"capped{n}", "email": f"capped{n}@example.com",
+                "password1": "Correct-Horse-9", "password2": "Correct-Horse-9",
+                "consent": "on", "website": "",
+            }
+        for n in range(2):
+            self.assertEqual(self.client.post("/signup", body(n)).status_code, 200)
+        res = self.client.post("/signup", body(99))
+        self.assertEqual(res.status_code, 429)
+        self.assertContains(res, "Too many signup attempts", status_code=429)
+        # reading the page is free — only attempts are counted
+        self.assertEqual(self.client.get("/signup").status_code, 200)
+
+    def test_the_reset_form_is_capped(self):
+        for _ in range(2):
+            self.assertEqual(
+                self.client.post("/password-reset/",
+                                 {"email": "nobody@example.com"}).status_code, 302)
+        res = self.client.post("/password-reset/", {"email": "nobody@example.com"})
+        self.assertEqual(res.status_code, 429)
+        self.assertEqual(self.client.get("/password-reset/").status_code, 200)
+
+
+class SignupTests(TestCase):
+    """Self-serve accounts: happy path, honeypot, consent, the inactive-user
+    resend rule, case-insensitive email uniqueness, and send-failure
+    rollback. `RATELIMIT_ENABLE` is off by default in tests (settings.py),
+    so these post as often as a scenario needs."""
+
+    VALID = {
+        "username": "newuser", "email": "new@example.com",
+        "password1": "Correct-Horse-42", "password2": "Correct-Horse-42",
+        "consent": "on", "website": "",
+    }
+
+    @staticmethod
+    def link_from(body):
+        for line in body.splitlines():
+            if line.startswith("http"):
+                return line.strip()
+        raise AssertionError(f"no link in email body: {body!r}")
+
+    def test_happy_path_sends_one_email_and_activation_logs_in(self):
+        res = self.client.post("/signup", self.VALID)
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertContains(res, "new@example.com")
+        user = User.objects.get(username="newuser")
+        self.assertFalse(user.is_active)
+        self.assertEqual(len(mail.outbox), 1)
+
+        res = self.client.get(self.link_from(mail.outbox[0].body).replace(
+            "http://testserver", ""), follow=True)
+        self.assertRedirects(res, "/")
+        user.refresh_from_db()
+        self.assertTrue(user.is_active)
+        self.assertTrue(res.wsgi_request.user.is_authenticated)
+        self.assertContains(res, "pretend money, go play")
+
+    def test_garbage_token_shows_the_sorry_page_and_stays_inactive(self):
+        self.client.post("/signup", self.VALID)
+        user = User.objects.get(username="newuser")
+
+        res = self.client.get("/activate/garbage/garbage-token")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "doesn't work")
+        user.refresh_from_db()
+        self.assertFalse(user.is_active)
+
+        # well-formed uid, wrong token
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        res = self.client.get(f"/activate/{uid}/not-a-real-token")
+        self.assertContains(res, "doesn't work")
+        user.refresh_from_db()
+        self.assertFalse(user.is_active)
+
+    def test_used_link_cannot_be_replayed(self):
+        self.client.post("/signup", self.VALID)
+        link = self.link_from(mail.outbox[0].body).replace("http://testserver", "")
+        self.client.get(link)  # first use: activates + logs in
+        self.client.logout()
+        res = self.client.get(link)  # replay
+        self.assertContains(res, "doesn't work")
+
+    def test_honeypot_pretends_success_and_creates_nothing(self):
+        body = dict(self.VALID, website="http://spam.example")
+        res = self.client.post("/signup", body)
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, self.VALID["email"])
+        self.assertFalse(User.objects.filter(username="newuser").exists())
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_consent_is_required(self):
+        body = {k: v for k, v in self.VALID.items() if k != "consent"}
+        res = self.client.post("/signup", body)
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(User.objects.filter(username="newuser").exists())
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_email_uniqueness_is_case_insensitive_for_a_new_username(self):
+        User.objects.create_user("existing", email="Taken@Example.com",
+                                 password="x-not-secret-x", is_active=True)
+        body = dict(self.VALID, username="different", email="taken@example.com")
+        res = self.client.post("/signup", body)
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "already registered")
+        self.assertFalse(User.objects.filter(username="different").exists())
+
+    def test_active_username_clash_is_a_form_error(self):
+        User.objects.create_user("newuser", email="new@example.com",
+                                 password="x-not-secret-x", is_active=True)
+        res = self.client.post("/signup", self.VALID)
+        self.assertContains(res, "already registered")
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_inactive_same_email_case_insensitive_retries_and_updates_password(self):
+        self.client.post("/signup", self.VALID)
+        user = User.objects.get(username="newuser")
+        old_hash = user.password
+
+        retry = dict(self.VALID, email=self.VALID["email"].upper(),
+                    password1="Different-Horse-9", password2="Different-Horse-9")
+        res = self.client.post("/signup", retry)
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(User.objects.filter(username="newuser").count(), 1)
+        user.refresh_from_db()
+        self.assertNotEqual(user.password, old_hash)
+        self.assertFalse(user.check_password(self.VALID["password1"]))
+        self.assertTrue(user.check_password("Different-Horse-9"))
+        self.assertEqual(len(mail.outbox), 2)
+
+    def test_inactive_different_email_is_a_clash_not_a_retry(self):
+        self.client.post("/signup", self.VALID)
+        res = self.client.post(
+            "/signup", dict(self.VALID, email="someoneelse@example.com"))
+        self.assertContains(res, "already registered")
+        self.assertEqual(len(mail.outbox), 1)  # only the first signup's
+
+    def test_send_failure_creates_nothing(self):
+        with patch("explorer.views.send_mail", side_effect=smtplib.SMTPException):
+            res = self.client.post("/signup", self.VALID)
+        self.assertEqual(res.status_code, 502)
+        self.assertContains(res, "nothing was created", status_code=502)
+        self.assertFalse(User.objects.filter(username="newuser").exists())
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_send_failure_on_retry_leaves_old_password_working(self):
+        self.client.post("/signup", self.VALID)
+        user = User.objects.get(username="newuser")
+        retry = dict(self.VALID, password1="Different-Horse-9",
+                    password2="Different-Horse-9")
+        with patch("explorer.views.send_mail", side_effect=smtplib.SMTPException):
+            res = self.client.post("/signup", retry)
+        self.assertEqual(res.status_code, 502)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password(self.VALID["password1"]))
+        self.assertFalse(user.check_password("Different-Horse-9"))
+
+
+@override_settings(SIGNUPS_ENABLED=False)
+class SignupsClosedTests(TestCase):
+    """Prod-shaped settings with no SMTP configured: `/signup` refuses to
+    mint accounts whose activation links would go to a log file."""
+
+    def test_closed_page_and_no_creation(self):
+        self.assertContains(self.client.get("/signup"), "closed")
+        before = User.objects.count()
+        self.client.post("/signup", SignupTests.VALID)
+        self.assertEqual(User.objects.count(), before)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_login_page_hides_the_invite(self):
+        self.assertNotContains(self.client.get("/login"), "Create one")
+
+
+class PasswordResetTests(TestCase):
+    """Django's own four views, wired under /password-reset/…, with our
+    templates. Don't-reveal-existence behaviour is Django's; not retested
+    beyond confirming an unknown address still gets the same response."""
+
+    def test_round_trip(self):
+        User.objects.create_user("resetme", email="reset@example.com",
+                                 password="Old-Horse-1", is_active=True)
+        res = self.client.post("/password-reset/", {"email": "reset@example.com"})
+        self.assertRedirects(res, "/password-reset/done/")
+        self.assertEqual(len(mail.outbox), 1)
+
+        link = re.search(r"http://testserver(\S+)", mail.outbox[0].body).group(1)
+        res = self.client.get(link, follow=True)
+        confirm_path = res.redirect_chain[-1][0]
+        res = self.client.post(confirm_path, {
+            "new_password1": "Brand-New-77", "new_password2": "Brand-New-77",
+        }, follow=True)
+        self.assertRedirects(res, "/password-reset/complete/")
+
+        user = User.objects.get(username="resetme")
+        self.assertFalse(user.check_password("Old-Horse-1"))
+        self.assertTrue(user.check_password("Brand-New-77"))
+
+    def test_unknown_email_does_not_reveal_existence(self):
+        res = self.client.post("/password-reset/", {"email": "nobody@example.com"})
+        self.assertRedirects(res, "/password-reset/done/")
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_login_page_always_shows_the_reset_link(self):
+        self.assertContains(self.client.get("/login"), "Forgot password?")
+
+    def test_garbage_confirm_link_shows_the_sorry_page(self):
+        res = self.client.get("/password-reset/confirm/bad/bad-token/", follow=True)
+        self.assertContains(res, "doesn't work")

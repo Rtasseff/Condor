@@ -60,6 +60,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "explorer.context.contribution_reminder",
+                "explorer.context.signups_enabled",
             ]
         },
     }
@@ -111,6 +112,8 @@ CONDOR_RATE_LIMITS = {
     "forecast": "15/m",
     "asset": "60/m",
     "login": "10/m",
+    "signup": "5/h",
+    "reset": "5/h",
 }
 
 # One shared LocMem counter would leak between tests — the suite is one
@@ -158,5 +161,36 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+# ---- email / self-serve accounts -----------------------------------
+# The sender is RT's Gmail via an app password — to this codebase that is
+# nothing but SMTP settings read from the environment. Locally and in
+# tests, where these are unset, mail goes to the console instead of
+# nowhere, so the flow stays exercisable without Gmail creds.
+CONDOR_EMAIL_USER = os.environ.get("CONDOR_EMAIL_USER")
+CONDOR_EMAIL_PASSWORD = os.environ.get("CONDOR_EMAIL_PASSWORD")
+_EMAIL_CONFIGURED = bool(CONDOR_EMAIL_USER and CONDOR_EMAIL_PASSWORD)
+
+if _EMAIL_CONFIGURED:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = "smtp.gmail.com"
+    EMAIL_PORT = 587
+    EMAIL_USE_TLS = True
+    EMAIL_HOST_USER = CONDOR_EMAIL_USER
+    EMAIL_HOST_PASSWORD = CONDOR_EMAIL_PASSWORD
+    EMAIL_TIMEOUT = 10  # a hung SMTP conversation must not hang a request worker
+    DEFAULT_FROM_EMAIL = f"Condor Funds <{CONDOR_EMAIL_USER}>"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# Self-serve signup needs a real mailbox to send activation links from;
+# without one, minting an inactive account whose link goes to a log file
+# would just strand people. DEBUG (dev/tests) always allows it so the
+# flow is exercisable locally without Gmail creds.
+SIGNUPS_ENABLED = _EMAIL_CONFIGURED or DEBUG
+
+# Governs both password-reset AND account-activation links — both are
+# built on Django's default_token_generator, which reads this one setting.
+PASSWORD_RESET_TIMEOUT = 3 * 24 * 3600  # 3 days
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
