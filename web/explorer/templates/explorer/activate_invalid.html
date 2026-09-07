@@ -1,0 +1,12 @@
+{% extends "explorer/base.html" %}
+{% block title %}Condor Funds — Link expired{% endblock %}
+{% block content %}
+<main class="loginmain">
+  <section class="card logincard" aria-label="Confirmation link">
+    <h2>That link doesn't work</h2>
+    <p class="sub">It's expired, already used, or not quite right.
+       <a href="{% url 'signup' %}">Sign up again</a> to get a fresh one.</p>
+  </section>
+  <footer>Educational prototype — not investment advice.</footer>
+</main>
+{% endblock %}

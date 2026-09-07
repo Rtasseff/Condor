@@ -1,0 +1,66 @@
+{% extends "explorer/base.html" %}
+{% block title %}Condor Funds — Create an account{% endblock %}
+{% block content %}
+<main class="loginmain">
+  <section class="card logincard" aria-label="Create an account">
+    {% if closed %}
+      <h2>Signups are temporarily closed</h2>
+      <p class="sub">We're not opening new accounts right now — check back
+         soon, or <a href="{% url 'login' %}">sign in</a> if you already
+         have one.</p>
+
+    {% elif send_failed %}
+      <div class="error card">Couldn't send the confirmation email —
+        nothing was created. Try again in a minute.</div>
+      <p class="sub"><a href="{% url 'signup' %}">Back to sign up</a></p>
+
+    {% elif sent %}
+      <h2>Check your email</h2>
+      <p class="sub">We sent a confirmation link to <strong>{{ email }}</strong>.
+         Open it to finish setting up your account.</p>
+      <p class="sub">Didn't get it? Submit the form again with the same
+         username and email — that resends the link.</p>
+
+    {% else %}
+      <h2>Create an account</h2>
+      <p class="sub">Build a portfolio, see its risk-and-reward trade-offs,
+         and track a pretend account against a setpoint.</p>
+      {% if request.limited %}
+        <div class="error card">Too many signup attempts from here. Give
+          it a minute, then try again.</div>
+      {% elif form.non_field_errors %}
+        <div class="error card">{{ form.non_field_errors.0 }}</div>
+      {% endif %}
+      <form method="post" class="loginform">
+        {% csrf_token %}
+        <label>Username
+          {{ form.username }}
+        </label>
+        {% if form.username.errors %}<div class="error card">{{ form.username.errors.0 }}</div>{% endif %}
+        <label>Email
+          {{ form.email }}
+        </label>
+        {% if form.email.errors %}<div class="error card">{{ form.email.errors.0 }}</div>{% endif %}
+        <label>Password
+          {{ form.password1 }}
+        </label>
+        {% if form.password1.errors %}<div class="error card">{{ form.password1.errors.0 }}</div>{% endif %}
+        <label>Confirm password
+          {{ form.password2 }}
+        </label>
+        {% if form.password2.errors %}<div class="error card">{{ form.password2.errors.0 }}</div>{% endif %}
+        <label class="consent">
+          {{ form.consent }}
+          <span>{{ form.consent.label }}</span>
+        </label>
+        {% if form.consent.errors %}<div class="error card">{{ form.consent.errors.0 }}</div>{% endif %}
+        {{ form.website }}
+        <button type="submit" class="primary">Create account</button>
+      </form>
+      <p class="sub loginlearn">Already have an account?
+        <a href="{% url 'login' %}">Sign in</a></p>
+    {% endif %}
+  </section>
+  <footer>Educational prototype — not investment advice.</footer>
+</main>
+{% endblock %}

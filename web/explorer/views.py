@@ -12,15 +12,24 @@ import json
 import logging
 import math
 import re
+import smtplib
 
+from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth import login as auth_login
 from django.contrib.auth import views as auth_views
+from django.contrib.auth.models import User
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib.staticfiles import finders
 from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
 from django.db import models, transaction
 from django.http import Http404, JsonResponse
-from django.shortcuts import render
-from django.urls import reverse
+from django.shortcuts import redirect, render
+from django.urls import reverse, reverse_lazy
 from django.utils.decorators import method_decorator
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods, require_POST
 from django_ratelimit.decorators import ratelimit
@@ -31,6 +40,7 @@ from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
 from condor.stats import METHODS
 
+from .forms import SignupForm
 from .learn import learn_context
 from .models import DraftPortfolio, SavedPortfolio
 from .throttle import client_ip, json_rate_limit, rate_for
@@ -218,6 +228,122 @@ class ThrottledLoginView(auth_views.LoginView):
 
     template_name = "explorer/login.html"
     redirect_authenticated_user = True
+
+    def post(self, request, *args, **kwargs):
+        if getattr(request, "limited", False):
+            return self.render_to_response(
+                self.get_context_data(form=self.get_form()), status=429)
+        return super().post(request, *args, **kwargs)
+
+
+# ----------------------------------------------------- signup & activation
+
+
+def _send_activation_email(request, user):
+    """One line of what it is, the link, one line of who to ignore it as —
+    the same plain-text voice as everywhere else."""
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    link = request.build_absolute_uri(reverse("activate", args=[uid, token]))
+    body = (
+        "Confirm your Condor Funds account by opening this link:\n\n"
+        f"{link}\n\n"
+        "If you didn't try to sign up, ignore this email."
+    )
+    send_mail("Confirm your Condor Funds account", body, None, [user.email])
+
+
+@ratelimit(key=client_ip, rate=rate_for("signup", "5/h"), method="POST", block=False)
+def signup(request):
+    """`GET/POST /signup` — public, self-serve account creation.
+
+    Closed in production until SMTP is configured (`SIGNUPS_ENABLED`):
+    minting an inactive account whose activation link goes to a log file
+    would just strand a real person.
+
+    The honeypot check runs before the form does, on the raw POST body —
+    a filled `website` field gets the exact same "check your email"
+    response as a real signup, with nothing created and nothing logged
+    that would tell a bot which part of the form it tripped.
+    """
+    if not settings.SIGNUPS_ENABLED:
+        return render(request, "explorer/signup.html", {"closed": True})
+
+    if request.method != "POST":
+        return render(request, "explorer/signup.html", {"form": SignupForm()})
+
+    if getattr(request, "limited", False):
+        return render(request, "explorer/signup.html",
+                      {"form": SignupForm(request.POST)}, status=429)
+
+    if request.POST.get("website"):
+        return render(request, "explorer/signup.html", {
+            "sent": True, "email": request.POST.get("email", ""),
+        })
+
+    form = SignupForm(request.POST)
+    if not form.is_valid():
+        return render(request, "explorer/signup.html", {"form": form})
+
+    email = form.cleaned_data["email"]
+    try:
+        with transaction.atomic():
+            if form.retry_user is not None:
+                user = form.retry_user
+                user.set_password(form.cleaned_data["password1"])
+                user.save()
+            else:
+                user = form.save(commit=False)
+                user.is_active = False
+                user.save()
+            _send_activation_email(request, user)
+    except (smtplib.SMTPException, TimeoutError):
+        log.exception("activation email failed for %s", email)
+        return render(request, "explorer/signup.html",
+                      {"send_failed": True}, status=502)
+
+    return render(request, "explorer/signup.html", {"sent": True, "email": email})
+
+
+def activate(request, uidb64, token):
+    """`GET /activate/<uidb64>/<token>` — the other half of signup.
+
+    A used-up or garbage token fails `check_token` the same way an
+    expired one does (Django doesn't distinguish), so all three land on
+    the same sorry page. `login()` below bumps `last_login`, which the
+    token's hash covers — that alone stops the same link from being
+    replayed after first use, no extra bookkeeping needed.
+    """
+    try:
+        user = User.objects.get(pk=force_str(urlsafe_base64_decode(uidb64)))
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        user = None
+
+    if user is None or not default_token_generator.check_token(user, token):
+        return render(request, "explorer/activate_invalid.html")
+
+    user.is_active = True
+    user.save(update_fields=["is_active"])
+    auth_login(request, user)
+    messages.success(request, "You're in — pretend money, go play.")
+    return redirect("index")
+
+
+@method_decorator(
+    ratelimit(key=client_ip, rate=rate_for("reset", "5/h"), method="POST", block=False),
+    name="dispatch")
+class ThrottledPasswordResetView(auth_views.PasswordResetView):
+    """`/password-reset/` — Django's own view, our templates, our cap.
+
+    Django's don't-reveal-existence behavior (always "check your email",
+    whether or not the address has an account) is untouched — nothing
+    here overrides `form_valid`.
+    """
+
+    template_name = "explorer/password_reset.html"
+    email_template_name = "explorer/email/password_reset_email.txt"
+    subject_template_name = "explorer/email/password_reset_subject.txt"
+    success_url = reverse_lazy("password_reset_done")
 
     def post(self, request, *args, **kwargs):
         if getattr(request, "limited", False):
