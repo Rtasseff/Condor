@@ -26,7 +26,9 @@ class SignupForm(UserCreationForm):
     # Honeypot: invisible to a person (type=hidden), irresistible to a bot
     # that fills in every field it finds. Non-empty -> pretend success,
     # create nothing (handled in the view, before the form even runs).
-    website = forms.CharField(required=False, widget=forms.HiddenInput)
+    website = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(attrs={"autocomplete": "off"}))
 
     class Meta(UserCreationForm.Meta):
         model = User
@@ -45,9 +47,6 @@ class SignupForm(UserCreationForm):
         # resend, decided below in clean() once we have both fields.
         return self.cleaned_data["username"]
 
-    def clean_email(self):
-        return self.cleaned_data["email"].strip()
-
     def clean(self):
         cleaned = super().clean()
         username = cleaned.get("username")
@@ -55,7 +54,7 @@ class SignupForm(UserCreationForm):
         if not username or not email:
             return cleaned
 
-        existing = User.objects.filter(username=username).first()
+        existing = User.objects.filter(username__iexact=username).first()
         if existing is not None:
             if existing.is_active or existing.email.lower() != email.lower():
                 self.add_error("username", "That username is " + ALREADY_REGISTERED)
