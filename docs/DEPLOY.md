@@ -150,6 +150,15 @@ point a free pinger (Healthchecks.io / UptimeRobot) at it.
 **Updating:** `git pull && fly deploy` (10–30s downtime; migrations run
 on boot).
 
+**Pausing / resuming** (paused 2026-10-05 — app is currently OFF):
+`fly machine stop 890945c67d1548 -a condor-funds` stops compute; the
+volume (db + price store), secrets, IPs and config all stay, so the bill
+drops to ≈ $2/mo (volume + stopped rootfs). `auto_start_machines = false`
+means traffic can't wake it — the site simply doesn't answer. Resume with
+`fly machine start 890945c67d1548 -a condor-funds` (or `fly deploy`,
+which also starts it with the latest code). Don't `fly scale count 0` or
+destroy the volume unless you've pulled a db backup first (above).
+
 ## 6. Cost summary
 
 | Item | $/mo |
