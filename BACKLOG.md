@@ -38,12 +38,18 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     dividend/interest/fee kinds, R4 CSV import/export into read-only
     mirror accounts, R5 one currency per account, R6 accreting bills,
     account selector.
-  - **B `account-plans`** — after A: R3 fractional plans (per-account
-    precision, $5 minimum, whole-share fallback per ticker), R7 rule
-    alerts (index >10% below 52-wk high, position >X% below avg cost,
-    drift >N pp), R8 pay-in tracker (N tranches, bought-vs-plan,
-    catch-up sizing, reservoir asset, drift alerts muted until done),
-    R9 XIRR next to TWR, R5's combined base-currency total via daily FX.
+  - **B `account-plans`** — after A: R7 rule alerts (index >10% below
+    52-wk high, position >X% below avg cost, drift >N pp), R8 pay-in
+    tracker (N tranches, bought-vs-plan, reservoir asset, drift alerts
+    muted until done; **whole-share catch-up**: each tranche line
+    rounds to the nearest share against k/N of its plan minus what was
+    actually bought, so rounding self-corrects next month, capped at
+    cash above the reserve by trimming a share from the most rounded-up
+    line — reference: that repo's `pflib.tranche_orders` /
+    `trim_to_budget`), R9 XIRR next to TWR, R5's combined
+    base-currency total via daily FX. *R3 fractional plans dropped
+    2026-10-24: RT never buys fractional shares; fractional
+    recording stays.*
   - **C `stats-honesty`** — independent of A/B. F4 (max drawdown,
     worst calendar year, CAGR on `portfolio`) and F5 (`--json` carries
     window, method, rf) are plain additions. **RT decides** F1–F3,
