@@ -27,6 +27,35 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   day one. Remaining decisions are RT's: pick the host, get the free
   Tiingo key (yfinance-from-datacenter risk), rotate the old exposed
   Polygon key before anything gets more public.
+- [ ] **RT's real portfolio as the test case** (2026-10-23) — the
+  "portfolio" session (`~/projects/investments/portfolio`, its
+  `docs/condor.md`) keeps RT's two-bucket ledger (USD ETFs at a broker,
+  EUR Letras del Tesoro) and wants Condor as a local, read-only add-on.
+  Its ranked requirements R1–R9 and analysis findings F1–F5 split into
+  three buckets:
+  - **A `ledger-mirror`** — *in a worktree* (ADR 0005,
+    `docs/LEDGER-FORMAT.md`): R1 average cost + realized, R2
+    dividend/interest/fee kinds, R4 CSV import/export into read-only
+    mirror accounts, R5 one currency per account, R6 accreting bills,
+    account selector.
+  - **B `account-plans`** — after A: R3 fractional plans (per-account
+    precision, $5 minimum, whole-share fallback per ticker), R7 rule
+    alerts (index >10% below 52-wk high, position >X% below avg cost,
+    drift >N pp), R8 pay-in tracker (N tranches, bought-vs-plan,
+    catch-up sizing, reservoir asset, drift alerts muted until done),
+    R9 XIRR next to TWR, R5's combined base-currency total via daily FX.
+  - **C `stats-honesty`** — independent of A/B. F4 (max drawdown,
+    worst calendar year, CAGR on `portfolio`) and F5 (`--json` carries
+    window, method, rf) are plain additions. **RT decides** F1–F3,
+    which change default statistics: F1 Sharpe/tangency vs the
+    *window-average* T-bill instead of today's (today's rate makes a
+    cash fund the tangency: 95% USFR); F2 robust median × 252
+    overstates cash-like returns (USFR 5.0% vs 2.9% mean); F3
+    Ledoit-Wolf's constant-variance target inflates low-vol assets
+    (USFR 0.49% → 2.67%) — a constant-correlation target would keep
+    sample variances. Numbers: that repo's
+    `research/2026-10-23_condor-second-opinion.md`.
+
 ## Next
 
 - [ ] **Estimation uncertainty / sampling / regimes** — revive the
