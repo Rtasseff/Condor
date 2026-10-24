@@ -383,7 +383,7 @@ over the prefix):
 ### Results
 
 `pytest tests/` 286 passed / 4 skipped (baseline 217 / 4);
-`manage.py test explorer` 157 OK (baseline 141); `check` clean;
+`manage.py test explorer` 172 OK (baseline 141); `check` clean;
 `makemigrations --check --dry-run` clean (migration `0006_ledger_mirror`).
 New tests: `tests/test_accounting_ledger.py`, `tests/test_ledger_io.py`,
 `web/explorer/test_ledger_mirror.py`. Browser smoke test on a scratch
