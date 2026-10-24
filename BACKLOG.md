@@ -50,7 +50,8 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     base-currency total via daily FX. *R3 fractional plans dropped
     2026-10-24: RT never buys fractional shares; fractional
     recording stays.*
-  - **C `stats-honesty`** — independent of A/B. F4 (max drawdown,
+  - **C `stats-honesty`** — *in a worktree* (ADR 0006; RT approved
+    the recommendations 2026-10-24). Independent of A/B. F4 (max drawdown,
     worst calendar year, CAGR on `portfolio`) and F5 (`--json` carries
     window, method, rf) are plain additions. **RT decides** F1–F3,
     which change default statistics: F1 Sharpe/tangency vs the
