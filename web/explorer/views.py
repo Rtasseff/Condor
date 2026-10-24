@@ -119,11 +119,14 @@ def _has_holdings(user) -> bool:
     from .models import Account
     if not user.is_authenticated:
         return False
-    account = Account.objects.filter(owner=user).first()
+    account = Account.default_for(user)
     if account is None:
         return False
     try:
-        shares, _, _ = acct.replay(account.events_frame())
+        frame = account.events_frame()
+        shares, _, _ = acct.replay(frame)
+        bills = acct.bill_tickers(frame)    # not loadable into the workbench
+        shares = {t: n for t, n in shares.items() if t not in bills}
     except Exception:
         # the page still has to render; a draft (or a preset) keeps the
         # workbench open regardless, and the client re-checks /api/account

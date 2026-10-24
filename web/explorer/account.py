@@ -6,12 +6,14 @@ RAW closes from the shared PriceStore; nothing derived is stored.
 """
 
 import datetime as dt
+import functools
 import logging
+import uuid
 
 import pandas as pd
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods, require_POST
@@ -33,10 +35,54 @@ PRICE_BUFFER_DAYS = 10   # history fetched a bit before the first event
 # ---------------------------------------------------------------- helpers
 
 
-def _account_for(user) -> Account:
-    """The user's account (v1: exactly one, auto-created)."""
-    acc = Account.objects.filter(owner=user).first()
-    return acc or Account.objects.create(owner=user)
+def _account_for(request) -> Account:
+    """The account a request is about. `?account=<uuid>` (query string,
+    GET and POST alike) picks one of the user's own; unknown, malformed
+    and someone else's ids are indistinguishable (Http404 — no existence
+    leak). Without it: the default account (first manual, else first
+    mirror), auto-created for a user who has none."""
+    if "account" in request.GET:
+        try:
+            pk = uuid.UUID(request.GET["account"])
+        except ValueError:
+            raise Http404("No such account.")
+        acc = Account.objects.filter(owner=request.user, pk=pk).first()
+        if acc is None:
+            raise Http404("No such account.")
+        return acc
+    return (Account.default_for(request.user)
+            or Account.objects.create(owner=request.user))
+
+
+def _json_404(view):
+    """API views: an Http404 from `_account_for` becomes a JSON 404."""
+    @functools.wraps(view)
+    def wrapped(request, *args, **kwargs):
+        try:
+            return view(request, *args, **kwargs)
+        except Http404:
+            return _bad("No such account.", status=404)
+    return wrapped
+
+
+def _mirror_guard(account: Account):
+    """-> a 403 response if `account` mirrors an imported ledger, else
+    None. Called explicitly at the top of every writer (ADR 0005)."""
+    if account.mirror:
+        return _bad(f"This account mirrors the imported ledger "
+                    f"'{account.label}'. Change the source ledger and "
+                    "re-import; Condor never writes to it.", status=403)
+    return None
+
+
+def _plan_inputs(account: Account):
+    """-> (non-bill shares, cash, targets). Bills sit outside the plan
+    math entirely (they accrete; you do not rebalance them)."""
+    ev = account.events_frame()
+    shares, cash, _ = acct.replay(ev)
+    bills = acct.bill_tickers(ev)
+    return ({t: n for t, n in shares.items() if t not in bills}, cash,
+            account.target_weights())
 
 
 def _close_history(tickers, start) -> pd.DataFrame:
@@ -63,12 +109,22 @@ def _schedule_dict(account: Account):
             "due": sched.due}
 
 
+def _opt(x, nd=4):
+    return None if x is None or pd.isna(x) else round(float(x), nd)
+
+
 def _state(account: Account) -> dict:
     """Everything the account page needs, derived fresh from the ledger."""
     ev_df = account.events_frame()
-    shares, cash, contrib = acct.replay(ev_df)
+    state = acct.ledger_state(ev_df)
+    shares, cash, contrib = state.shares, state.cash, state.contributions
+    bills = acct.bill_tickers(ev_df)
     targets = account.target_weights()
-    tickers = sorted(set(shares) | set(targets))
+    # every exchange ticker ever traded must be priced (a sold-out
+    # position still shapes the history); bills price themselves
+    traded = set(ev_df.loc[ev_df["kind"].isin(
+        ["buy", "sell", "set_shares"]), "ticker"].dropna())
+    tickers = sorted((traded | set(targets)) - bills)
 
     today = dt.date.today()
     first = ev_df["date"].min() if len(ev_df) else today
@@ -78,7 +134,7 @@ def _state(account: Account) -> dict:
         closes = _close_history(tickers, start)
         last = _last_closes(closes)
         as_of = str(closes.index[-1].date())
-    else:  # cash-only account still gets a calendar to chart on
+    else:  # cash/bill-only account still gets a calendar to chart on
         closes = pd.DataFrame(index=pd.bdate_range(start, today))
         last = pd.Series(dtype=float)
         as_of = str(today)
@@ -87,26 +143,60 @@ def _state(account: Account) -> dict:
     twr = acct.time_weighted_return(daily)
     total = float(daily["value"].iloc[-1]) if len(daily) else cash
 
-    alloc = acct.allocation(shares, last, cash) if shares else None
+    prices = last.copy()
+    open_bills = [t for t in shares if t in bills]
+    if open_bills:
+        day = daily.index[-1] if len(daily) else pd.Timestamp(today)
+        bp = acct.bill_prices(ev_df, pd.DatetimeIndex([day])).iloc[0]
+        for t in open_bills:
+            prices[t] = bp[t]
+    alloc = acct.allocation(shares, prices, cash) if shares else None
+    hold = acct.holdings(state, prices) if shares else None
     positions = []
-    for t in tickers:
+    for t in sorted(set(shares) | set(targets)):
         held = alloc is not None and t in alloc.index
-        positions.append({
+        pos = {
             "ticker": t,
             "shares": _round(shares.get(t, 0.0), 4),
-            "price": _round(last[t], 4) if t in last.index else None,
+            "price": _round(prices[t], 4) if t in prices.index else None,
             "value": _round(alloc.loc[t, "value"]) if held else 0.0,
             "weight": round(float(alloc.loc[t, "weight"]), 6) if held else 0.0,
             "target_weight": round(float(targets.get(t, 0.0)), 6),
-        })
+            "cost": _round(hold.loc[t, "cost"]) if held else 0.0,
+            "avg_cost": _round(hold.loc[t, "avg_cost"], 4) if held else None,
+            "unrealized": _round(hold.loc[t, "unrealized"]) if held else 0.0,
+            "unrealized_pct": (_opt(hold.loc[t, "unrealized_pct"], 6)
+                               if held and hold.loc[t, "cost"] > 1e-12
+                               else None),
+            "realized": _round(state.realized.get(t, 0.0)),
+            "income": _round(state.income.get(t, 0.0)),
+            "is_bill": t in bills,
+            "maturity": (str(state.bills[t][0].maturity)
+                         if t in state.bills and state.bills[t] else None),
+        }
+        positions.append(pos)
 
     return {
-        "account": {"id": str(account.id), "name": account.name},
+        "account": {
+            "id": str(account.id), "name": account.name,
+            "label": account.label, "currency": account.currency,
+            "mirror": account.mirror,
+            "imported_at": (account.imported_at.isoformat()
+                            if account.imported_at else None)},
+        "accounts": [{"id": str(a.id), "name": a.name, "label": a.label,
+                      "currency": a.currency, "mirror": a.mirror}
+                     for a in Account.objects.filter(owner=account.owner)],
         "as_of": as_of,
         "cash": _round(cash),
         "total_value": _round(total),
         "net_contributions": _round(contrib),
         "gain": _round(total - contrib),
+        "realized_total": _round(sum(state.realized.values())),
+        "unrealized_total": _round(hold["unrealized"].sum()
+                                   if hold is not None else 0.0),
+        "income_total": _round(sum(state.income.values())),
+        "charges_total": _round(state.charges),
+        "trade_fees_total": _round(state.trade_fees),
         "twr": round(twr, 6),
         "target_cash_weight": round(1.0 - sum(targets.values()), 6),
         "positions": positions,
@@ -119,7 +209,9 @@ def _state(account: Account) -> dict:
         "events": [{
             "id": e.pk, "date": str(e.date), "kind": e.kind,
             "ticker": e.ticker or None, "shares": e.shares,
-            "price": e.price, "amount": e.amount, "note": e.note,
+            "price": e.price, "amount": e.amount, "fees": e.fees,
+            "maturity": str(e.maturity) if e.maturity else None,
+            "note": e.note,
         } for e in account.events.order_by("-date", "-created_at", "-pk")],
     }
 
@@ -140,7 +232,7 @@ def _state_response(account):
 @login_required
 @ensure_csrf_cookie
 def account_page(request):
-    _account_for(request.user)  # ensure it exists before the JS asks
+    _account_for(request)  # ensure it exists (404 for a foreign id)
     # rf_context: an empty account's forecast is hypothetical — run on the
     # setpoint, whose leftover is a cash sleeve that earns the T-bill rate.
     return render(request, "explorer/account.html",
@@ -151,9 +243,10 @@ def account_page(request):
 
 
 @api_login_required
+@_json_404
 @require_http_methods(["GET"])
 def api_account(request):
-    return _state_response(_account_for(request.user))
+    return _state_response(_account_for(request))
 
 
 def _parse_date(raw):
@@ -192,24 +285,44 @@ def _default_price(ticker, on_date):
 
 
 def _validated_event(account, body):
-    """-> (field dict ready for AccountEvent, error). Enforces the
-    real-account invariants: no negative cash, no short positions —
-    the escape hatch is the explicit set_* force kinds."""
+    """-> (field dict ready for AccountEvent, error). Manual accounts
+    only. Enforces the real-account invariants: no negative cash, no
+    short positions — the escape hatch is the explicit set_* force
+    kinds. Bills (`redeem`, `maturity`) come in through import only."""
     kind = body.get("kind")
     if kind not in AccountEvent.KINDS:
         return None, f"kind must be one of {AccountEvent.KINDS}."
+    if kind == "redeem" or body.get("maturity") not in (None, ""):
+        return None, "Bills come in through import_ledger only."
     date, err = _parse_date(body.get("date"))
     if err:
         return None, err
     fields = {"kind": kind, "date": date,
               "note": str(body.get("note") or "")[:120]}
 
-    if kind in ("deposit", "withdraw", "set_cash"):
+    if kind in ("buy", "sell", "dividend", "interest") and \
+            body.get("fees") not in (None, ""):
+        fees, err = _positive(body, "fees", allow_zero=True)
+        if err:
+            return None, err
+        fields["fees"] = fees
+
+    if kind in ("deposit", "withdraw", "set_cash", "fee", "dividend",
+                "interest"):
         amount, err = _positive(body, "amount", allow_zero=(kind == "set_cash"))
         if err:
             return None, err
         fields["amount"] = amount
-    else:
+    if kind in ("dividend", "interest", "fee"):
+        # a dividend needs its ticker; interest may name one (blank = on
+        # the cash balance); a fee is on the account, never a ticker
+        ticker = ("" if kind == "fee"
+                  else str(body.get("ticker") or "").strip().upper())
+        if (ticker or kind == "dividend") and not TICKER_RE.match(ticker):
+            return None, f"'{ticker}' does not look like a ticker symbol."
+        if ticker:
+            fields["ticker"] = ticker
+    elif kind not in ("deposit", "withdraw", "set_cash"):
         ticker = str(body.get("ticker") or "").strip().upper()
         if not TICKER_RE.match(ticker):
             return None, f"'{ticker}' does not look like a ticker symbol."
@@ -236,7 +349,8 @@ def _validated_event(account, body):
     candidate = pd.DataFrame([{
         "date": fields["date"], "kind": kind,
         "ticker": fields.get("ticker"), "shares": fields.get("shares"),
-        "price": fields.get("price"), "amount": fields.get("amount")}])
+        "price": fields.get("price"), "amount": fields.get("amount"),
+        "fees": fields.get("fees", 0.0), "maturity": None}])
     shares_after, cash_after, _ = acct.replay(
         pd.concat([ev_df, candidate], ignore_index=True))
     if cash_after < -1e-6:
@@ -250,9 +364,12 @@ def _validated_event(account, body):
 
 
 @api_login_required
+@_json_404
 @require_POST
 def api_account_events(request):
-    account = _account_for(request.user)
+    account = _account_for(request)
+    if (denied := _mirror_guard(account)):
+        return denied
     body, err = _json_body(request)
     if err:
         return _bad(err)
@@ -264,9 +381,12 @@ def api_account_events(request):
 
 
 @api_login_required
+@_json_404
 @require_http_methods(["DELETE"])
 def api_account_event(request, eid):
-    account = _account_for(request.user)
+    account = _account_for(request)
+    if (denied := _mirror_guard(account)):
+        return denied
     deleted, _ = AccountEvent.objects.filter(pk=eid, account=account).delete()
     if not deleted:
         return _bad("No such ledger entry.", status=404)
@@ -274,13 +394,16 @@ def api_account_event(request, eid):
 
 
 @api_login_required
+@_json_404
 @require_POST
 def api_account_target(request):
     """Replace the setpoint with `{weights: {TICKER: fraction}}`.
 
     Fractions of total account value; the remainder is cash, so a CAL
     draft (weights summing to the risky share) drops in unchanged."""
-    account = _account_for(request.user)
+    account = _account_for(request)
+    if (denied := _mirror_guard(account)):
+        return denied
     body, err = _json_body(request)
     if err:
         return _bad(err)
@@ -315,12 +438,12 @@ def api_account_target(request):
 
 
 @api_login_required
+@_json_404
 @require_http_methods(["GET"])
 def api_account_plan(request):
     """Whole-share trades from the current holdings to the setpoint."""
-    account = _account_for(request.user)
-    targets = account.target_weights()
-    shares, cash, _ = acct.replay(account.events_frame())
+    account = _account_for(request)
+    shares, cash, targets = _plan_inputs(account)
     tickers = sorted(set(shares) | set(targets))
     if not tickers:
         return _bad("Set a target allocation first (or record holdings).")
@@ -352,13 +475,16 @@ def api_account_plan(request):
 
 
 @api_login_required
+@_json_404
 @require_POST
 def api_account_plan_confirm(request):
     """Write executed trades (possibly user-edited) into the ledger.
 
     Body: {trades: [{ticker, shares (+buy/-sell), price}], date?}.
     Sells are booked before buys so the sells fund the buys."""
-    account = _account_for(request.user)
+    account = _account_for(request)
+    if (denied := _mirror_guard(account)):
+        return denied
     body, err = _json_body(request)
     if err:
         return _bad(err)
@@ -416,10 +542,13 @@ def api_account_plan_confirm(request):
 
 
 @api_login_required
+@_json_404
 @require_POST
 def api_account_schedule(request):
     """Save the DCA schedule: {amount, cadence, next_due?, enabled?}."""
-    account = _account_for(request.user)
+    account = _account_for(request)
+    if (denied := _mirror_guard(account)):
+        return denied
     body, err = _json_body(request)
     if err:
         return _bad(err)
@@ -445,12 +574,13 @@ def api_account_schedule(request):
 
 
 @api_login_required
+@_json_404
 @require_http_methods(["GET"])
 def api_account_contribution(request):
     """Where should this contribution go? Buys-only whole-share plan
     that nudges the account toward its setpoint (engine:
     contribution_plan). ?amount= overrides the scheduled amount."""
-    account = _account_for(request.user)
+    account = _account_for(request)
     raw = request.GET.get("amount")
     if raw in (None, ""):
         sched = getattr(account, "schedule", None)
@@ -464,11 +594,10 @@ def api_account_contribution(request):
             return _bad("amount must be a number.")
         if amount <= 0:
             return _bad("amount must be > 0.")
-    targets = account.target_weights()
+    shares, cash, targets = _plan_inputs(account)
     if not targets:
         return _bad("Set a setpoint allocation first — the plan routes "
                     "money toward it.")
-    shares, cash, _ = acct.replay(account.events_frame())
     tickers = sorted(set(shares) | set(targets))
     try:
         closes = _close_history(
@@ -498,11 +627,14 @@ def api_account_contribution(request):
 
 
 @api_login_required
+@_json_404
 @require_POST
 def api_account_contribution_confirm(request):
     """Book a contribution: one deposit + the (possibly edited) buys.
     Advances the schedule when this covers a due date."""
-    account = _account_for(request.user)
+    account = _account_for(request)
+    if (denied := _mirror_guard(account)):
+        return denied
     body, err = _json_body(request)
     if err:
         return _bad(err)
@@ -561,13 +693,16 @@ def api_account_contribution_confirm(request):
 
 
 @api_login_required
+@_json_404
 @require_POST
 def api_account_forecast(request):
     """Forecast the COMPLETE account: current holdings (value-weighted)
     constant-mixed with its cash share at the live risk-free rate.
     Statistics use adjusted closes (fetch_prices); valuation weights
     use raw last closes — same split as everywhere else."""
-    account = _account_for(request.user)
+    account = _account_for(request)
+    if account.currency != "USD":
+        return _bad("The forecast is USD-only for now.")
     body, err = _json_body(request)
     if err:
         return _bad(err)
@@ -590,16 +725,24 @@ def api_account_forecast(request):
     if err:
         return _bad(err)
 
-    shares, cash, _ = acct.replay(account.events_frame())
+    ev_df = account.events_frame()
+    shares, cash, _ = _plan_inputs(account)
     if not shares:
         return _bad("Nothing to project yet — the account holds no assets. "
                     "(All-cash grows at the T-bill rate by definition.)")
+    # bills join the cash sleeve at their accreted value
+    state = acct.ledger_state(ev_df)
+    bill_value = 0.0
+    if state.bills:
+        bp = acct.bill_prices(
+            ev_df, pd.DatetimeIndex([pd.Timestamp(dt.date.today())])).iloc[0]
+        bill_value = float(sum(state.shares[t] * bp[t] for t in state.bills))
     try:
         closes = _close_history(
             shares, dt.date.today() - dt.timedelta(days=PRICE_BUFFER_DAYS))
         alloc = acct.allocation(shares, _last_closes(closes), cash)
-        total = float(alloc["value"].sum()) + cash
-        cw = cash / total if total > 0 else 0.0
+        total = float(alloc["value"].sum()) + cash + bill_value
+        cw = (cash + bill_value) / total if total > 0 else 0.0
         try:
             rf = risk_free_rate()["rate"]
         except Exception:

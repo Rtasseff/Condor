@@ -159,6 +159,13 @@ class Account(models.Model):
     def __str__(self):
         return f"{self.name} ({self.owner})"
 
+    @classmethod
+    def default_for(cls, user):
+        """The account the UI opens without `?account=`: first manual
+        one, else first mirror, else None (callers decide to create)."""
+        qs = cls.objects.filter(owner=user)
+        return qs.filter(mirror=False).first() or qs.first()
+
     def events_frame(self):
         """Ledger -> the engine's event-table shape (condor.accounting)."""
         import pandas as pd
