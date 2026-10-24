@@ -133,7 +133,12 @@ New pure modules; numbers here, nothing in views or JS.
   `muted=True, fired=False`. `accelerations`: no fired rule → `through
   = max(k_due, 1)`; fired untargeted → `k_due + tranches` (largest if
   several), capped at N; targeted → `extra[ticker] = tranches` (largest
-  per ticker).
+  per ticker). The two kinds **add**, because a ticker’s due uses
+  `min(through + extra, N)`: an untargeted +2 and a targeted +1 firing
+  together take the targeted tickers to `k_due + 3` and every other
+  line to `k_due + 2`, all capped at N (confirmed against `pflib`
+  2026-10-24). Pin this with a test (e.g. on the fixture at T2: both
+  rules applied, N = 4).
 - `condor/accounting.py`:
   - `money_weighted_return(daily) -> float | None` — investor cash
     flows −`flow` on each day plus +final `value` on the last day,
