@@ -1,21 +1,31 @@
 """Account engine: pure functions over a transaction ledger and prices.
 
-See docs/decisions/0004-account-ledger.md. An account is an append-only
-ledger of events; everything here derives state from it:
+See docs/decisions/0004-account-ledger.md and 0005-ledger-v2-mirror.md.
+An account is an append-only ledger of events; everything here derives
+state from it:
 
-- `replay`             -> shares, cash, net contributions (final state)
+- `ledger_state`       -> shares, cash, contributions, cost, realized, income
+- `replay`             -> (shares, cash, net contributions) of `ledger_state`
 - `daily_state`        -> value / flow / contribution series on trading days
 - `time_weighted_return` -> return that ignores contribution timing
+- `holdings`           -> per-position cost / unrealized / realized / income
+- `bill_prices`        -> straight-line accretion of zero-coupon bills
 - `allocation`         -> actual weights (incl. cash) at given prices
 - `rebalance_plan`     -> whole-share trades from here to a target
 
 Conventions:
 - Valuation uses RAW closes (you own N shares at the actual price);
   adjusted closes are for return statistics elsewhere.
-- Event kinds: deposit, withdraw (cash, `amount`); buy, sell
-  (`ticker`, `shares`, `price`); set_shares, set_cash (manual forces —
-  the delta is an in-kind contribution at the recorded price/amount,
-  so forcing state never manufactures return).
+- Event kinds: deposit, withdraw (cash, `amount`); buy, sell, redeem
+  (`ticker`, `shares`, `price`, `fees`); dividend, interest, fee
+  (`amount`, `fees` withheld; ticker optional for interest/fee);
+  set_shares, set_cash (manual forces — the delta is an in-kind
+  contribution at the recorded price/amount, so forcing state never
+  manufactures return). A buy carrying a `maturity` opens a bill lot.
+- Cost basis is average cost; buy fees go into cost, sell fees come off
+  proceeds. Income and fees are return, not flows.
+- The engine has no notion of currency: every amount is in the
+  account's own.
 - Flows F_t are treated as available at the start of day t:
   r_t = V_t / (V_{t-1} + F_t) - 1, geometrically linked. A deposit
   therefore moves value but not return.
@@ -26,12 +36,45 @@ validation; this module trusts its inputs' shapes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date
+
 import numpy as np
 import pandas as pd
 
-KINDS = ("deposit", "withdraw", "buy", "sell", "set_shares", "set_cash")
+KINDS = ("deposit", "withdraw", "buy", "sell", "set_shares", "set_cash",
+         "dividend", "interest", "fee", "redeem")
 
-EVENT_COLUMNS = ["date", "kind", "ticker", "shares", "price", "amount"]
+EVENT_COLUMNS = ["date", "kind", "ticker", "shares", "price", "amount",
+                 "fees", "maturity"]
+
+_EPS = 1e-12
+_CASH = "CASH"
+
+
+@dataclass(frozen=True)
+class BillLot:
+    settle: date
+    maturity: date
+    nominal: float
+    cost: float
+
+
+@dataclass(frozen=True)
+class LedgerState:
+    shares: dict[str, float]        # open positions; a bill's "shares" = nominal held
+    cash: float
+    contributions: float
+    cost: dict[str, float]          # cost basis of open positions
+    realized: dict[str, float]      # by ticker, closed positions included
+    income: dict[str, float]        # gross; interest on cash keyed "CASH"
+    charges: float                  # standalone fees + fees withheld from income
+    trade_fees: float               # buy/sell/redeem fees (already inside cost/realized)
+    bills: dict[str, list[BillLot]]  # open lots per bill ticker
+
+    def avg_cost(self, ticker) -> float:
+        n = self.shares.get(ticker, 0.0)
+        return self.cost.get(ticker, 0.0) / n if n else 0.0
 
 
 def _empty_events() -> pd.DataFrame:
@@ -43,8 +86,120 @@ def _norm_events(events: pd.DataFrame | None) -> pd.DataFrame:
         return _empty_events()
     ev = events.copy()
     ev["date"] = pd.to_datetime(ev["date"])
+    # frames from before ADR 0005 have six columns
+    ev["fees"] = (ev["fees"].fillna(0.0).astype(float)
+                  if "fees" in ev else 0.0)
+    ev["maturity"] = (pd.to_datetime(ev["maturity"]) if "maturity" in ev
+                      else pd.NaT)
     # stable order: by date, then input order (ledger insertion order)
     return ev.sort_values("date", kind="stable").reset_index(drop=True)
+
+
+def _is_set(x) -> bool:
+    return x is not None and not pd.isna(x)
+
+
+def bill_tickers(events: pd.DataFrame | None) -> set[str]:
+    """Tickers having any buy with a non-null `maturity`."""
+    ev = _norm_events(events)
+    if ev.empty:
+        return set()
+    b = ev[(ev["kind"] == "buy") & ev["maturity"].notna()]
+    return set(b["ticker"])
+
+
+def _scale_lots(lots: list[BillLot], frac_left: float) -> list[BillLot]:
+    return [BillLot(l.settle, l.maturity, l.nominal * frac_left,
+                    l.cost * frac_left) for l in lots]
+
+
+def ledger_state(events: pd.DataFrame | None) -> LedgerState:
+    """The one replay loop: run the ledger -> `LedgerState`.
+
+    Raises ValueError on an unknown kind or a `redeem` of a ticker that
+    is not a bill, or a set_shares on a bill."""
+    shares: dict[str, float] = {}
+    cost: dict[str, float] = {}
+    realized: dict[str, float] = {}
+    income: dict[str, float] = {}
+    bills: dict[str, list[BillLot]] = {}
+    bill_set: set[str] = set()
+    cash = contrib = charges = trade_fees = 0.0
+
+    def dispose(t, n, proceeds):
+        """Remove n from t at average cost, booking the realized gain."""
+        nonlocal cash
+        held = shares.get(t, 0.0)
+        avg = cost.get(t, 0.0) / held if abs(held) > _EPS else 0.0
+        cost[t] = cost.get(t, 0.0) - avg * n
+        realized[t] = realized.get(t, 0.0) + proceeds - avg * n
+        shares[t] = held - n
+        cash += proceeds
+        if t in bill_set and abs(held) > _EPS:
+            bills[t] = _scale_lots(bills.get(t, []), 1.0 - n / held)
+
+    for ev in _norm_events(events).itertuples(index=False):
+        kind = ev.kind
+        fee = float(ev.fees)
+        if kind == "deposit":
+            cash += ev.amount
+            contrib += ev.amount
+        elif kind == "withdraw":
+            cash -= ev.amount
+            contrib -= ev.amount
+        elif kind == "buy":
+            outlay = ev.shares * ev.price + fee
+            shares[ev.ticker] = shares.get(ev.ticker, 0.0) + ev.shares
+            cost[ev.ticker] = cost.get(ev.ticker, 0.0) + outlay
+            cash -= outlay
+            trade_fees += fee
+            if _is_set(ev.maturity):
+                bill_set.add(ev.ticker)
+                bills.setdefault(ev.ticker, []).append(BillLot(
+                    ev.date.date(), ev.maturity.date(), ev.shares, outlay))
+        elif kind in ("sell", "redeem"):
+            if kind == "redeem" and ev.ticker not in bill_set:
+                raise ValueError(f"redeem of {ev.ticker!r}: not a bill")
+            dispose(ev.ticker, ev.shares, ev.shares * ev.price - fee)
+            trade_fees += fee
+        elif kind in ("dividend", "interest"):
+            key = ev.ticker if _is_set(ev.ticker) and ev.ticker else _CASH
+            income[key] = income.get(key, 0.0) + ev.amount
+            cash += ev.amount - fee
+            charges += fee
+        elif kind == "fee":
+            cash -= ev.amount
+            charges += ev.amount
+        elif kind == "set_shares":
+            if ev.ticker in bill_set:
+                raise ValueError(f"set_shares on bill {ev.ticker!r}")
+            held = shares.get(ev.ticker, 0.0)
+            delta = ev.shares - held
+            contrib += delta * ev.price          # in-kind flow, not return
+            if delta > 0:
+                cost[ev.ticker] = cost.get(ev.ticker, 0.0) + delta * ev.price
+            elif delta < 0:
+                avg = cost.get(ev.ticker, 0.0) / held if abs(held) > _EPS else 0.0
+                cost[ev.ticker] = cost.get(ev.ticker, 0.0) - avg * -delta
+                realized[ev.ticker] = (realized.get(ev.ticker, 0.0)
+                                       + -delta * (ev.price - avg))
+            shares[ev.ticker] = ev.shares
+        elif kind == "set_cash":
+            delta = ev.amount - cash
+            cash = ev.amount
+            contrib += delta
+        else:
+            raise ValueError(f"unknown event kind: {kind!r}")
+
+    open_ = {t for t, s in shares.items() if abs(s) > _EPS}
+    return LedgerState(
+        shares={t: float(shares[t]) for t in shares if t in open_},
+        cash=float(cash), contributions=float(contrib),
+        cost={t: float(cost.get(t, 0.0)) for t in open_},
+        realized={t: float(v) for t, v in realized.items()},
+        income={t: float(v) for t, v in income.items()},
+        charges=float(charges), trade_fees=float(trade_fees),
+        bills={t: lots for t, lots in bills.items() if t in open_})
 
 
 def replay(events: pd.DataFrame | None) -> tuple[dict, float, float]:
@@ -54,35 +209,80 @@ def replay(events: pd.DataFrame | None) -> tuple[dict, float, float]:
     valued at the event's recorded price (set_shares) or amount delta
     (set_cash).
     """
-    shares: dict[str, float] = {}
-    cash = 0.0
-    contrib = 0.0
-    for ev in _norm_events(events).itertuples(index=False):
-        kind = ev.kind
-        if kind == "deposit":
-            cash += ev.amount
-            contrib += ev.amount
-        elif kind == "withdraw":
-            cash -= ev.amount
-            contrib -= ev.amount
-        elif kind == "buy":
-            shares[ev.ticker] = shares.get(ev.ticker, 0.0) + ev.shares
-            cash -= ev.shares * ev.price
-        elif kind == "sell":
-            shares[ev.ticker] = shares.get(ev.ticker, 0.0) - ev.shares
-            cash += ev.shares * ev.price
-        elif kind == "set_shares":
-            delta = ev.shares - shares.get(ev.ticker, 0.0)
-            shares[ev.ticker] = ev.shares
-            contrib += delta * ev.price          # in-kind flow, not return
-        elif kind == "set_cash":
-            delta = ev.amount - cash
-            cash = ev.amount
-            contrib += delta
-        else:
-            raise ValueError(f"unknown event kind: {kind!r}")
-    shares = {t: s for t, s in shares.items() if abs(s) > 1e-12}
-    return shares, float(cash), float(contrib)
+    s = ledger_state(events)
+    return s.shares, s.cash, s.contributions
+
+
+def accrued_value(lot: BillLot, on) -> float:
+    """Straight-line value of a lot on a day: cost at settlement, nominal
+    at maturity, nominal thereafter."""
+    on = pd.Timestamp(on).date()
+    span = (lot.maturity - lot.settle).days
+    frac = 1.0 if span <= 0 else min(max((on - lot.settle).days / span, 0.0), 1.0)
+    return lot.cost + (lot.nominal - lot.cost) * frac
+
+
+def bill_prices(events: pd.DataFrame | None, index) -> pd.DataFrame:
+    """Value per 1 nominal of the lots held at the END of each day in
+    `index`, one column per bill ticker (0.0 when none is held). Events
+    land on the first index day on/after their date, as in `daily_state`."""
+    ev = _norm_events(events)
+    index = pd.DatetimeIndex(index)
+    tick = sorted(bill_tickers(ev))
+    out = pd.DataFrame(0.0, index=index, columns=tick)
+    if not tick or len(index) == 0:
+        return out
+    lots: dict[str, list[BillLot]] = {t: [] for t in tick}
+    held: dict[str, float] = {t: 0.0 for t in tick}
+    by_day: dict[int, list] = {}
+    for e in ev.itertuples(index=False):
+        if e.ticker not in lots:
+            continue
+        pos = min(int(index.searchsorted(pd.Timestamp(e.date).normalize())),
+                  len(index) - 1)
+        by_day.setdefault(pos, []).append(e)
+    for pos, day in enumerate(index):
+        for e in by_day.get(pos, []):
+            t = e.ticker
+            if e.kind == "buy" and _is_set(e.maturity):
+                lots[t].append(BillLot(e.date.date(), e.maturity.date(),
+                                       e.shares, e.shares * e.price + e.fees))
+                held[t] += e.shares
+            elif e.kind in ("sell", "redeem") and held[t] > _EPS:
+                lots[t] = _scale_lots(lots[t], 1.0 - e.shares / held[t])
+                held[t] -= e.shares
+        for t in tick:
+            nominal = sum(l.nominal for l in lots[t])
+            if held[t] > _EPS and nominal > _EPS:
+                out.iloc[pos, out.columns.get_loc(t)] = (
+                    sum(accrued_value(l, day) for l in lots[t]) / nominal)
+    return out
+
+
+def holdings(state: LedgerState, prices: pd.Series) -> pd.DataFrame:
+    """Open positions -> DataFrame indexed by ticker with [shares, price,
+    value, cost, avg_cost, unrealized, unrealized_pct, realized, income].
+    `prices` covers every open ticker (bills at their `bill_prices`
+    value). unrealized_pct = value / cost - 1."""
+    cols = ["shares", "price", "value", "cost", "avg_cost", "unrealized",
+            "unrealized_pct", "realized", "income"]
+    tick = sorted(state.shares)
+    if not tick:
+        return pd.DataFrame(columns=cols)
+    px = pd.Series(prices).reindex(tick)
+    if px.isna().any():
+        raise KeyError(f"no price for {list(px.index[px.isna()])}")
+    sh = pd.Series({t: state.shares[t] for t in tick})
+    cost = pd.Series({t: state.cost.get(t, 0.0) for t in tick})
+    value = sh * px
+    return pd.DataFrame({
+        "shares": sh, "price": px, "value": value, "cost": cost,
+        "avg_cost": pd.Series({t: state.avg_cost(t) for t in tick}),
+        "unrealized": value - cost,
+        "unrealized_pct": (value / cost - 1.0).where(cost > _EPS, 0.0),
+        "realized": pd.Series({t: state.realized.get(t, 0.0) for t in tick}),
+        "income": pd.Series({t: state.income.get(t, 0.0) for t in tick}),
+    })
 
 
 def daily_state(events: pd.DataFrame | None,
@@ -90,10 +290,12 @@ def daily_state(events: pd.DataFrame | None,
     """Account history on trading days -> DataFrame[value, flow, contributions].
 
     `closes` are raw close prices (columns = tickers); gaps are
-    forward-filled. Days start at the first event. `flow` is the net
-    external flow ON that day (cash deposits/withdrawals plus in-kind
-    force deltas); `contributions` is its running total. Events dated
-    on non-trading days take effect on the next trading day.
+    forward-filled. Bills are valued internally by `bill_prices`, so
+    `closes` need no bill columns. Days start at the first event.
+    `flow` is the net external flow ON that day (cash deposits/withdrawals
+    plus in-kind force deltas — never income or fees, which are return);
+    `contributions` is its running total. Events dated on non-trading
+    days take effect on the next trading day.
     """
     ev = _norm_events(events)
     if ev.empty:
@@ -107,7 +309,10 @@ def daily_state(events: pd.DataFrame | None,
     if len(idx) == 0:
         return pd.DataFrame(columns=["value", "flow", "contributions"])
 
-    tickers = sorted({t for t in ev["ticker"].dropna().unique()})
+    held_kinds = ("buy", "sell", "redeem", "set_shares")
+    bills = bill_tickers(ev)
+    tickers = sorted(set(ev.loc[ev["kind"].isin(held_kinds), "ticker"]
+                         .dropna()))
     d_shares = pd.DataFrame(0.0, index=idx, columns=tickers)  # increments
     d_cash = pd.Series(0.0, index=idx)
     d_flow = pd.Series(0.0, index=idx)
@@ -128,15 +333,23 @@ def daily_state(events: pd.DataFrame | None,
             d_flow[day] -= e.amount
             run_cash -= e.amount
         elif e.kind == "buy":
+            out = e.shares * e.price + e.fees
             d_shares.loc[day, e.ticker] += e.shares
-            d_cash[day] -= e.shares * e.price
+            d_cash[day] -= out
             running[e.ticker] = running.get(e.ticker, 0.0) + e.shares
-            run_cash -= e.shares * e.price
-        elif e.kind == "sell":
+            run_cash -= out
+        elif e.kind in ("sell", "redeem"):
+            net = e.shares * e.price - e.fees
             d_shares.loc[day, e.ticker] -= e.shares
-            d_cash[day] += e.shares * e.price
+            d_cash[day] += net
             running[e.ticker] = running.get(e.ticker, 0.0) - e.shares
-            run_cash += e.shares * e.price
+            run_cash += net
+        elif e.kind in ("dividend", "interest"):
+            d_cash[day] += e.amount - e.fees
+            run_cash += e.amount - e.fees
+        elif e.kind == "fee":
+            d_cash[day] -= e.amount
+            run_cash -= e.amount
         elif e.kind == "set_shares":
             delta = e.shares - running.get(e.ticker, 0.0)
             d_shares.loc[day, e.ticker] += delta
@@ -152,13 +365,19 @@ def daily_state(events: pd.DataFrame | None,
 
     shares_path = d_shares.cumsum()
     cash_path = d_cash.cumsum()
-    if tickers:
-        missing = [t for t in tickers if t not in px.columns]
-        if missing:
-            raise KeyError(f"no close prices for {missing}")
-        holdings_value = (shares_path * px.loc[idx, tickers]).sum(axis=1)
-    else:
-        holdings_value = pd.Series(0.0, index=idx)
+    listed = [t for t in tickers if t not in bills]
+    missing = [t for t in listed if t not in px.columns]
+    if missing:
+        raise KeyError(f"no close prices for {missing}")
+    holdings_value = pd.Series(0.0, index=idx)
+    if listed:
+        holdings_value = holdings_value + (
+            shares_path[listed] * px.loc[idx, listed].fillna(0.0)).sum(axis=1)
+    billed = [t for t in tickers if t in bills]
+    if billed:
+        bp = bill_prices(ev, idx)
+        holdings_value = holdings_value + (
+            shares_path[billed] * bp[billed]).sum(axis=1)
     out = pd.DataFrame({
         "value": holdings_value + cash_path,
         "flow": d_flow,
