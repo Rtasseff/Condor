@@ -549,7 +549,7 @@ $("loadreal").addEventListener("click", async () => {
   btn.setAttribute("aria-disabled", "true");
   try {
     const d = await api("/api/account");
-    const held = (d.positions || []).filter((p) => p.shares > 0).slice(0, 15);
+    const held = (d.positions || []).filter((p) => p.shares > 0 && !p.is_bill).slice(0, 15);
     if (!held.length) throw new Error("Your real portfolio holds no assets yet.");
     state.assets = held.map((p) => ({ symbol: p.ticker, weight: p.weight }));
     for (const a of state.assets) colorFor(a.symbol);
