@@ -128,6 +128,7 @@ function renderPicker() {
   }
 }
 
+let switchSeq = 0;
 function switchAccount(id) {
   accountId = id;
   const u = new URL(location.href);
@@ -141,7 +142,10 @@ function switchAccount(id) {
   forecastMode = null;
   forecastSeq++;
   $("a-asof").textContent = "Valuing the account at the last close…";
-  api("/api/account").then(render).catch((err) => showError(err.message));
+  const seq = ++switchSeq;   // only the newest switch may paint
+  api("/api/account")
+    .then((d) => { if (seq === switchSeq) render(d); })
+    .catch((err) => { if (seq === switchSeq) showError(err.message); });
 }
 
 function renderMirror() {

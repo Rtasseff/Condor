@@ -371,14 +371,63 @@ over the prefix):
 
 ## Status
 
-- [ ] Baseline recorded (217 passed / 4 skipped; 141 OK)
-- [ ] Phase 1 engine
-- [ ] Phase 2 format I/O
-- [ ] Phase 3 migration + commands
-- [ ] Phase 4 web layer
-- [ ] Phase 5 UI
-- [ ] Phase 6 docs
-- [ ] Phase 7 `/code-review medium` + fixes
+- [x] Baseline recorded (217 passed / 4 skipped; 141 OK)
+- [x] Phase 1 engine
+- [x] Phase 2 format I/O
+- [x] Phase 3 migration + commands
+- [x] Phase 4 web layer
+- [x] Phase 5 UI
+- [x] Phase 6 docs
+- [x] Phase 7 `/code-review medium` + fixes
+
+### Results
+
+`pytest tests/` 286 passed / 4 skipped (baseline 217 / 4);
+`manage.py test explorer` 157 OK (baseline 141); `check` clean;
+`makemigrations --check --dry-run` clean (migration `0006_ledger_mirror`).
+New tests: `tests/test_accounting_ledger.py`, `tests/test_ledger_io.py`,
+`web/explorer/test_ledger_mirror.py`. Browser smoke test on a scratch
+user + scratch (past-dated) ledger: both accounts render, € on the bill
+account, banner, no write controls, no console errors.
+
+### Deviations / additions
+
+- `Account.events_frame()` also emits a `note` column (export needs it).
+- `Account.default_for(user)` classmethod holds the default-account rule
+  (used by `account.py` and `views._has_holdings`); `_has_holdings` also
+  ignores bills (they can't load into the workbench).
+- Pre-existing bug fixed: `_state` fetched closes only for held/target
+  tickers, so a fully sold-out ticker made `daily_state` raise KeyError.
+  It now fetches every non-bill ticker ever traded.
+- The ledger list on `/account` became a table (Date, Type, Ticker, Qty,
+  Price, Amount, Fees, Note). Per-unit prices show up to 4 dp.
+- `read_ledger` skips the running cash/position check for an account once
+  one of its rows has errored (no cascading false errors).
+- Renamed user-facing strings (ledger rows), before → after:
+  "deposited $X" → Deposit; "withdrew $X" → Withdraw; "bought N × T @ $P"
+  → Buy; "sold …" → Sell; "forced T to N shares" → Forced shares;
+  "forced cash to $X" → Forced cash (the details now sit in table
+  columns). Hard-coded "$" → the account's currency symbol/ISO format.
+  Form label "Amount $" → "Amount <symbol>".
+- Click-through caveat: the fixture's AAA/BBB are invented (no prices)
+  and dated 2027–28, so `broker_a` cannot be valued live; `tesoro` can.
+
+### Code-review (medium) — landed / not landed
+
+Landed: account-switch race in `switchAccount` (stale response could
+overwrite a newer one) — now sequence-guarded.
+Not landed (by design of the brief, or left as notes):
+- Plans exclude bills, so plan weights use a different denominator than
+  the drift column when bills are held (brief: bills out of plan math).
+- Forecast on a bills-only USD account says "Nothing to project yet".
+- "Fees" in the gain breakdown is charges only; trade fees live in cost /
+  realized (brief wording; `trade_fees_total` is in the payload).
+- `write_ledger` rounds to 6 dp and copies manual notes verbatim, so a
+  manual account with a 7+ digit note re-fails import.
+- A replace-import leaves mirror accounts absent from the file untouched
+  (brief: "accounts not in the file are untouched").
+- Refactor ideas: share lot tracking between `ledger_state` and
+  `bill_prices`; load `events_frame()` once per request.
 
 ## Questions for the handoff session
 
