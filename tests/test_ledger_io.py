@@ -156,7 +156,8 @@ def test_same_day_rows_keep_file_order():
 
 
 @pytest.mark.parametrize("body,text", [
-    ("a,AAA,1.5\n", "sum"),
+    ("a,AAA,0.7\na,BBB,0.5\n", "sum"),
+    ("a,AAA,1.5\n", "[0, 1]"),
     ("a,AAA,0.5\na,AAA,0.2\n", "duplicate"),
     ("a,LETRA-2028-01-14,0.5\n", "ticker"),
     ("a,AAA,x\n", "weight"),
