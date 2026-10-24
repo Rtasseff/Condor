@@ -1109,7 +1109,7 @@ async function loadRealHoldings() {
   // has_real uses. Filtering on weight instead would disagree with it for
   // a position whose price is missing (value 0, so weight 0), leaving the
   // picker offering a source that errors when clicked.
-  const held = (d.positions || []).filter((p) => p.shares > 0).slice(0, 15);
+  const held = (d.positions || []).filter((p) => p.shares > 0 && !p.is_bill).slice(0, 15);
   if (!held.length) throw new Error("Your real portfolio holds no assets yet.");
   // account weights are fractions of the whole account (cash included);
   // Analyze normalizes them back to a risky mix

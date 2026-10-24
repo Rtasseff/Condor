@@ -124,11 +124,11 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   and dollar-cost-averaging plans for new money.
   References: `reference materials/Portfolio-ManagementProcess/
   Kritzman2008-Portfolio_Rebalancing…`, `MRebalancing.pdf`.
-- [ ] **Account follow-ons:** multiple accounts per user (schema already
-  allows it — needs a selector UI); dividends/splits at the account
-  level (ledger kinds + replay rules, ADR 0004 "reopens if");
-  benchmark overlay on the value chart (SPY / your setpoint held
-  passively); CSV export of the ledger.
+- [ ] **Account follow-ons:** ~~multiple accounts per user~~ (done,
+  ADR 0005); ~~dividends~~ (done: dividend/interest/fee kinds) — splits
+  still open; benchmark overlay on the value chart (SPY / your setpoint
+  held passively); ~~CSV export of the ledger~~ (done:
+  `export_ledger`).
 - [ ] **Scenario simulators** — "what if 2008 / 2020 / rates +3%" replay on
   the current portfolio; Monte Carlo on the estimated μ/Σ.
 - [ ] **Optimization constraints:** per-asset max weight, min position,
@@ -178,6 +178,12 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **Mirror import (ADR 0005)** — 2026-10-24. Ledger v2 engine (average
+      cost, realized/unrealized, dividend/interest/fee as return, redeem,
+      straight-line bills), `condor/ledger_io.py` + `import_ledger` /
+      `export_ledger`, read-only mirror accounts with `?account=`
+      selection, per-account currency, gain breakdown in the UI.
 
 - [x] **UX conventions pass** — 2026-09-01, from RT's live feedback
       ("zoom so sensitive I'm refreshing constantly... not super

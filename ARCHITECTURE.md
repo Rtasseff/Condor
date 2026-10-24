@@ -18,6 +18,7 @@ condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns
 condor/frontier.py         OPTIMIZATION ENGINE: _perf, _solve, _weights_dict
 condor/forecast.py         FORECAST ENGINE: fan-chart bands (closed form, bootstrap, μ anchors)
 condor/accounting.py       ACCOUNT ENGINE: ledger replay, valuation/TWR, rebalance plans
+condor/ledger_io.py        FORMAT I/O: ledger CSV v1 read/validate/write (pure, no Django)
         │
 condor/data/               DATA LAYER: PriceStore (~/.condor/prices) + sources + FRED rf
 ```
@@ -47,6 +48,7 @@ that gather the object's state and hand it to an engine function.
 | A new capability **of a portfolio** (forecast, rebalance, DCA schedule, drawdown, scenario replay) | `model.py` → method on `Portfolio` (numerics in a new engine module, e.g. `forecast.py`) | `portfolio.forecast(horizon, ...)` returns a small result object or DataFrame; `to_dict()` for the UI |
 | A new capability **of a set of assets** (screening, correlation view, "suggest an addition") | `AssetSet` method (+ engine function) | same pattern |
 | A new curve / chart object (e.g. CAL as its own thing, backtest path) | `model.py` class, or a sibling module | has an `AssetSet` or `Portfolio`, exposes `to_dict()` |
+| A change to the ledger CSV format, or a new import/export path | `condor/ledger_io.py` (pure parse/validate/write) + a management command that only persists; the contract is `docs/LEDGER-FORMAT.md` | validation errors are collected as `line N:` messages, never partial results |
 | A new data source | `condor/data/sources.py` | a class with `name` and `fetch(ticker, start) -> DataFrame[close, adj_close]`; register in `_REGISTRY` |
 | A new HTTP endpoint | `web/explorer/views.py` + `urls.py` | validate → build `AssetSet` → call model → `to_dict()` → `JsonResponse`. No numerics in views. |
 | Persistence (saved portfolios) | `web/explorer/models.py` (Django) | store tickers/weights/method/rf; rebuild a `Portfolio` from them — Django models are storage, `condor` objects are behaviour |

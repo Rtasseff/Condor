@@ -1,0 +1,13 @@
+date,account,ticker,side,qty,price,fees,ccy,maturity,note
+2027-01-04,broker_a,CASH,DEPOSIT,1000,1,0,USD,,opening deposit
+2027-01-05,broker_a,AAA,BUY,2.5,100,1.00,USD,,fractional buy with a fee
+2027-01-05,broker_a,BBB,BUY,10,20,0,USD,,
+2027-01-14,tesoro,CASH,DEPOSIT,970.60,1,0,EUR,,money in for the bill
+2027-01-14,tesoro,LETRA-2028-01-14,BUY,1000,0.9706,0,EUR,2028-01-14,12-month bill; qty = nominal EUR
+2027-02-01,broker_a,AAA,BUY,1.25,80,0,USD,,second buy lowers avg cost
+2027-02-15,broker_a,AAA,DIV,3.00,1,0,USD,,dividend: income not contribution
+2027-03-01,broker_a,AAA,SELL,1.5,110,0.50,USD,,partial sell
+2027-03-02,broker_a,CASH,INTEREST,1.20,1,0,USD,,cash interest
+2027-03-03,broker_a,CASH,FEE,2.00,1,0,USD,,account fee
+2027-03-10,broker_a,CASH,WITHDRAW,100,1,0,USD,,
+2028-01-14,tesoro,LETRA-2028-01-14,REDEEM,1000,1,0,EUR,,maturity at nominal

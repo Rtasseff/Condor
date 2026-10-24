@@ -838,3 +838,15 @@ details.transcript > summary:hover { color: var(--ink); }
 #workbench { display: contents; }
 .nodraft #workbench { display: none; }
 .hasdraft #optimize-empty { display: none; }
+
+/* ---- ledger mirror (ADR 0005) ---- */
+.acctpicker { margin: 0 0 12px; }
+.acctpicker select { font: inherit; }
+.mirrorbanner { border-left: 4px solid var(--accent); font-size: 14px; }
+.advice { color: var(--muted); font-style: italic; }
+.gainbreak { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+#forecast.usdonly > :not(h2):not(#afusd) { display: none !important; }
+#ledgertable td.note { color: var(--muted); max-width: 22ch; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; }

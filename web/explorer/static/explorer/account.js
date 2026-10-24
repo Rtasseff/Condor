@@ -24,9 +24,28 @@ const CHART_CONFIG = {
 };
 
 const $ = (id) => document.getElementById(id);
-const money = (x) => "$" + (+x).toLocaleString(undefined, {
-  minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const money0 = (x) => "$" + Math.round(+x).toLocaleString();
+
+// Money is formatted in the account's own ISO currency (one per account;
+// ADR 0005). setCurrency() runs on every render, before anything paints.
+let CCY = "USD";
+let fmt2, fmt0, fmtP, SYM = "$";
+function setCurrency(code) {
+  CCY = code || "USD";
+  const f = (digits) => new Intl.NumberFormat(undefined, {
+    style: "currency", currency: CCY,
+    minimumFractionDigits: digits, maximumFractionDigits: digits });
+  fmt2 = f(2);
+  fmtP = new Intl.NumberFormat(undefined, { style: "currency", currency: CCY,
+    minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  fmt0 = f(0);
+  SYM = fmt2.formatToParts(0).find((p) => p.type === "currency").value;
+  for (const el of document.querySelectorAll(".ccy")) el.textContent = SYM;
+}
+setCurrency("USD");
+const money = (x) => fmt2.format(+x);
+const moneyP = (x) => fmtP.format(+x);   // per-unit prices: up to 4 dp
+const money0 = (x) => fmt0.format(Math.round(+x));
+const signed = (x) => (x < 0 ? "−" : "+") + money(Math.abs(x));
 const pct = (x, d = 1) => (100 * x).toFixed(d) + "%";
 
 // The cash sleeve of a hypothetical forecast earns this (server-rendered
@@ -38,7 +57,8 @@ const RF = (() => {
 
 // Does the ledger say we actually hold anything? Everything about the two
 // bridges hangs off this one question.
-const hasHoldings = (d) => (d.positions || []).some((p) => p.shares > 0);
+const hasHoldings = (d) =>
+  (d.positions || []).some((p) => p.shares > 0 && !p.is_bill);
 const setpointRows = (d) =>
   (d.positions || []).filter((p) => p.target_weight > 0);
 
@@ -49,6 +69,17 @@ function csrftoken() {
 
 const state = { data: null, plan: null, contrib: null };
 
+// Which account every /api/account* call is about: the URL's ?account=
+// (unset = the server's default account).
+let accountId = new URLSearchParams(location.search).get("account");
+const isMirror = () => !!(state.data && state.data.account.mirror);
+
+function withAccount(url) {
+  if (!accountId || !url.startsWith("/api/account")) return url;
+  return url + (url.includes("?") ? "&" : "?")
+    + "account=" + encodeURIComponent(accountId);
+}
+
 function showError(msg) {
   const e = $("error");
   e.textContent = msg;
@@ -56,7 +87,7 @@ function showError(msg) {
 }
 
 async function api(url, opts = {}) {
-  const res = await fetch(url, {
+  const res = await fetch(withAccount(url), {
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
     ...opts,
   });
@@ -68,7 +99,10 @@ async function api(url, opts = {}) {
 // ---------- rendering ----------
 function render(data) {
   state.data = data;
+  setCurrency(data.account.currency);
   showError("");
+  renderPicker();
+  renderMirror();
   renderTiles();
   renderChart();
   renderPositions();
@@ -76,6 +110,66 @@ function render(data) {
   renderSchedule();
   renderStarter();
   renderForecastMode();
+}
+
+// ---------- many accounts: the selector and the mirror banner ----------
+function renderPicker() {
+  const d = state.data;
+  const box = $("acctpicker");
+  box.hidden = d.accounts.length < 2;
+  const sel = $("acct-select");
+  sel.replaceChildren();
+  for (const a of d.accounts) {
+    const o = document.createElement("option");
+    o.value = a.id;
+    o.textContent = a.name + (a.mirror ? " · mirror" : "") + " · " + a.currency;
+    o.selected = a.id === d.account.id;
+    sel.appendChild(o);
+  }
+}
+
+let switchSeq = 0;
+function switchAccount(id) {
+  accountId = id;
+  const u = new URL(location.href);
+  u.searchParams.set("account", id);
+  u.searchParams.delete("plan");
+  history.replaceState(null, "", u);
+  // per-account UI state must not leak across accounts
+  state.plan = state.contrib = null;
+  for (const p of ["planpanel", "targetpanel", "contribpanel"]) $(p).hidden = true;
+  clearForecastFan();
+  forecastMode = null;
+  forecastSeq++;
+  $("a-asof").textContent = "Valuing the account at the last close…";
+  const seq = ++switchSeq;   // only the newest switch may paint
+  api("/api/account")
+    .then((d) => { if (seq === switchSeq) render(d); })
+    .catch((err) => { if (seq === switchSeq) showError(err.message); });
+}
+
+function renderMirror() {
+  const d = state.data;
+  const m = d.account.mirror;
+  const banner = $("mirrorbanner");
+  banner.hidden = !m;
+  banner.replaceChildren();
+  if (m) {
+    const when = d.account.imported_at
+      ? new Date(d.account.imported_at).toLocaleString() : "never";
+    const b = document.createElement("b");
+    b.textContent = d.account.label;
+    banner.append("Mirror of ", b, `, imported ${when}. Read-only here: `
+      + "change the source ledger and re-import.");
+  }
+  // write controls: the server refuses them on a mirror anyway (403)
+  for (const id of ["eventform", "ledgerchooser", "edittarget", "scsave",
+                    "planconfirm", "contribconfirm"]) $(id).hidden = m;
+  for (const el of document.querySelectorAll(".wsched")) el.hidden = m;
+  $("ledger").querySelector("details.explain").hidden = m;
+  $("planadvice").hidden = !m;
+  $("contribadvice").hidden = !m;
+  if (m) $("targetpanel").hidden = true;
 }
 
 function renderTiles() {
@@ -91,6 +185,11 @@ function renderTiles() {
   const r = $("a-twr");
   r.textContent = (d.twr >= 0 ? "+" : "") + pct(d.twr);
   r.classList.toggle("neg", d.twr < 0);
+  const gb = $("a-breakdown");
+  gb.hidden = !d.events.length;
+  gb.textContent = `Realized ${signed(d.realized_total)} · `
+    + `Unrealized ${signed(d.unrealized_total)} · `
+    + `Income ${money(d.income_total)} · Fees −${money(d.charges_total)}`;
   // the empty-account copy folded into the starter card above (bridge 1)
   $("a-asof").textContent = d.events.length
     ? `Valued at the ${d.as_of} close. Money you put in counts as ` +
@@ -106,7 +205,7 @@ function renderTiles() {
 function renderStarter() {
   const d = state.data;
   const card = $("startercard");
-  const empty = !d.events.length;
+  const empty = !d.events.length && !d.account.mirror;
   card.hidden = !empty;
   if (!empty) return;
   const planned = setpointRows(d).length > 0;
@@ -175,12 +274,12 @@ function renderChart() {
     {
       x: s.dates, y: s.value, mode: "lines", name: "Account value",
       line: { color: C.frontier, width: 2.5 },
-      hovertemplate: "%{x}: $%{y:,.0f}<extra>value</extra>",
+      hovertemplate: `%{x}: ${SYM}%{y:,.0f}<extra>value</extra>`,
     },
     {
       x: s.dates, y: s.contributions, mode: "lines", name: "Money put in",
       line: { color: C.you, width: 1.5, dash: "dash" },
-      hovertemplate: "%{x}: $%{y:,.0f}<extra>contributions</extra>",
+      hovertemplate: `%{x}: ${SYM}%{y:,.0f}<extra>contributions</extra>`,
     },
   ], {
     paper_bgcolor: C.surface, plot_bgcolor: C.surface,
@@ -203,7 +302,7 @@ function renderChart() {
         ],
       },
     },
-    yaxis: { tickprefix: "$", tickformat: ",.0f",
+    yaxis: { tickprefix: SYM, tickformat: ",.0f",
              gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true },
     hovermode: "x unified", hoverdistance: 30,
     legend: { orientation: "h", x: 0, y: 1.12, itemclick: false,
@@ -226,12 +325,22 @@ function renderPositions() {
   tb.replaceChildren();
   for (const p of d.positions) {
     const drift = p.weight - p.target_weight;
+    const held = p.shares > 0;
     const tr = document.createElement("tr");
+    const unreal = !held ? "" : signed(p.unrealized)
+      + (p.unrealized_pct == null ? "" : ` (${p.unrealized_pct >= 0 ? "+" : "−"}`
+         + `${pct(Math.abs(p.unrealized_pct))})`);
     tr.append(
       td(p.ticker),
-      td(p.shares.toLocaleString(), "num"),
-      td(p.price == null ? "—" : money(p.price), "num"),
+      td(p.is_bill ? `${p.shares.toLocaleString()} nominal`
+                   : p.shares.toLocaleString(), "num"),
+      td(p.price == null ? "—"
+         : p.is_bill ? `accreting to ${money(p.shares)} on ${p.maturity}`
+                     : money(p.price), "num"),
       td(money(p.value), "num"),
+      td(held && p.avg_cost != null ? moneyP(p.avg_cost) : "", "num"),
+      td(unreal, "num " + (held && p.unrealized < 0 ? "neg" : "")),
+      td(p.realized ? signed(p.realized) : "", "num"),
       td(pct(p.weight), "num"),
       td(pct(p.target_weight), "num"),
       td((drift >= 0 ? "+" : "") + pct(drift), "num " +
@@ -240,7 +349,6 @@ function renderPositions() {
     tb.appendChild(tr);
   }
   // cash row
-  const total = d.total_value || 1;
   const cw = d.total_value > 0 ? d.cash / d.total_value : 0;
   const tr = document.createElement("tr");
   tr.className = "cashrow";
@@ -248,6 +356,7 @@ function renderPositions() {
   tr.append(
     td("Cash"), td("", "num"), td("", "num"),
     td(money(d.cash), "num"),
+    td("", "num"), td("", "num"), td("", "num"),
     td(pct(cw), "num"),
     td(pct(cd), "num"),
     td((cw - cd >= 0 ? "+" : "") + pct(cw - cd), "num"),
@@ -255,57 +364,59 @@ function renderPositions() {
   tb.appendChild(tr);
   $("targethint").textContent =
     d.positions.every((p) => p.target_weight === 0)
-      ? "No setpoint yet — edit it here, or send a point over from Build."
+      ? (d.account.mirror ? "No setpoint in the imported ledger's targets."
+                          : "No setpoint yet — edit it here, or send a point over from Build.")
       : "";
 }
 
-function kindLabel(e) {
-  switch (e.kind) {
-    case "deposit": return `deposited ${money(e.amount)}`;
-    case "withdraw": return `withdrew ${money(e.amount)}`;
-    case "buy": return `bought ${e.shares} × ${e.ticker} @ ${money(e.price)}`;
-    case "sell": return `sold ${e.shares} × ${e.ticker} @ ${money(e.price)}`;
-    case "set_shares": return `forced ${e.ticker} to ${e.shares} shares @ ${money(e.price)}`;
-    case "set_cash": return `forced cash to ${money(e.amount)}`;
-  }
-  return e.kind;
-}
+const KIND_LABEL = {
+  deposit: "Deposit", withdraw: "Withdraw", buy: "Buy", sell: "Sell",
+  dividend: "Dividend", interest: "Interest", fee: "Fee", redeem: "Redeemed",
+  set_shares: "Forced shares", set_cash: "Forced cash",
+};
 
 function renderEvents() {
-  const ul = $("eventlist");
-  ul.replaceChildren();
-  if (!state.data.events.length) {
-    const li = document.createElement("li");
-    li.className = "empty-row";
-    li.textContent = "Ledger is empty.";
-    ul.appendChild(li);
-    return;
-  }
+  const tb = $("ledgertable").querySelector("tbody");
+  tb.replaceChildren();
+  $("ledgertable").hidden = !state.data.events.length;
+  $("ledgerempty").hidden = !!state.data.events.length;
+  const mirror = isMirror();
   for (const e of state.data.events) {
-    const li = document.createElement("li");
-    const main = document.createElement("span");
-    main.textContent = `${e.date} — ${kindLabel(e)}`;
-    const meta = document.createElement("span");
-    meta.className = "meta";
-    meta.textContent = e.note || "";
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "rm";
-    del.textContent = "×";
-    del.setAttribute("aria-label", "Delete ledger entry");
-    del.addEventListener("click", async () => {
-      if (!del.dataset.armed) {
-        del.dataset.armed = "1";
-        del.textContent = "delete?";
-        del.classList.add("armed");
-        return;
-      }
-      try {
-        render(await api(`/api/account/events/${e.id}`, { method: "DELETE" }));
-      } catch (err) { showError(err.message); }
-    });
-    li.append(main, meta, del);
-    ul.appendChild(li);
+    const tr = document.createElement("tr");
+    const qty = e.shares == null ? "" : e.shares.toLocaleString();
+    const note = td(e.note || "", "note");
+    note.title = e.note || "";
+    const cell = document.createElement("td");
+    if (!mirror) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "rm";
+      del.textContent = "×";
+      del.setAttribute("aria-label", "Delete ledger entry");
+      del.addEventListener("click", async () => {
+        if (!del.dataset.armed) {
+          del.dataset.armed = "1";
+          del.textContent = "delete?";
+          del.classList.add("armed");
+          return;
+        }
+        try {
+          render(await api(`/api/account/events/${e.id}`, { method: "DELETE" }));
+        } catch (err) { showError(err.message); }
+      });
+      cell.appendChild(del);
+    }
+    tr.append(
+      td(e.date),
+      td(KIND_LABEL[e.kind] || e.kind),
+      td(e.ticker || ""),
+      td(qty, "num"),
+      td(e.price == null ? "" : moneyP(e.price), "num"),
+      td(e.amount == null ? "" : money(e.amount), "num"),
+      td(e.fees ? money(e.fees) : "", "num"),
+      note, cell,
+    );
+    tb.appendChild(tr);
   }
 }
 
@@ -313,8 +424,11 @@ function renderEvents() {
 const FIELDS = {
   deposit: ["amount"],
   withdraw: ["amount"],
-  buy: ["ticker", "shares", "price"],
-  sell: ["ticker", "shares", "price"],
+  buy: ["ticker", "shares", "price", "fees"],
+  sell: ["ticker", "shares", "price", "fees"],
+  dividend: ["ticker", "amount", "fees"],
+  interest: ["ticker", "amount", "fees"],   // ticker optional: blank = cash
+  fee: ["amount"],
   set_shares: ["ticker", "shares", "price"],
   set_cash: ["amount"],
 };
@@ -336,10 +450,12 @@ async function addEvent(e) {
   if (FIELDS[kind].includes("price") && $("ev-price").value !== "")
     body.price = $("ev-price").value;
   if (FIELDS[kind].includes("amount")) body.amount = $("ev-amount").value;
+  if (FIELDS[kind].includes("fees") && $("ev-fees").value !== "")
+    body.fees = $("ev-fees").value;
   try {
     render(await api("/api/account/events", {
       method: "POST", body: JSON.stringify(body) }));
-    for (const id of ["ev-ticker", "ev-shares", "ev-price", "ev-amount", "ev-note"])
+    for (const id of ["ev-ticker", "ev-shares", "ev-price", "ev-amount", "ev-fees", "ev-note"])
       $(id).value = "";
   } catch (err) { showError(err.message); }
 }
@@ -644,6 +760,11 @@ function clearForecastFan() {
 
 function renderForecastMode() {
   const d = state.data;
+  // the cash leg is the US T-bill rate: other currencies don't forecast
+  const usd = d.account.currency === "USD";
+  $("forecast").classList.toggle("usdonly", !usd);
+  $("afusd").hidden = usd;
+  if (!usd) return;
   const hypo = !hasHoldings(d);
   const planned = setpointRows(d).length > 0;
   const starterVisible = !$("startercard").hidden;
@@ -791,12 +912,12 @@ function renderAccountForecast(f) {
     x: t, y: dollars(est95.hi), mode: "lines",
     name: "95% + return-estimate error",
     line: { color: C.you, width: 1.5, dash: "dash" },
-    hovertemplate: "$%{y:,.0f}<extra>95% high, incl. estimate error</extra>",
+    hovertemplate: `${SYM}%{y:,.0f}<extra>95% high, incl. estimate error</extra>`,
   });
   traces.push({
     x: t, y: dollars(est95.lo), mode: "lines", showlegend: false,
     line: { color: C.you, width: 1.5, dash: "dash" },
-    hovertemplate: "$%{y:,.0f}<extra>95% low, incl. estimate error</extra>",
+    hovertemplate: `${SYM}%{y:,.0f}<extra>95% low, incl. estimate error</extra>`,
   });
   const fills = ["rgba(57,135,229,0.16)", "rgba(57,135,229,0.34)"];
   f.bands.forEach((b, i) => {
@@ -807,7 +928,7 @@ function renderAccountForecast(f) {
       name: `${b.level}% band (market randomness)`,
       fill: "tonexty", fillcolor: fills[i] || fills[0],
       line: { width: 0 },
-      hovertemplate: `$%{y:,.0f}<extra>${b.level}% high</extra>`,
+      hovertemplate: `${SYM}%{y:,.0f}<extra>${b.level}% high</extra>`,
     });
   });
   traces.push({
@@ -816,7 +937,7 @@ function renderAccountForecast(f) {
       ? "Median — if the past average holds"
       : "Median — if the blended assumption holds",
     line: { color: C.frontier, width: 2.5 },
-    hovertemplate: "$%{y:,.0f} at year %{x:.1f}<extra>median</extra>",
+    hovertemplate: `${SYM}%{y:,.0f} at year %{x:.1f}<extra>median</extra>`,
   });
   Plotly.react("afchart", traces, {
     paper_bgcolor: C.surface, plot_bgcolor: C.surface,
@@ -826,7 +947,7 @@ function renderAccountForecast(f) {
              gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true,
              showspikes: true, spikethickness: 1, spikedash: "dot",
              spikecolor: C.axis },
-    yaxis: { tickprefix: "$", tickformat: ",.0f",
+    yaxis: { tickprefix: SYM, tickformat: ",.0f",
              gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true },
     hovermode: "x unified", hoverdistance: 30,
     legend: { orientation: "h", x: 0, y: 1.12, itemclick: false,
@@ -896,6 +1017,7 @@ for (const id of ["af-anchor", "af-anchorvalue"]) {
     if (!$("afchart").hidden) runAccountForecast();
   });
 }
+$("acct-select").addEventListener("change", (e) => switchAccount(e.target.value));
 $("plancancel").addEventListener("click", () => { $("planpanel").hidden = true; });
 $("planconfirm").addEventListener("click", confirmPlan);
 

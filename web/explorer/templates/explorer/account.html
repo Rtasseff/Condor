@@ -10,6 +10,12 @@
       actually hold.</span>
   </div>
 
+  <div class="acctpicker" id="acctpicker" hidden>
+    <label>Account <select id="acct-select"></select></label>
+  </div>
+
+  <div class="card mirrorbanner" id="mirrorbanner" hidden></div>
+
   <section class="card startercard" id="startercard" hidden
            aria-label="Start your portfolio">
     <h2 id="startertitle">Start your portfolio</h2>
@@ -20,7 +26,7 @@
          traded.</p>
       <div class="fcontrols">
         <label>Starting amount
-          <span class="pctwrap">$ <input id="starter-amount" type="number"
+          <span class="pctwrap"><span class="ccy">$</span> <input id="starter-amount" type="number"
             value="10000" min="1" step="500"></span>
         </label>
         <button id="startergo" class="primary" type="button">Start with $10,000 →</button>
@@ -45,6 +51,7 @@
       <div class="tile"><span class="label">Gain</span><span class="value" id="a-gain">–</span><span class="gloss">value minus what you put in</span></div>
       <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="a-twr">–</span><span class="gloss">growth of a dollar — deposits don't count as return</span></div>
     </div>
+    <p class="sub gainbreak" id="a-breakdown" hidden></p>
     <p class="sub" id="a-asof"></p>
     <p class="nudge">Curious where it could go?
        <a href="#forecast">Forecast your portfolio →</a></p>
@@ -75,6 +82,9 @@
           <th scope="col" class="num">Shares</th>
           <th scope="col" class="num">Last close</th>
           <th scope="col" class="num">Value</th>
+          <th scope="col" class="num">Avg cost</th>
+          <th scope="col" class="num">Unrealized</th>
+          <th scope="col" class="num">Realized</th>
           <th scope="col" class="num">Actual %</th>
           <th scope="col" class="num">Setpoint %</th>
           <th scope="col" class="num">Drift</th>
@@ -127,6 +137,7 @@
       <p class="sub" id="plancash"></p>
       <div class="sideactions">
         <button id="planconfirm" class="primary small" type="button">Confirm — I made these trades</button>
+        <span class="sub advice" id="planadvice" hidden>Advice only — place trades at your broker and record them in your ledger.</span>
         <button id="plancancel" class="ghost small" type="button">Cancel</button>
       </div>
     </div>
@@ -140,9 +151,9 @@
        rebalancing and nothing needs to be sold.</p>
     <div class="fcontrols">
       <label>Amount
-        <span class="pctwrap">$ <input id="sc-amount" type="number" min="1" step="50"></span>
+        <span class="pctwrap"><span class="ccy">$</span> <input id="sc-amount" type="number" min="1" step="50"></span>
       </label>
-      <label>Cadence
+      <label class="wsched">Cadence
         <select id="sc-cadence">
           <option value="weekly">Weekly</option>
           <option value="monthly" selected>Monthly</option>
@@ -150,8 +161,8 @@
           <option value="yearly">Yearly</option>
         </select>
       </label>
-      <label>Next due <input id="sc-due" type="date"></label>
-      <label class="checkline"><input id="sc-enabled" type="checkbox" checked> Remind me</label>
+      <label class="wsched">Next due <input id="sc-due" type="date"></label>
+      <label class="checkline wsched"><input id="sc-enabled" type="checkbox" checked> Remind me</label>
       <button id="scsave" class="ghost small" type="button">Save schedule</button>
       <button id="scplan" class="primary small" type="button">Contribution plan</button>
       <span id="scstatus" class="status" role="status"></span>
@@ -179,6 +190,7 @@
       <p class="sub" id="contribcash"></p>
       <div class="sideactions">
         <button id="contribconfirm" class="primary small" type="button">Confirm — deposited &amp; bought</button>
+        <span class="sub advice" id="contribadvice" hidden>Advice only — place trades at your broker and record them in your ledger.</span>
         <button id="contribcancel" class="ghost small" type="button">Cancel</button>
       </div>
     </div>
@@ -186,6 +198,7 @@
 
   <section class="card" id="forecast">
     <h2>Forecast <span class="modeltag" id="afbadge">whole account</span></h2>
+    <p class="sub warn" id="afusd" hidden>The forecast is USD-only for now.</p>
     <p class="sub" id="afintro">Where the <b>whole</b> account could go — holdings
        at their current mix plus your cash share earning the T-bill rate.</p>
     <p class="sub" id="afhypo" hidden>Nothing is held yet, so this projects your
@@ -225,7 +238,7 @@
         </select>
       </label>
       <label id="af-amountwrap" hidden>Starting amount
-        <span class="pctwrap">$ <input id="af-amount" type="number"
+        <span class="pctwrap"><span class="ccy">$</span> <input id="af-amount" type="number"
           value="10000" min="1" step="1000"></span>
       </label>
       <button id="aforecast" class="primary small" type="button">Project</button>
@@ -267,7 +280,7 @@
 
   <section class="card" id="ledger">
     <h2>Ledger</h2>
-    <p class="chooser"><b>Add money:</b> all at once →
+    <p class="chooser" id="ledgerchooser"><b>Add money:</b> all at once →
        <a href="#eventform" id="depositjump">record a deposit below</a> ·
        over time → <a href="#schedule">set a schedule</a></p>
     <form id="eventform" class="eventform" autocomplete="off">
@@ -277,6 +290,9 @@
           <option value="withdraw">Withdraw cash</option>
           <option value="buy">Buy shares</option>
           <option value="sell">Sell shares</option>
+          <option value="dividend">Dividend received</option>
+          <option value="interest">Interest received</option>
+          <option value="fee">Account fee</option>
           <option value="set_shares">Force share count</option>
           <option value="set_cash">Force cash</option>
         </select>
@@ -285,19 +301,37 @@
       <label data-for="ticker">Ticker <input id="ev-ticker" spellcheck="false"></label>
       <label data-for="shares">Shares <input id="ev-shares" type="number" min="0" step="any"></label>
       <label data-for="price">Price <input id="ev-price" type="number" min="0" step="any" placeholder="last close"></label>
-      <label data-for="amount">Amount $ <input id="ev-amount" type="number" min="0" step="any"></label>
+      <label data-for="amount">Amount <span class="ccy">$</span> <input id="ev-amount" type="number" min="0" step="any"></label>
+      <label data-for="fees">Fees <input id="ev-fees" type="number" min="0" step="any" placeholder="0"></label>
       <label class="grow">Note <input id="ev-note" maxlength="120"></label>
       <button type="submit" class="primary small">Add</button>
     </form>
     <details class="explain">
       <summary>How the ledger works</summary>
       <p class="sub">Deposits and withdrawals move cash (contributions, not
-         returns). Buys/sells move shares against cash — price defaults to that
+         returns); dividends, interest and fees are returns, not
+         contributions. Buys/sells move shares against cash — price defaults to that
          day's close. The force types overwrite state when reality and the
          ledger disagree; the difference is booked as money in/out, not as
          return.</p>
     </details>
-    <ul id="eventlist" class="savedlist"></ul>
+    <div class="tablewrap">
+      <table id="ledgertable">
+        <thead><tr>
+          <th scope="col">Date</th>
+          <th scope="col">Type</th>
+          <th scope="col">Ticker</th>
+          <th scope="col" class="num">Qty</th>
+          <th scope="col" class="num">Price</th>
+          <th scope="col" class="num">Amount</th>
+          <th scope="col" class="num">Fees</th>
+          <th scope="col">Note</th>
+          <th scope="col"><span class="sr-only">Delete</span></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="sub" id="ledgerempty" hidden>Ledger is empty.</p>
   </section>
 
   <footer>
