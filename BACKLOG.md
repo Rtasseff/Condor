@@ -38,7 +38,7 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     dividend/interest/fee kinds, R4 CSV import/export into read-only
     mirror accounts, R5 one currency per account, R6 accreting bills,
     account selector.
-  - **B `account-plans`** — after A: R7 rule alerts (index >10% below
+  - **B `account-plans`** — *in a worktree* (ADR 0007, format v1.1): R7 rule alerts (index >10% below
     52-wk high, position >X% below avg cost, drift >N pp), R8 pay-in
     tracker (N tranches, bought-vs-plan, reservoir asset, drift alerts
     muted until done; **whole-share catch-up**: each tranche line
