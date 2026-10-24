@@ -7,7 +7,7 @@
 |---|---|
 | Branch | `feature/stats-honesty` |
 | Worktree dir | `/Users/rtasseff/projects/condor-dev/stats-honesty` |
-| Base | `main` @ `f5ff387` |
+| Base | `main` @ `f99dd69` (rebased 2026-10-24, after `ledger-mirror` merged) |
 | Created | 2026-10-24 |
 | Runserver port | 8002 |
 | Handoff session | `main` checkout at `~/projects/condor_v2/` |
@@ -25,7 +25,7 @@ mix, the robust tangency came out **95% USFR** (a T-bill fund): a 7-year
 median return was compared with today’s T-bill rate, inventing a 0.78%
 premium that premium ÷ variance turned into a 95% weight. RT approved
 the fixes on 2026-10-24 (bucket C of three; bucket A `ledger-mirror` runs
-in parallel in another worktree):
+merged 2026-10-24; bucket B `account-plans` runs in parallel):
 
 - **F1** expected return = today’s T-bill rate + the historical premium
   measured on excess returns (fixes F2 for cash-like assets too);
@@ -161,7 +161,7 @@ in parallel in another worktree):
   “Worst fall −{d}% ({peak} → {trough}) · worst year {yyyy} {r}% ·
   {g}%/yr” — fixed-weight backtest; say so in a `title` tooltip.
 - Do **not** touch `web/explorer/account.py`, `account.js`,
-  `home.js` (bucket A is rewriting them).
+  `home.js`, `condor/accounting.py` (bucket B is working there).
 - Django tests: payload has `meta`; premium on/off; history failure
   → raw with the message; patch the fetch like existing tests.
 
@@ -185,9 +185,9 @@ in parallel in another worktree):
 ## Acceptance
 
 - All phase tests above, verification-style.
-- Suites at least at baseline (2026-10-24, base `f5ff387`):
-  `pytest tests/` **217 passed, 4 skipped**; `manage.py test explorer`
-  **141 OK**; `check` and `makemigrations --check --dry-run` clean (no
+- Suites at least at baseline (2026-10-24, base `f99dd69`, this
+  worktree): `pytest tests/` **286 passed, 4 skipped**; `manage.py
+  test explorer` **172 OK**; `check` and `makemigrations --check --dry-run` clean (no
   migrations expected).
 - Real-data smoke check (record the output in Status; prices move
   daily, so approximately):
@@ -212,17 +212,18 @@ in parallel in another worktree):
 
 ## Conflict watchlist
 
-- **Bucket A (`feature/ledger-mirror`) is in flight** and touches
-  `web/explorer/views.py` (`_has_holdings` only), `app.js` (the
-  load-real-holdings spot only), `README.md`, `ARCHITECTURE.md`,
-  `BACKLOG.md`. Keep your edits in those files to separate hunks;
-  whichever branch merges second rebases.
+- Bucket A is merged (this branch is rebased on it). **Bucket B
+  (`feature/account-plans`) is in flight**: accounts, ledger, plans,
+  alerts. Shared files are only `README.md`, `ARCHITECTURE.md`,
+  `BACKLOG.md`, `condor/__init__.py` and possibly `views.py` /
+  `condor/data/` — keep edits there in separate hunks; whichever
+  branch merges second rebases.
 - `condor/__init__.py` exports: both branches may add names — trivial
   merge.
 
 ## Status
 
-- [ ] Baseline recorded (217 passed / 4 skipped; 141 OK)
+- [ ] Baseline recorded (286 passed / 4 skipped; 172 OK)
 - [ ] Phase 1 T-bill history
 - [ ] Phase 2 engine
 - [ ] Phase 3 model
