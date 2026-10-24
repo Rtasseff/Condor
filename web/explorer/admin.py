@@ -30,7 +30,9 @@ class EventInline(admin.TabularInline):
 
 @admin.register(Account)
 class AccountAdmin(admin.ModelAdmin):
-    list_display = ("name", "owner", "created_at")
+    list_display = ("name", "owner", "label", "currency", "mirror",
+                    "imported_at", "created_at")
+    list_filter = ("mirror", "currency")
     inlines = [TargetInline, EventInline]
 
 

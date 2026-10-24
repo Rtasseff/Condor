@@ -142,10 +142,19 @@ class Account(models.Model):
                               on_delete=models.CASCADE,
                               related_name="accounts")
     name = models.CharField(max_length=80, default="My account")
+    # ADR 0005: an imported account mirrors a labelled ledger and is
+    # read-only in the web; one currency per account.
+    label = models.CharField(max_length=40, blank=True, default="")
+    currency = models.CharField(max_length=3, default="USD")
+    mirror = models.BooleanField(default=False)
+    imported_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["created_at"]
+        constraints = [models.UniqueConstraint(
+            fields=["owner", "label"], name="unique_account_label",
+            condition=~models.Q(label=""))]
 
     def __str__(self):
         return f"{self.name} ({self.owner})"
@@ -155,10 +164,12 @@ class Account(models.Model):
         import pandas as pd
         rows = [{"date": e.date, "kind": e.kind,
                  "ticker": e.ticker or None, "shares": e.shares,
-                 "price": e.price, "amount": e.amount}
+                 "price": e.price, "amount": e.amount, "fees": e.fees,
+                 "maturity": e.maturity, "note": e.note}
                 for e in self.events.order_by("date", "created_at", "pk")]
         return pd.DataFrame(rows, columns=["date", "kind", "ticker",
-                                           "shares", "price", "amount"])
+                                           "shares", "price", "amount",
+                                           "fees", "maturity", "note"])
 
     def target_weights(self):
         return {t.ticker: t.weight for t in self.targets.all()}
@@ -189,17 +200,20 @@ class AccountEvent(models.Model):
     user (or by confirming a rebalance plan) and may be deleted to fix
     mistakes, never silently rewritten."""
 
-    KINDS = ["deposit", "withdraw", "buy", "sell", "set_shares", "set_cash"]
+    KINDS = ["deposit", "withdraw", "buy", "sell", "set_shares", "set_cash",
+             "dividend", "interest", "fee", "redeem"]
 
     account = models.ForeignKey(Account, on_delete=models.CASCADE,
                                 related_name="events")
     date = models.DateField()
     kind = models.CharField(max_length=12,
                             choices=[(k, k) for k in KINDS])
-    ticker = models.CharField(max_length=10, blank=True, default="")
+    ticker = models.CharField(max_length=24, blank=True, default="")
     shares = models.FloatField(null=True, blank=True)
     price = models.FloatField(null=True, blank=True)
     amount = models.FloatField(null=True, blank=True)
+    fees = models.FloatField(default=0.0)
+    maturity = models.DateField(null=True, blank=True)   # bill buys only
     note = models.CharField(max_length=120, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
