@@ -1,0 +1,18 @@
+date,account,ticker,side,qty,price,fees,ccy,maturity,note
+2027-01-04,broker_b,CASH,DEPOSIT,1000,1,0,USD,,opening deposit
+2027-01-04,broker_b,LMP,BUY,4,50,0,USD,,lump
+2027-01-04,broker_b,AAA,BUY,2,40,0,USD,,T1
+2027-01-04,broker_b,BBB,BUY,2,30,0,USD,,T1
+2027-01-04,broker_b,CCC,BUY,3,12,0,USD,,T1
+2027-01-04,broker_b,DDD,BUY,2,7,0,USD,,T1
+2027-01-04,broker_b,RES,BUY,61,10,0,USD,,reservoir: the rest
+2027-02-01,broker_b,RES,SELL,17,10.02,0,USD,,funds T2
+2027-02-01,broker_b,AAA,BUY,2,42,0,USD,,T2
+2027-02-01,broker_b,BBB,BUY,1,31,0,USD,,T2
+2027-02-01,broker_b,CCC,BUY,4,9,0,USD,,T2 (ccc_below_cost fired but not acted on in this path)
+2027-02-01,broker_b,DDD,BUY,2,7,0,USD,,T2
+2027-03-01,broker_b,RES,SELL,32,10.03,0,USD,,funds T3
+2027-03-01,broker_b,AAA,BUY,3,46,0,USD,,T3+T4 (idx_drawdown fired)
+2027-03-01,broker_b,BBB,BUY,2,37.5,0,USD,,T3+T4 (1 share trimmed)
+2027-03-01,broker_b,CCC,BUY,8,10,0,USD,,T3+T4
+2027-03-01,broker_b,DDD,BUY,3,8,0,USD,,T3+T4

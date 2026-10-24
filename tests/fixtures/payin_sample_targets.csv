@@ -1,0 +1,7 @@
+account,ticker,weight,timing,line
+broker_b,LMP,0.2,lump,lump
+broker_b,RES,0.1,reservoir,reservoir
+broker_b,AAA,0.3,dca,aaa
+broker_b,BBB,0.2,dca,bbb
+broker_b,CCC,0.15,dca,sleeve
+broker_b,DDD,0.05,dca,sleeve
