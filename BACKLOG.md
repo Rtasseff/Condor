@@ -33,7 +33,7 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   EUR Letras del Tesoro) and wants Condor as a local, read-only add-on.
   Its ranked requirements R1–R9 and analysis findings F1–F5 split into
   three buckets:
-  - **A `ledger-mirror`** — *in a worktree* (ADR 0005,
+  - **A `ledger-mirror`** — *merged 2026-10-24* (ADR 0005,
     `docs/LEDGER-FORMAT.md`): R1 average cost + realized, R2
     dividend/interest/fee kinds, R4 CSV import/export into read-only
     mirror accounts, R5 one currency per account, R6 accreting bills,

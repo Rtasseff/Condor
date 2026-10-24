@@ -1,5 +1,7 @@
 # Handoff — `feature/ledger-mirror`
 
+**Merged 2026-10-24**; branch and worktree removed.
+
 <!-- Copy of docs/handoffs/_template.md, seeded by scripts/new-worktree.sh.
      Lives at docs/handoffs/ledger-mirror.md on the branch. Keep "Status" current. -->
 

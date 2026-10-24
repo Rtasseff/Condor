@@ -20,3 +20,6 @@ Merged (kept as records):
 - `flow-clarity.md` — `feature/flow-clarity`, merged 2026-09-05:
   Explore/Real worlds, account bridges, gating, sources, honest labels,
   Advanced priors.
+- `ledger-mirror.md` — `feature/ledger-mirror`, merged 2026-10-24:
+  ledger v2 (cost basis, income/fees, currency, bills) and read-only
+  mirror import (ADR 0005).
