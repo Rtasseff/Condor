@@ -194,6 +194,6 @@ Mark the registry row merged (or remove it) in the same commit.
 
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
-| `stats-honesty` | `feature/stats-honesty` | 8002 | 2026-10-24 | Brief committed (ADR 0006), rebased on f99dd69; awaiting a branch session |
-| `account-plans` | `feature/account-plans` | 8001 | 2026-10-24 | Brief committed (ADR 0007, format v1.1); awaiting a branch session |
+| `stats-honesty` | `feature/stats-honesty` | 8002 | 2026-10-24 | Brief committed (ADR 0006), rebased on e44d3e3; awaiting a branch session |
+| `account-plans` | `feature/account-plans` | 8001 | 2026-10-24 | Brief committed (ADR 0007, format v1.1), rebased on e44d3e3; awaiting a branch session |
 
