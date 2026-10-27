@@ -7,7 +7,7 @@
 |---|---|
 | Branch | `feature/account-plans` |
 | Worktree dir | `/Users/rtasseff/projects/condor-dev/account-plans` |
-| Base | `main` @ `f99dd69` |
+| Base | `main` @ `e44d3e3` (rebased 2026-10-27: price-store fix) |
 | Created | 2026-10-24 |
 | Runserver port | **8001** (8002 is `stats-honesty`, running in parallel) |
 | Handoff session | `main` checkout at `~/projects/condor_v2/` |
@@ -192,7 +192,11 @@ New pure modules; numbers here, nothing in views or JS.
   Shares · Price · Amount · Note (lump rows labelled “lump”), then
   “Sell {qty} {reservoir} (~{amount}) to fund it” or “Put the rest in
   {reservoir}: buy {qty} (~{amount})”, and “Cash available above
-  reserve: {budget}”. A small selector for `through` (1…N). When rules
+  reserve: {budget}”. Always under the list: “Cancel last month’s
+  unfilled orders before placing these — this list already includes
+  what they didn’t buy.” (catch-up sizes on fills, so an open or
+  never-placed order would double-buy). A small selector for
+  `through` (1…N). When rules
   changed the list: “Includes: {rule texts}”.
 - **Rules panel** (when `rules`): one row per rule — its text, measured
   value, threshold, status as a word: **Fired** / Not fired / **Muted
@@ -270,8 +274,8 @@ rows dated ≤ D (or < D when the step is “before that day’s buys”).
 8. **Import** — the five fixture files import together (`--today
    2027-04-05`): `broker_b` mirror with 6 targets (timing + line), a
    4-tranche plan, 3 rules; a v1 3-column targets file still imports.
-- Suites at least at baseline (2026-10-24, base `f99dd69`, this
-  worktree): `pytest tests/` **286 passed, 4 skipped**; `manage.py test
+- Suites at least at baseline (2026-10-27, base `e44d3e3`, this
+  worktree): `pytest tests/` **288 passed, 4 skipped**; `manage.py test
   explorer` **172 OK**; `check` clean; `makemigrations --check
   --dry-run` clean after your migration.
 - RT’s click-through: import the fixture (`--today` as the fixture
@@ -297,7 +301,7 @@ rows dated ≤ D (or < D when the step is “before that day’s buys”).
 
 ## Status
 
-- [ ] Baseline recorded (286 passed / 4 skipped; 172 OK)
+- [ ] Baseline recorded (288 passed / 4 skipped; 172 OK)
 - [ ] Phase 1 format v1.1 + storage
 - [ ] Phase 2 engine
 - [ ] Phase 3 web
