@@ -41,20 +41,19 @@ MIN_OBS = 60  # fewer daily observations than this -> refuse to estimate
 
 
 def _clean(frame: pd.DataFrame, ticker: str, source: str) -> pd.DataFrame:
-    """Normalize a provider frame: naive DatetimeIndex, sorted, deduped."""
-    if frame.empty:
-        raise DataFetchError(f"No price data returned for '{ticker}' ({source}).")
+    """Normalize a provider frame: naive DatetimeIndex, sorted, deduped.
+
+    No minimum length here: the store's incremental update fetches only a
+    short seam window, so the MIN_OBS check lives on the store's full
+    fetch (and `fetch_prices` checks the aligned history again)."""
     idx = pd.DatetimeIndex(frame.index)
     if idx.tz is not None:
         idx = idx.tz_localize(None)
     frame = frame.set_axis(idx.normalize()).sort_index()
     frame = frame[~frame.index.duplicated(keep="last")]
     frame = frame[["close", "adj_close"]].astype(float).dropna(how="any")
-    if len(frame) < MIN_OBS:
-        raise DataFetchError(
-            f"Only {len(frame)} daily observations for '{ticker}' ({source}); "
-            "not enough history to estimate statistics."
-        )
+    if frame.empty:
+        raise DataFetchError(f"No price data returned for '{ticker}' ({source}).")
     return frame
 
 

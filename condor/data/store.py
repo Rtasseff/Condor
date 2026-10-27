@@ -18,6 +18,7 @@ Flat files, no database, on purpose: docs/decisions/0002.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
@@ -30,7 +31,9 @@ try:  # POSIX file locks; on Windows dev boxes we degrade to no locking
 except ImportError:  # pragma: no cover
     fcntl = None
 
-from .sources import DataFetchError, get_sources
+from .sources import MIN_OBS, DataFetchError, get_sources
+
+log = logging.getLogger(__name__)
 
 MAX_AGE_HOURS = 24.0   # don't re-hit the network more often than this
 SEAM_ROWS = 20         # stored rows to re-fetch and compare on update
@@ -179,6 +182,10 @@ class PriceStore:
 
         if needs_full:
             frame, name = self._fetch(ticker, start, sources)
+            if len(frame) < MIN_OBS:
+                raise DataFetchError(
+                    f"Only {len(frame)} daily observations for '{ticker}' "
+                    f"({name}); not enough history to estimate statistics.")
             self._save(ticker, frame, name, start)
             return frame.loc[str(start):]
 
@@ -186,8 +193,11 @@ class PriceStore:
         seam = stored.tail(SEAM_ROWS)
         try:
             fresh, name = self._fetch(ticker, seam.index[0].date(), sources)
-        except DataFetchError:
-            return stored.loc[str(start):]  # network down: serve stale, don't die
+        except DataFetchError as e:
+            # network down: serve stale, don't die -- but say so
+            log.warning("serving stale %s (last %s): %s",
+                        ticker, stored.index[-1].date(), e)
+            return stored.loc[str(start):]
         common = seam.index.intersection(fresh.index)
         drifted = len(common) == 0 or not _close(
             seam.loc[common, "adj_close"], fresh.loc[common, "adj_close"])

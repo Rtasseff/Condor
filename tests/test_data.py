@@ -81,6 +81,30 @@ class TestStore:
         pd.testing.assert_frame_equal(store.read("MSFT"),
                                       full.loc[str(START):], check_freq=False)
 
+    def test_seam_append_through_real_cleaning(self, store, fake, monkeypatch):
+        # Regression (2026-10-27): the sources' `_clean` used to refuse any
+        # frame under MIN_OBS rows, and a seam window is only ~SEAM_ROWS
+        # rows -- so every real incremental update failed and the store
+        # served stale prices forever. Run the fake through `_clean` like
+        # the real sources do.
+        from condor.data.sources import _clean
+        raw_fetch = FakeSource.fetch
+        monkeypatch.setattr(FakeSource, "fetch", lambda self, t, start=None:
+                            _clean(raw_fetch(self, t, start), t, self.name))
+        full = fake.history
+        fake.history = full.iloc[:-3]
+        store.get("MSFT", start=START)
+        _age(store, "MSFT", hours=30)
+        fake.history = full
+        got = store.get("MSFT", start=START)
+        assert got.index[-1] == full.index[-1]
+        assert len(fake.calls) == 2               # incremental, not full
+
+    def test_first_fetch_too_short_is_refused(self, store, fake):
+        fake.history = make_history(n=30)
+        with pytest.raises(DataFetchError, match="Only 30 daily observations"):
+            store.get("NEWCO", start=START)
+
     def test_seam_detects_split_and_refetches(self, store, fake):
         store.get("MSFT", start=START)
         _age(store, "MSFT", hours=30)
