@@ -7,7 +7,7 @@
 |---|---|
 | Branch | `feature/stats-honesty` |
 | Worktree dir | `/Users/rtasseff/projects/condor-dev/stats-honesty` |
-| Base | `main` @ `f99dd69` (rebased 2026-10-24, after `ledger-mirror` merged) |
+| Base | `main` @ `e44d3e3` (rebased 2026-10-27: `ledger-mirror` merge + price-store fix) |
 | Created | 2026-10-24 |
 | Runserver port | 8002 |
 | Handoff session | `main` checkout at `~/projects/condor_v2/` |
@@ -185,8 +185,8 @@ merged 2026-10-24; bucket B `account-plans` runs in parallel):
 ## Acceptance
 
 - All phase tests above, verification-style.
-- Suites at least at baseline (2026-10-24, base `f99dd69`, this
-  worktree): `pytest tests/` **286 passed, 4 skipped**; `manage.py
+- Suites at least at baseline (2026-10-27, base `e44d3e3`, this
+  worktree): `pytest tests/` **288 passed, 4 skipped**; `manage.py
   test explorer` **172 OK**; `check` and `makemigrations --check --dry-run` clean (no
   migrations expected).
 - Real-data smoke check (record the output in Status; prices move
@@ -223,7 +223,7 @@ merged 2026-10-24; bucket B `account-plans` runs in parallel):
 
 ## Status
 
-- [ ] Baseline recorded (286 passed / 4 skipped; 172 OK)
+- [ ] Baseline recorded (288 passed / 4 skipped; 172 OK)
 - [ ] Phase 1 T-bill history
 - [ ] Phase 2 engine
 - [ ] Phase 3 model
