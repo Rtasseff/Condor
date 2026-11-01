@@ -309,9 +309,9 @@ rows dated ≤ D (or < D when the step is “before that day’s buys”).
 - [x] Phase 4 UI (`2964b10`)
 - [x] Phase 5 docs (`50d873e`) + `/code-review medium` + fixes (see below)
 
-**Final counts** (this worktree): `pytest tests/` **354 passed, 4
-skipped** (baseline 288/4: +66); `manage.py test explorer` **201 OK**
-(baseline 172: +29); `check` clean; `makemigrations --check --dry-run`
+**Final counts** (this worktree): `pytest tests/` **394 passed, 4
+skipped** (baseline 288/4); `manage.py test explorer` **215 OK**
+(baseline 172); `check` clean; `makemigrations --check --dry-run`
 clean (migration `0007_account_plans`).
 
 **What was and was not exercised.** All endpoints are exercised with
@@ -370,7 +370,10 @@ needed.
 date)"; pay-in/rules panels per the brief. The existing "Advice only —
 place trades at your broker and record them in your ledger." is reused.
 
-**Pre-existing bugs noticed, not fixed:** none in my scope. Note `main`
+**Pre-existing / not done:** `_state` and the tranche endpoint each
+recompute the valuation (a double fetch per page load), and `_combined`
+re-values every sibling account on each request; both left as they are
+by the coordinator's instruction. No pre-existing bug in my scope. Note `main`
 moved after this branch's base: commit `7840b52` ("time-weighted return
 dropped the account's first day") edits `time_weighted_return` in
 `condor/accounting.py`, right next to where this branch adds
@@ -390,6 +393,19 @@ view code for account scoping and mirror safety; the JS under a stub
 DOM). Fixes landed in the final commit: an unused test import; `rules.csv`
 `target` longer than the 120-character column is now a `line N:` format
 error instead of silent overlong storage (test added). Nothing else found.
+
+**Coordinator review (after rebase onto `90dd245`; the coordinator ran
+it, not the skill) and what happened to each finding**, all fixed in the
+final commit, each with a test:
+1. Unfunded lump now blocks completion (`is_complete` also needs `lump_orders` to buy nothing); fixture T4 still complete.
+2. `payin.unbought` (dca + lump, as % of total plan; T4: 34 = 3.4%); payload `unbought`, `unbought_pct`; when complete and > 0 the panel shows "Unbought: {amount} ({pct}% of plan): not enough cash left."
+3. `reservoir_trade(..., held=)` caps the SELL at shares held and returns `short`; UI "Short by {amount}: this list needs more cash than the account has."
+4. `import_ledger` re-checks the STORED plan/rules against new targets when `--payin`/`--rules` are absent (refused, nothing written, "Pass v1.1 targets"); dead reservoir-count check removed.
+5. account.js clears the buy list on tranche failure and account switch; a successful load clears the error banner (JS only syntax-checked and run through the stub-DOM success path; the failure path was not exercised).
+6. Combined total: mirrors only when any mirror exists (label "All mirrored accounts", payload `scope`), else all; needs 2+ currencies within that pool.
+7. A held reservoir with no usable price raises KeyError -> "Missing a price".
+8. Trim note reports the real count.
+9. "Include fired rules" keeps the selected tranche; payload `xirr_span_days` so the tile says "n/a under 3 months" only under 90 days, else "n/a".
 
 ## Questions for the handoff session
 

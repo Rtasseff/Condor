@@ -487,3 +487,49 @@ def test_combined_total():
     assert acct.combined_total({"USD": 5}, {}, "USD") == 5
     with pytest.raises(KeyError):
         acct.combined_total({"GBP": 1}, fx, "USD")
+
+
+# ------------------------------------------------ coordinator review fixes
+
+
+def test_unfunded_lump_blocks_completion():
+    ev = ledger(T4)
+    bought = payin.gross_bought(ev)
+    px = closes(T4)
+    s, shares, cash = state(ev)
+    budget = payin.spendable(PLAN, bought, cash, rv(T4, shares))
+    assert payin.is_complete(PLAN, bought, px, budget, T4)      # funded lump
+    no_lump = dict(bought, LMP=0.0)
+    # plenty of budget for the dca side: only the lump holds it open
+    assert not payin.is_complete(PLAN, no_lump, px, budget, T4)
+
+
+def test_unbought_at_t4_is_34_or_3_4_percent():
+    bought = payin.gross_bought(ledger(T4))
+    assert payin.unbought(PLAN, bought) == pytest.approx(34)
+    assert 100 * payin.unbought(PLAN, bought) / PLAN.total == pytest.approx(3.4)
+    assert payin.unbought(PLAN, {}) == pytest.approx(900)   # reservoir excluded
+
+
+def test_reservoir_sale_is_capped_at_shares_held():
+    px = {"RES": 10.0}
+    t = payin.reservoir_trade(PLAN, 0, px, 165, held=10)
+    assert (t["side"], t["qty"], t["amount"]) == ("SELL", 10, 100.0)
+    assert t["short"] == pytest.approx(65)
+    t = payin.reservoir_trade(PLAN, 0, px, 165, held=0)
+    assert t["qty"] == 0 and t["short"] == pytest.approx(165)
+    # enough shares: unchanged, no `short`
+    t = payin.reservoir_trade(PLAN, 0, px, 165, held=61)
+    assert t["qty"] == 17 and "short" not in t
+    assert payin.reservoir_trade(PLAN, 0, px, 165)["qty"] == 17   # held unknown
+
+
+def test_trim_note_reports_the_real_count():
+    plan = payin.PayInPlan.build(
+        100, [date(2027, 1, 1)], [("AAA", 1.0, "dca", "")])
+    one = payin.tranche_orders(plan, {}, {"AAA": 10.0}, 1, budget=95)
+    assert one.loc["AAA", "note"] == payin.NOTE_TRIM
+    three = payin.tranche_orders(plan, {}, {"AAA": 10.0}, 1, budget=65)
+    assert three.loc["AAA", "qty"] == 6
+    assert three.loc["AAA", "note"] == \
+        "4 shares trimmed to stay within cash; carries forward"

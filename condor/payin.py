@@ -26,6 +26,11 @@ NOTE_SMALL = "under half a share due; carries forward"
 NOTE_TRIM = "1 share trimmed to stay within cash; carries forward"
 
 
+def trim_note(n: int) -> str:
+    return NOTE_TRIM if n == 1 else (
+        f"{n} shares trimmed to stay within cash; carries forward")
+
+
 @dataclass(frozen=True)
 class PayInPlan:
     total: float
@@ -179,8 +184,9 @@ def _trim_to_budget(rows: list[dict], budget: float) -> None:
             break
         r = max(held, key=lambda r: r["amount"] - r["due"])  # first on ties
         r["qty"] -= 1
+        r["trimmed"] = r.get("trimmed", 0) + 1
         r["amount"] = r["qty"] * r["price"]
-        r["note"] = NOTE_TRIM
+        r["note"] = trim_note(r["trimmed"])
 
 
 def tranche_orders(plan: PayInPlan, bought: dict, prices, through: int,
@@ -207,12 +213,14 @@ def tranche_orders(plan: PayInPlan, bought: dict, prices, through: int,
     return _frame(rows)
 
 
-def reservoir_trade(plan: PayInPlan, cash: float, prices, buy_total: float
-                    ) -> dict | None:
+def reservoir_trade(plan: PayInPlan, cash: float, prices, buy_total: float,
+                    held: float | None = None) -> dict | None:
     """Settle the cash after the buys (lump + tranche) in the reservoir
     ticker. Buys > cash -> SELL ceil((buys − cash)/price); else BUY
     floor((cash − buys)/price) (the rest goes to the reservoir). None
-    when there is no reservoir, no price, or nothing to trade."""
+    when there is no reservoir, no price, or nothing to trade. `held` is
+    the reservoir shares owned: a SELL is capped at it, and the dollars
+    the sale cannot cover come back as `short`."""
     t = plan.reservoir
     if t is None:
         return None
@@ -224,6 +232,11 @@ def reservoir_trade(plan: PayInPlan, cash: float, prices, buy_total: float
     if buy_total > cash + _EPS:
         q = int(math.ceil((buy_total - cash) / p - _EPS))
         side = "SELL"
+        if held is not None and q > held:
+            q = int(math.floor(held + _EPS))
+            short = buy_total - cash - q * p
+            return {"side": side, "ticker": t, "qty": q, "price": p,
+                    "amount": q * p, "short": short}
     else:
         q = int(math.floor((cash - buy_total) / p + _EPS))
         side = "BUY"
@@ -235,12 +248,21 @@ def reservoir_trade(plan: PayInPlan, cash: float, prices, buy_total: float
 
 def is_complete(plan: PayInPlan, bought: dict, prices, budget: float,
                 as_of) -> bool:
-    """Every tranche date has passed and the full-plan buy list (through
-    N, within `budget`) buys nothing. A missing price -> not complete."""
+    """Every tranche date has passed, no lump is left to buy, and the
+    full-plan buy list (through N, within `budget`) buys nothing. A
+    missing price -> not complete."""
     if plan.n == 0 or tranches_due(plan, as_of) < plan.n:
         return False
     try:
+        lump = lump_orders(plan, bought, prices)
         orders = tranche_orders(plan, bought, prices, plan.n, budget=budget)
     except KeyError:
         return False
-    return bool((orders["qty"] == 0).all())
+    return bool((lump["qty"] == 0).all() and (orders["qty"] == 0).all())
+
+
+def unbought(plan: PayInPlan, bought: dict) -> float:
+    """Σ max(plan − bought, 0) over dca and lump tickers: what the plan
+    asked for and the account never bought."""
+    return sum(max(plan.total * plan.weights[t] - bought.get(t, 0.0), 0.0)
+               for t in plan.weights if plan.timing[t] in ("dca", "lump"))

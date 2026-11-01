@@ -139,8 +139,9 @@ function switchAccount(id) {
   u.searchParams.delete("plan");
   history.replaceState(null, "", u);
   // per-account UI state must not leak across accounts
-  state.plan = state.contrib = state.tranche = null;
+  state.plan = state.contrib = null;
   trancheSeq++;
+  clearTranche();
   for (const p of ["planpanel", "targetpanel", "contribpanel"]) $(p).hidden = true;
   clearForecastFan();
   forecastMode = null;
@@ -191,7 +192,7 @@ function renderTiles() {
   r.classList.toggle("neg", d.twr < 0);
   const x = $("a-xirr");
   if (d.xirr == null) {
-    x.textContent = "n/a under 3 months";
+    x.textContent = d.xirr_span_days < 90 ? "n/a under 3 months" : "n/a";
     x.classList.remove("neg");
   } else {
     x.textContent = (d.xirr >= 0 ? "+" : "") + pct(d.xirr);
@@ -217,11 +218,20 @@ function renderCombined() {
   if (!c) return;
   const f = (code, v) => new Intl.NumberFormat(undefined, {
     style: "currency", currency: code }).format(+v);
-  el.textContent = `All accounts: ${f("USD", c.USD)} · ${f("EUR", c.EUR)} `
+  el.textContent = `${c.scope === "mirrored" ? "All mirrored accounts" : "All accounts"}: ${f("USD", c.USD)} · ${f("EUR", c.EUR)} `
     + `(${c.fx.pair} ${c.fx.rate}, ${c.fx.as_of})`;
 }
 
 let trancheSeq = 0;
+function clearTranche() {
+  state.tranche = null;
+  $("payin-orders").querySelector("tbody").replaceChildren();
+  $("payin-buytitle").textContent = "Buy list";
+  for (const id of ["payin-reservoir", "payin-budget", "payin-includes"]) {
+    $(id).textContent = "";
+  }
+  $("payin-includes").hidden = true;
+}
 function renderPayin() {
   const p = state.data.payin;
   $("payin").hidden = !p;
@@ -230,6 +240,10 @@ function renderPayin() {
     ? `Pay-in: complete (${p.n} of ${p.n} tranches)`
     : `Pay-in: tranche ${p.k_due} of ${p.n}`
       + (p.next_date ? ` · next ${p.next_date}` : "");
+  const ub = $("payin-unbought");
+  ub.hidden = !(p.complete && p.unbought > 0);
+  ub.textContent = ub.hidden ? ""
+    : `Unbought: ${money(p.unbought)} (${p.unbought_pct}% of plan): not enough cash left.`;
   const tb = $("payin-progress").querySelector("tbody");
   tb.replaceChildren();
   for (const r of p.rows) {
@@ -269,9 +283,11 @@ async function loadTranche(through) {
     if (seq !== trancheSeq) return;
     state.tranche = t;
     $("payin-status").textContent = "";
+    showError("");
     renderTranche();
   } catch (err) {
     if (seq !== trancheSeq) return;
+    clearTranche();
     $("payin-status").textContent = "";
     showError(err.message);
   }
@@ -299,9 +315,12 @@ function renderTranche() {
     tb.appendChild(tr);
   }
   const rt = t.reservoir_trade;
-  $("payin-reservoir").textContent = !rt ? "" : rt.side === "SELL"
-    ? `Sell ${rt.qty} ${rt.ticker} (~${money(rt.amount)}) to fund it`
+  const sellLine = !rt ? "" : rt.side === "SELL"
+    ? (rt.qty > 0 ? `Sell ${rt.qty} ${rt.ticker} (~${money(rt.amount)}) to fund it` : "")
     : `Put the rest in ${rt.ticker}: buy ${rt.qty} (~${money(rt.amount)})`;
+  const shortLine = rt && rt.short > 0
+    ? `Short by ${money(rt.short)}: this list needs more cash than the account has.` : "";
+  $("payin-reservoir").textContent = [sellLine, shortLine].filter(Boolean).join(" ");
   $("payin-budget").textContent =
     `Cash available above reserve: ${money(t.budget)}`;
   const inc = $("payin-includes");
@@ -1176,7 +1195,7 @@ for (const id of ["af-anchor", "af-anchorvalue"]) {
 }
 $("acct-select").addEventListener("change", (e) => switchAccount(e.target.value));
 $("payin-through").addEventListener("change", (e) => loadTranche(e.target.value));
-$("payin-rules").addEventListener("change", () => loadTranche(null));
+$("payin-rules").addEventListener("change", () => loadTranche($("payin-through").value));
 $("plancancel").addEventListener("click", () => { $("planpanel").hidden = true; });
 $("planconfirm").addEventListener("click", confirmPlan);
 

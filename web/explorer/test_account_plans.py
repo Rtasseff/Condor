@@ -433,3 +433,131 @@ class PageTests(PlanWebBase):
                        "Advice only — place trades at your broker and "
                        "record them in your ledger."):
             self.assertIn(needle, html)
+
+
+class ReviewFixTests(PlanWebBase):
+    def test_payload_unbought_and_xirr_span(self):
+        j = self.at(T4).get("/api/account")
+        self.assertTrue(j["payin"]["complete"])
+        self.assertEqual((j["payin"]["unbought"], j["payin"]["unbought_pct"]),
+                         (34, 3.4))
+        self.assertEqual(j["xirr_span_days"], 91)
+        j = self.at(T2).get("/api/account")
+        self.assertLess(j["xirr_span_days"], 90)
+
+    def test_unfunded_lump_keeps_the_payin_open(self):
+        self.at(T4)
+        AccountEvent.objects.filter(account=self.acc, ticker="LMP").delete()
+        # hold the cash instead of the lump so nothing else changes
+        AccountEvent.objects.create(account=self.acc, date="2027-04-05",
+                                    kind="deposit", amount=1)
+        j = self.get("/api/account")
+        self.assertFalse(j["payin"]["complete"])
+
+    def test_short_when_the_reservoir_cannot_cover_the_list(self):
+        # 150 in cash, nothing held: the unfunded lump (200) bypasses the
+        # budget and nothing can be sold to pay for it
+        self.at(T2, before=True)
+        AccountEvent.objects.filter(account=self.acc).exclude(
+            kind="deposit").delete()
+        AccountEvent.objects.filter(account=self.acc).update(amount=150)
+        rt = self.get("/api/account/tranche")["reservoir_trade"]
+        self.assertEqual((rt["side"], rt["qty"]), ("SELL", 0))
+        self.assertEqual(rt["short"], 52)  # 4 LMP at 50.50 = 202
+
+    def test_held_reservoir_without_a_price_is_a_missing_price_error(self):
+        self.at(T2, before=True)
+        clock = dt.date(2027, 2, 1)
+        px = PX.loc[:pd.Timestamp(T2)].copy()
+        px["RES"] = float("nan")
+
+        def fake(tickers, start):
+            return pd.DataFrame({t: px[t].dropna() if t != "RES"
+                                 else pd.Series(dtype=float)
+                                 for t in tickers})
+        with patch("explorer.account._today", return_value=clock), \
+             patch("explorer.account._close_history", side_effect=fake):
+            res = self.client.get("/api/account/tranche" + self.q)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Missing a price", res.json()["error"])
+
+
+class CombinedScopeTests(PlanWebBase):
+    def setUp(self):
+        super().setUp()
+        self.fx = {"EURUSD=X": pd.Series(
+            [1.25], index=pd.to_datetime([T4]))}
+        self.at(T4)
+
+    def eur(self, mirror):
+        a = Account.objects.create(owner=self.user, label="e" if mirror
+                                   else "", name="e", currency="EUR",
+                                   mirror=mirror)
+        AccountEvent.objects.create(account=a, date="2027-01-04",
+                                    kind="deposit", amount=800)
+        return a
+
+    def test_mirrors_only_when_any_mirror_exists(self):
+        self.eur(mirror=True)
+        manual = Account.objects.create(owner=self.user, name="pretend",
+                                        currency="USD")
+        AccountEvent.objects.create(account=manual, date="2027-01-04",
+                                    kind="deposit", amount=5000)
+        self.extra = self.fx
+        c = self.get("/api/account")["combined"]
+        self.assertEqual(c["scope"], "mirrored")
+        self.assertEqual(c["USD"], round(1049.28 + 800 * 1.25, 2))  # no 5000
+
+    def test_needs_two_currencies_within_the_pool(self):
+        # mirrors are USD only; the EUR account is pretend money
+        self.eur(mirror=False)
+        self.extra = self.fx
+        self.assertNotIn("combined", self.get("/api/account"))
+
+    def test_all_accounts_when_nothing_is_mirrored(self):
+        Account.objects.filter(mirror=True).update(mirror=False)
+        self.eur(mirror=False)
+        self.extra = self.fx
+        self.assertEqual(self.get("/api/account")["combined"]["scope"], "all")
+
+
+class ImportRecheckStoredTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("rt", password="pw")
+        do_import()
+
+    def refused(self, **kw):
+        n = (Account.objects.get(label="broker_b").target_specs(),
+             PayInPlan.objects.count(), AccountRule.objects.count())
+        with self.assertRaises(CommandError):
+            do_import(**kw)
+        self.assertEqual(n, (Account.objects.get(
+            label="broker_b").target_specs(), PayInPlan.objects.count(),
+            AccountRule.objects.count()))
+
+    def test_v1_targets_cannot_strip_timing_from_a_stored_plan(self):
+        v1 = tmp("account,ticker,weight\nbroker_b,AAA,0.3\n")
+        with self.assertRaises(CommandError):
+            out, err = io.StringIO(), io.StringIO()
+            call_command("import_ledger", F["ledger"], "--user", "rt",
+                         "--replace", "--today", TODAY, "--targets", v1,
+                         stdout=out, stderr=err)
+        # message tells the owner what to do
+        err = io.StringIO()
+        try:
+            call_command("import_ledger", F["ledger"], "--user", "rt",
+                         "--replace", "--today", TODAY, "--targets", v1,
+                         stdout=io.StringIO(), stderr=err)
+        except CommandError:
+            pass
+        self.assertIn("Pass v1.1 targets", err.getvalue())
+        self.refused(targets=v1, payin=None, rules=None)
+
+    def test_targets_that_drop_a_ruled_dca_ticker_are_refused(self):
+        t = tmp("account,ticker,weight,timing,line\n"
+                "broker_b,AAA,0.3,dca,\nbroker_b,RES,0.1,reservoir,\n")
+        self.refused(targets=t, payin=None, rules=None)
+
+    def test_compatible_new_targets_are_fine(self):
+        do_import(payin=None, rules=None)
+        self.assertEqual(PayInPlan.objects.count(), 1)

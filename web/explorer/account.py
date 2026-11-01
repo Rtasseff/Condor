@@ -178,13 +178,17 @@ def _payin_numbers(plan, live, prices, today) -> SimpleNamespace:
     shares, cash = live.state.shares, live.state.cash
     bought = payin.gross_bought(live.ev_df)
     res = plan.reservoir
-    res_val = (shares.get(res, 0.0) * float(prices[res])
-               if res and res in prices.index and pd.notna(prices[res])
-               else 0.0)
+    res_held = shares.get(res, 0.0) if res else 0.0
+    res_val = 0.0
+    if res_held > 0:
+        if res not in prices.index or pd.isna(prices[res]):
+            raise KeyError(res)        # held but unpriced: never value at 0
+        res_val = res_held * float(prices[res])
     budget = payin.spendable(plan, bought, cash, res_val)
     k_due = payin.tranches_due(plan, today)
     return SimpleNamespace(
         bought=bought, cash=cash, budget=budget, k_due=k_due,
+        res_held=res_held, unbought=payin.unbought(plan, bought),
         reserve=payin.reserve_needed(plan, bought),
         complete=payin.is_complete(plan, bought, prices, budget, today))
 
@@ -196,6 +200,8 @@ def _payin_payload(plan, nums, today) -> dict:
         "total": _round(plan.total), "n": plan.n, "k_due": nums.k_due,
         "next_date": str(upcoming[0]) if upcoming else None,
         "complete": nums.complete,
+        "unbought": _round(nums.unbought),
+        "unbought_pct": _round(100 * nums.unbought / plan.total, 1),
         "reserve": _round(nums.reserve), "budget": _round(nums.budget),
         "dates": [str(d) for d in plan.dates],
         "rows": [{
@@ -274,6 +280,10 @@ def _combined(account: Account, total: float, today):
     """Everything the user owns in USD and in EUR, or None (one currency,
     unsupported pair, or the FX close could not be had)."""
     accounts = list(Account.objects.filter(owner=account.owner))
+    # never blend pretend money with real: any mirrors -> mirrors only
+    mirrors = [a for a in accounts if a.mirror]
+    scope = "mirrored" if mirrors else "all"
+    accounts = mirrors or accounts
     ccys = {a.currency for a in accounts}
     if len(ccys) < 2:
         return None
@@ -292,7 +302,8 @@ def _combined(account: Account, total: float, today):
         )[ticker].dropna()
         rate = float(fx.iloc[-1])
         rates = {FX_PAIR: rate}
-        return {"USD": _round(acct.combined_total(values, rates, "USD")),
+        return {"scope": scope,
+                "USD": _round(acct.combined_total(values, rates, "USD")),
                 "EUR": _round(acct.combined_total(values, rates, "EUR")),
                 "fx": {"pair": FX_PAIR, "rate": round(rate, 4),
                        "as_of": str(fx.index[-1].date())}}
@@ -376,6 +387,8 @@ def _state(account: Account) -> dict:
         "trade_fees_total": _round(state.trade_fees),
         "twr": round(twr, 6),
         "xirr": _opt(xirr, 6),
+        "xirr_span_days": (int((daily.index[-1] - daily.index[0]).days)
+                           if len(daily) > 1 else 0),
         "payin": payin_out,
         "rules": rules_out,
         "target_cash_weight": round(1.0 - sum(targets.values()), 6),
@@ -671,10 +684,13 @@ def api_account_tranche(request):
                 "price": _round(r["price"], 4), "amount": _round(r["amount"]),
                 "note": r["note"]})
     buys = float(lump["amount"].sum() + tranche["amount"].sum())
-    trade = payin.reservoir_trade(plan, nums.cash, prices, buys)
+    trade = payin.reservoir_trade(plan, nums.cash, prices, buys,
+                                  held=nums.res_held)
     if trade is not None:
         trade = {**trade, "price": _round(trade["price"], 4),
                  "amount": _round(trade["amount"])}
+        if "short" in trade:
+            trade["short"] = _round(trade["short"])
     return JsonResponse({
         "through": through, "n": plan.n, "applied_rules": applied,
         "cash": _round(nums.cash), "reserve": _round(nums.reserve),

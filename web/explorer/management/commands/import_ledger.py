@@ -19,7 +19,7 @@ from django.utils import timezone
 
 from condor import accounting as acct
 from condor.ledger_io import (LedgerFormatError, read_ledger, read_payin,
-                               read_rules, read_targets_full)
+                               read_rules, read_targets_full, RuleSpec)
 
 from explorer.models import (Account, AccountEvent, AccountRule,
                              AccountTarget, PayInPlan)
@@ -159,20 +159,37 @@ class Command(BaseCommand):
             return ({t.ticker: t.timing for t in acc.targets.all()}
                     if acc else {})
 
-        for label in (payin or {}):
-            timings = list(specs(label).values())
-            if "dca" not in timings:
+        def stored(label):
+            return Account.objects.filter(owner=user, label=label).first()
+
+        # a pay-in / rules file in this run, else the stored ones, must
+        # fit the targets that will be in force afterwards
+        have_plan = {l for l in ledgers
+                     if (l in payin if payin is not None
+                         else (a := stored(l)) is not None
+                         and hasattr(a, "payin"))}
+        for label in sorted(have_plan):
+            if "dca" not in specs(label).values():
+                hint = (" Pass v1.1 targets (timing, line) with --targets."
+                        if payin is None else "")
                 errs.append(f"pay-in for '{label}' needs at least one "
-                            "target with timing dca.")
-            if timings.count("reservoir") > 1:
-                errs.append(f"'{label}' has more than one reservoir target.")
-        for label, rs in (rules or {}).items():
+                            f"target with timing dca.{hint}")
+        for label in ledgers:
+            if rules is not None:
+                rs = rules.get(label, [])
+            else:
+                a = stored(label)
+                rs = [RuleSpec(r.rule_id, r.rule, r.ticker, r.threshold,
+                               r.action, r.tranches, tuple(r.targets.split()))
+                      for r in a.rules.all()] if a else []
             dca = {t for t, tm in specs(label).items() if tm == "dca"}
             for r in rs:
                 bad = [t for t in r.targets if t not in dca]
                 if bad:
+                    hint = (" Pass v1.1 targets (timing, line) with "
+                            "--targets." if rules is None else "")
                     errs.append(f"rule '{r.id}' of '{label}' targets "
-                                f"{bad}, which are not dca targets.")
+                                f"{bad}, which are not dca targets.{hint}")
         if errs:
             for m in errs:
                 self.stderr.write(m)
