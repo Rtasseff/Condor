@@ -127,11 +127,20 @@ Hand-checked; pin each in a test.
 
 ## Status
 
-- [ ] Baseline recorded
-- [ ] Phase 1 engine
-- [ ] Phase 2 web
-- [ ] Phase 3 UI
-- [ ] Phase 4 docs + hand review of own diff
+- [x] Baseline recorded (445 passed / 4 skipped; 232 OK)
+- [x] Phase 1 engine
+- [x] Phase 2 web
+- [x] Phase 3 UI (node --check only; no real browser)
+- [x] Phase 4 docs + hand review of own diff
+
+Change from the handoff session (not a deviation): a third check,
+**securities value** (`securities_check`, POST `securities`, third input
+"Securities value your broker shows", expected 116.61 on the brief's ledger).
+
+Notes: `reconcile` also returns `securities`, `exact_cash`, `exact_value`
+(the unrounded replay; the UI shows the round-to-the-cent note when it differs
+from `value`). The "value also depends on the price date" line also appears on
+a securities mismatch.
 
 ## Questions for the handoff session
 
