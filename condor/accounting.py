@@ -8,6 +8,8 @@ state from it:
 - `replay`             -> (shares, cash, net contributions) of `ledger_state`
 - `daily_state`        -> value / flow / contribution series on trading days
 - `time_weighted_return` -> return that ignores contribution timing
+- `money_weighted_return` -> XIRR of the investor's actual dollars
+- `combined_total`     -> accounts in several currencies in one base
 - `holdings`           -> per-position cost / unrealized / realized / income
 - `bill_prices`        -> straight-line accretion of zero-coupon bills
 - `allocation`         -> actual weights (incl. cash) at given prices
@@ -401,6 +403,59 @@ def time_weighted_return(daily: pd.DataFrame) -> float:
     growth = np.ones_like(denom)
     growth[ok] = v[ok] / denom[ok]
     return float(np.prod(growth) - 1.0)
+
+
+def money_weighted_return(daily: pd.DataFrame) -> float | None:
+    """Annualized money-weighted return (XIRR) of the investor's dollars.
+
+    Cash flows: -`flow` on each day (a deposit is money out of the
+    investor's pocket) plus the final `value` on the last day, ACT/365
+    from the first day; solved with `scipy.optimize.brentq` on
+    (-0.9999, 10). None when the span is under 90 days (annualizing a few
+    weeks misleads) or the flows never change sign."""
+    from scipy.optimize import brentq
+
+    if len(daily) < 2:
+        return None
+    idx = pd.DatetimeIndex(daily.index).normalize()
+    span = (idx[-1] - idx[0]).days
+    if span < 90:
+        return None
+    cf = (-daily["flow"].astype(float)).copy()
+    cf.index = idx
+    cf.iloc[-1] += float(daily["value"].iloc[-1])
+    cf = cf.groupby(level=0).sum()
+    cf = cf[cf.abs() > _EPS]
+    if not ((cf < 0).any() and (cf > 0).any()):
+        return None
+    t = ((cf.index - idx[0]).days / 365.0).to_numpy()
+    a = cf.to_numpy(dtype=float)
+
+    def npv(r):
+        return float(np.sum(a * (1.0 + r) ** (-t)))
+
+    lo, hi = -0.9999, 10.0
+    if npv(lo) * npv(hi) > 0:
+        return None
+    return float(brentq(npv, lo, hi, xtol=1e-12))
+
+
+def combined_total(values: dict[str, float], fx: dict[str, float],
+                   base: str) -> float:
+    """Sum account values in one base currency. `fx` is keyed like
+    "EURUSD" = USD per EUR; a currency is converted with `{ccy}{base}`
+    (multiply) or `{base}{ccy}` (divide). KeyError if neither is given."""
+    total = 0.0
+    for ccy, v in values.items():
+        if ccy == base:
+            total += v
+        elif f"{ccy}{base}" in fx:
+            total += v * fx[f"{ccy}{base}"]
+        elif f"{base}{ccy}" in fx:
+            total += v / fx[f"{base}{ccy}"]
+        else:
+            raise KeyError(f"no FX rate between {ccy} and {base}")
+    return total
 
 
 def allocation(shares: dict | pd.Series, prices: pd.Series,
