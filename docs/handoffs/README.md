@@ -29,3 +29,6 @@ Merged (kept as records):
 - `account-plans.md` — `feature/account-plans`, merged 2026-11-01:
   pay-in tracker, rule alerts, XIRR, combined total; format v1.1
   (ADR 0007).
+- `assumptions-1.md` — `feature/assumptions-1`, merged 2026-11-01:
+  constraints, equilibrium prior, distance from best, side-by-side view
+  (ADR 0008).

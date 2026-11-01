@@ -1,5 +1,7 @@
 # Handoff — `feature/assumptions-1`
 
+**Merged 2026-11-01**; branch and worktree removed.
+
 <!-- Copy of docs/handoffs/_template.md, seeded by scripts/new-worktree.sh.
      Lives at docs/handoffs/assumptions-1.md on the branch. Keep "Status" current. -->
 
