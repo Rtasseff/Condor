@@ -219,7 +219,7 @@ def _rule_text(r) -> str:
 def _action_text(r) -> str:
     if r.action != "accelerate":
         return "Alert"
-    which = " ".join(r.targets) if r.targets else "every line"
+    which = ", ".join(r.targets) if r.targets else "every line"
     s = "" if r.tranches == 1 else "s"
     return f"Buy {r.tranches} tranche{s} early ({which})"
 

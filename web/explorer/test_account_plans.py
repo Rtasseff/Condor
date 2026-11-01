@@ -419,3 +419,18 @@ class CombinedTests(PlanWebBase):
         self.extra = {"EURUSD=X": pd.Series([1.25], index=pd.to_datetime(
             [T4]))}
         self.assertNotIn("combined", self.get("/api/account"))
+
+
+class PageTests(PlanWebBase):
+    def test_page_has_the_panels_and_exact_strings(self):
+        res = self.client.get("/account" + self.q)
+        self.assertEqual(res.status_code, 200)
+        html = res.content.decode()
+        for needle in ('id="payin"', 'id="rules"', 'id="a-xirr"',
+                       'id="a-combined"', "Money-weighted",
+                       "Cancel last month’s unfilled orders before placing "
+                       "these — this list already includes what they "
+                       "didn’t buy.",
+                       "Advice only — place trades at your broker and "
+                       "record them in your ledger."):
+            self.assertIn(needle, html)

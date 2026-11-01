@@ -67,7 +67,7 @@ function csrftoken() {
   return m ? m[1] : "";
 }
 
-const state = { data: null, plan: null, contrib: null };
+const state = { data: null, plan: null, contrib: null, tranche: null };
 
 // Which account every /api/account* call is about: the URL's ?account=
 // (unset = the server's default account).
@@ -104,6 +104,9 @@ function render(data) {
   renderPicker();
   renderMirror();
   renderTiles();
+  renderCombined();
+  renderPayin();
+  renderRules();
   renderChart();
   renderPositions();
   renderEvents();
@@ -136,7 +139,8 @@ function switchAccount(id) {
   u.searchParams.delete("plan");
   history.replaceState(null, "", u);
   // per-account UI state must not leak across accounts
-  state.plan = state.contrib = null;
+  state.plan = state.contrib = state.tranche = null;
+  trancheSeq++;
   for (const p of ["planpanel", "targetpanel", "contribpanel"]) $(p).hidden = true;
   clearForecastFan();
   forecastMode = null;
@@ -185,6 +189,14 @@ function renderTiles() {
   const r = $("a-twr");
   r.textContent = (d.twr >= 0 ? "+" : "") + pct(d.twr);
   r.classList.toggle("neg", d.twr < 0);
+  const x = $("a-xirr");
+  if (d.xirr == null) {
+    x.textContent = "n/a under 3 months";
+    x.classList.remove("neg");
+  } else {
+    x.textContent = (d.xirr >= 0 ? "+" : "") + pct(d.xirr);
+    x.classList.toggle("neg", d.xirr < 0);
+  }
   const gb = $("a-breakdown");
   gb.hidden = !d.events.length;
   gb.textContent = `Realized ${signed(d.realized_total)} · `
@@ -195,6 +207,151 @@ function renderTiles() {
     ? `Valued at the ${d.as_of} close. Money you put in counts as ` +
       `contribution, not return — the return above is time-weighted.`
     : "Nothing recorded yet — the card above gets you started.";
+}
+
+// ---------- combined total, pay-in tracker, rules (ADR 0007) ----------
+function renderCombined() {
+  const c = state.data.combined;
+  const el = $("a-combined");
+  el.hidden = !c;
+  if (!c) return;
+  const f = (code, v) => new Intl.NumberFormat(undefined, {
+    style: "currency", currency: code }).format(+v);
+  el.textContent = `All accounts: ${f("USD", c.USD)} · ${f("EUR", c.EUR)} `
+    + `(${c.fx.pair} ${c.fx.rate}, ${c.fx.as_of})`;
+}
+
+let trancheSeq = 0;
+function renderPayin() {
+  const p = state.data.payin;
+  $("payin").hidden = !p;
+  if (!p) return;
+  $("payin-title").textContent = p.complete
+    ? `Pay-in: complete (${p.n} of ${p.n} tranches)`
+    : `Pay-in: tranche ${p.k_due} of ${p.n}`
+      + (p.next_date ? ` · next ${p.next_date}` : "");
+  const tb = $("payin-progress").querySelector("tbody");
+  tb.replaceChildren();
+  for (const r of p.rows) {
+    const tr = document.createElement("tr");
+    const label = r.tickers.length === 1 && r.tickers[0].toLowerCase() === r.line
+      ? r.tickers[0] : `${r.line} (${r.tickers.join(", ")})`;
+    tr.append(td(label), td(r.timing || "—"), td(money(r.plan), "num"),
+              td(money(r.bought), "num"),
+              // the reservoir is a standing balance, not something bought toward a plan
+              td(r.timing === "reservoir" ? "—" : r.pct.toFixed(1) + "%", "num"));
+    tb.appendChild(tr);
+  }
+  $("payin-advice").hidden = !isMirror();
+  // the through selector: 1..N, defaulting to the tranche now due
+  const sel = $("payin-through");
+  sel.replaceChildren();
+  for (let k = 1; k <= p.n; k++) {
+    const o = document.createElement("option");
+    o.value = k;
+    o.textContent = k;
+    sel.appendChild(o);
+  }
+  const fired = (state.data.rules || []).some((r) => r.fired && r.action === "accelerate");
+  $("payin-rulewrap").hidden = !fired;
+  $("payin-rules").checked = true;
+  loadTranche(null);
+}
+
+async function loadTranche(through) {
+  const seq = ++trancheSeq;
+  const rules = $("payin-rules").checked && !$("payin-rulewrap").hidden;
+  let url = "/api/account/tranche?apply_rules=" + (rules ? 1 : 0);
+  if (through != null) url += "&through=" + encodeURIComponent(through);
+  $("payin-status").textContent = "Pricing at the last close…";
+  try {
+    const t = await api(url);
+    if (seq !== trancheSeq) return;
+    state.tranche = t;
+    $("payin-status").textContent = "";
+    renderTranche();
+  } catch (err) {
+    if (seq !== trancheSeq) return;
+    $("payin-status").textContent = "";
+    showError(err.message);
+  }
+}
+
+function renderTranche() {
+  const t = state.tranche;
+  $("payin-through").value = t.through;
+  $("payin-buytitle").textContent = `Buy list for tranche ${t.through}`;
+  const tb = $("payin-orders").querySelector("tbody");
+  tb.replaceChildren();
+  for (const o of t.orders) {
+    const tr = document.createElement("tr");
+    tr.append(td(o.timing === "lump" ? `${o.ticker} (lump)` : o.ticker),
+              td(money(o.due), "num"), td(String(o.qty), "num"),
+              td(moneyP(o.price), "num"), td(money(o.amount), "num"),
+              td(o.note || ""));
+    tb.appendChild(tr);
+  }
+  if (!t.orders.length) {
+    const tr = document.createElement("tr");
+    const c = td("Nothing to buy.");
+    c.colSpan = 6;
+    tr.appendChild(c);
+    tb.appendChild(tr);
+  }
+  const rt = t.reservoir_trade;
+  $("payin-reservoir").textContent = !rt ? "" : rt.side === "SELL"
+    ? `Sell ${rt.qty} ${rt.ticker} (~${money(rt.amount)}) to fund it`
+    : `Put the rest in ${rt.ticker}: buy ${rt.qty} (~${money(rt.amount)})`;
+  $("payin-budget").textContent =
+    `Cash available above reserve: ${money(t.budget)}`;
+  const inc = $("payin-includes");
+  const texts = t.applied_rules.map((id) => {
+    const r = (state.data.rules || []).find((x) => x.id === id);
+    return r ? r.text : id;
+  });
+  inc.hidden = !texts.length;
+  inc.textContent = texts.length ? "Includes: " + texts.join("; ") : "";
+}
+
+function renderRules() {
+  const rules = state.data.rules || [];
+  $("rules").hidden = !rules.length;
+  const tb = $("rules-table").querySelector("tbody");
+  tb.replaceChildren();
+  for (const r of rules) {
+    const tr = document.createElement("tr");
+    const unit = r.rule === "drift" ? " pts" : "%";
+    const first = document.createElement("td");
+    first.append(r.text);
+    if (r.rule === "drift" && r.breaches.length) {
+      const small = document.createElement("small");
+      small.textContent = " — " + r.breaches.map(
+        (b) => `${b.line} ${b.weight.toFixed(1)}% vs ${b.target.toFixed(1)}%`
+      ).join(", ");
+      first.appendChild(small);
+    }
+    if (r.action === "accelerate") {
+      const small = document.createElement("small");
+      small.textContent = ` (${r.action_text})`;
+      first.appendChild(small);
+    }
+    const status = document.createElement("td");
+    if (r.muted) {
+      const b = document.createElement("strong");
+      b.textContent = "Muted during pay-in";
+      status.appendChild(b);
+    } else if (r.fired) {
+      const b = document.createElement("strong");
+      b.textContent = "Fired";
+      status.appendChild(b);
+    } else {
+      status.textContent = "Not fired";
+    }
+    tr.append(first,
+              td(r.measured == null ? "—" : r.measured.toFixed(1) + unit, "num"),
+              td(r.threshold + unit, "num"), status);
+    tb.appendChild(tr);
+  }
 }
 
 // ---------- bridge 1: the starter card ----------
@@ -1018,6 +1175,8 @@ for (const id of ["af-anchor", "af-anchorvalue"]) {
   });
 }
 $("acct-select").addEventListener("change", (e) => switchAccount(e.target.value));
+$("payin-through").addEventListener("change", (e) => loadTranche(e.target.value));
+$("payin-rules").addEventListener("change", () => loadTranche(null));
 $("plancancel").addEventListener("click", () => { $("planpanel").hidden = true; });
 $("planconfirm").addEventListener("click", confirmPlan);
 
