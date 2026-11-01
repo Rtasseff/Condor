@@ -592,7 +592,8 @@ class AssetSet:
     def analysis_under(self, assumptions, weights=None,
                        risk_free_rate: float = 0.02,
                        n_points: int = N_FRONTIER_POINTS,
-                       reference_prices: pd.Series | None = None) -> dict:
+                       reference_prices: pd.Series | None = None,
+                       scenario_windows=None) -> dict:
         """The `analysis()` payload computed under `assumptions`
         (an `Assumptions`): its prior and limits, plus `name` and an echo
         of the assumptions.  Raises ValueError when they can't be applied
@@ -600,7 +601,8 @@ class AssetSet:
         under = self.with_options(prior=assumptions.prior,
                                   reference_prices=reference_prices)
         out = under.analysis(weights, risk_free_rate, n_points,
-                             constraints=assumptions.constraints)
+                             constraints=assumptions.constraints,
+                             scenario_windows=scenario_windows)
         out["name"] = assumptions.name
         out["assumptions"] = assumptions.to_dict()
         return out
@@ -623,7 +625,7 @@ class AssetSet:
                  n_points: int = N_FRONTIER_POINTS, *,
                  metric: str | None = None, timeframe: str | None = None,
                  samp_int=_UNSET, basis: str | None = None,
-                 constraints=None) -> dict:
+                 constraints=None, scenario_windows=None) -> dict:
         """Everything the Explorer UI needs, as one plain dict.
 
         Lenient at the boundary: unknown tickers in `weights` are ignored,
@@ -639,12 +641,13 @@ class AssetSet:
             return self.with_options(rf_level=risk_free_rate).analysis(
                 weights, risk_free_rate, n_points, metric=metric,
                 timeframe=timeframe, samp_int=samp_int, basis=basis,
-                constraints=constraints)
+                constraints=constraints, scenario_windows=scenario_windows)
         override = self.with_options(metric=metric, timeframe=timeframe,
                                      samp_int=samp_int, basis=basis)
         if override is not self:
             return override.analysis(weights, risk_free_rate, n_points,
-                                     constraints=constraints)
+                                     constraints=constraints,
+                                     scenario_windows=scenario_windows)
 
         if weights:
             clean = {t: max(0.0, float(weights.get(t, 0.0))) for t in self.tickers}
@@ -671,6 +674,11 @@ class AssetSet:
             result["constraints"]["ignored"] += self.ignored_views()
         if constraints is not None:
             result["gaps"] = fr.gaps(mine)
+        result["scenarios"] = {
+            "basis": "value_index",
+            "portfolio": mine.scenarios(scenario_windows),
+            "tangency": (fr.tangency.scenarios(scenario_windows)
+                         if fr.tangency is not None else None)}
         if self._prior is not None:
             result["prior_note"] = self.prior_note()
             result["premiums"] = {
@@ -779,6 +787,23 @@ class Portfolio:
         what `value_index` is — not of a buy-and-hold account.
         """
         return self._history
+
+    def scenarios(self, windows=None) -> list[dict]:
+        """How this mix did in named stress windows.
+
+        `windows` is a list of `{name, start, end}` (dates, ISO strings);
+        default `history.SCENARIOS`.  Each result carries the window plus
+        `ret`, `max_drawdown`, `covered`, `first` from `history.window_stats`
+        on the fixed-weight `value_index`.  A window the shared history
+        doesn't cover has `covered: False` and null numbers.  Raises
+        ValueError for a window whose start is not before its end.
+        """
+        out = []
+        for w in (_history.SCENARIOS if windows is None else windows):
+            st = _history.window_stats(self.value_index, w["start"], w["end"])
+            out.append({"name": w["name"], "start": str(w["start"]),
+                        "end": str(w["end"]), **st})
+        return out
 
     def forecast(self, horizon_years: float = 2,
                  levels=_forecast_engine.DEFAULT_LEVELS, *,

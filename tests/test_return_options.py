@@ -424,14 +424,14 @@ class TestAnalysisFacade:
             base.with_options(**self.OPTS).analysis(n_points=6)
 
     def test_default_payload_is_untouched(self, prices):
-        """Options are opt-in: the only new key is `meta` (ADR 0006 / F5)."""
+        """Options are opt-in: the new keys are `meta`, `scenarios` (ADR 0006 / F5)."""
         aset = AssetSet(prices, "robust")
         assert aset.analysis(n_points=6) == compute_analysis(
             prices, method="robust", n_points=6)
         assert set(aset.analysis(n_points=6)) == {
             "tickers", "method", "risk_free_rate", "assets", "start", "end",
             "n_days", "portfolio", "min_vol", "tangency", "frontier", "cal",
-            "meta"}
+            "meta", "scenarios"}
 
     def test_monthly_analysis_is_a_different_frontier(self, prices):
         daily = compute_analysis(prices, n_points=8)
