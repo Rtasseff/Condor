@@ -562,7 +562,7 @@ def reconcile(events: pd.DataFrame | None, prices: pd.Series | None,
            "positions": None,
            "cash_check": _check(reported_cash, cash, _CASH_TOL),
            "securities_check": None, "value_check": None,
-           "rounding": {"cash": abs(cash - _dec(state.cash)) >= _CASH_TOL,
+           "rounding": {"cash": abs(cash - _dec(round(state.cash, 6))) >= _CASH_TOL,
                         "prices": False}}
     if prices is None:
         return out
@@ -584,7 +584,7 @@ def reconcile(events: pd.DataFrame | None, prices: pd.Series | None,
         securities=float(securities), value=float(value), positions=positions,
         securities_check=_check(reported_securities, securities, tol),
         value_check=_check(reported_value, value, tol))
-    out["rounding"]["prices"] = abs(_dec(exact) - securities) >= _CASH_TOL
+    out["rounding"]["prices"] = abs(_dec(round(exact, 6)) - securities) >= _CASH_TOL
     return out
 
 

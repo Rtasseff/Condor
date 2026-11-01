@@ -140,6 +140,19 @@ def test_no_prices_still_checks_cash():
     assert r["positions"] is None and r["value_check"] is None
 
 
+def test_rounding_flag_survives_float_noise():
+    # Regression (2026-11-01, real mirror): the replay's float sum landed a
+    # hair under a true half cent (169.79499999999996, exactly 169.795), so
+    # the note explaining a one-cent gap to the headline total never showed.
+    ev = frame([e("deposit", amount=300.01),
+                e("buy", "AAA", shares=9, price=5.54),
+                e("buy", "BBB", shares=1, price=80.355)])
+    assert abs(acct.ledger_state(ev).cash - 169.79) < 0.005     # the noise
+    r = acct.reconcile(ev, pd.Series({"AAA": 5.54, "BBB": 80.36}))
+    assert r["cash"] == 169.79
+    assert r["rounding"]["cash"] is True
+
+
 def test_rounding_flags():
     r = acct.reconcile(LEDGER, PRICES)
     assert r["rounding"]["cash"] is True       # 96.16 booked vs 96.165 exact
