@@ -396,8 +396,12 @@ class AssetSet:
     def with_options(self, *, method: str | None = None,
                      metric: str | None = None, timeframe: str | None = None,
                      samp_int=_UNSET, basis: str | None = None,
-                     rf_level: float | None = None) -> "AssetSet":
+                     rf_level: float | None = None, prior=_UNSET,
+                     reference_prices=_UNSET) -> "AssetSet":
         """Same assets and prices, re-estimated under different options.
+
+        `prior` / `reference_prices` swap the assumptions prior (None clears
+        it); left out, they are carried over.
 
         `rf_level` re-levels a premium-mode set (the premiums are not
         re-estimated in substance, only the level they are added to); the
@@ -421,13 +425,16 @@ class AssetSet:
         opts["samp_int"] = stats.resolve_samp_int(opts["timeframe"],
                                                   opts["samp_int"])
         new_level = self._rf_level if rf_level is None else float(rf_level)
-        if opts == current and new_level == self._rf_level:
+        new_prior = self._prior if prior is _UNSET else prior
+        new_ref = (self._reference_prices if reference_prices is _UNSET
+                   else reference_prices)
+        if (opts == current and new_level == self._rf_level
+                and new_prior is self._prior and new_ref is self._reference_prices):
             return self
         return AssetSet(self.prices,
                         names={a.ticker: a.name for a in self.assets if a.name},
                         rf_history=self._rf_history, rf_level=new_level,
-                        prior=self._prior,
-                        reference_prices=self._reference_prices, **opts)
+                        prior=new_prior, reference_prices=new_ref, **opts)
 
     # -- portfolios over this set ---------------------------------------
     def _as_weight_array(self, weights) -> np.ndarray:
@@ -571,6 +578,22 @@ class AssetSet:
         return cls(prices, method=method, names=names, metric=metric,
                    timeframe=timeframe, samp_int=samp_int, basis=basis,
                    rf_history=rf_history, rf_level=rf_level)
+
+    def analysis_under(self, assumptions, weights=None,
+                       risk_free_rate: float = 0.02,
+                       n_points: int = N_FRONTIER_POINTS,
+                       reference_prices: pd.Series | None = None) -> dict:
+        """The `analysis()` payload computed under `assumptions`
+        (an `Assumptions`): its prior and limits, plus `name` and an echo
+        of the assumptions.  Raises ValueError when they can't be applied
+        (infeasible limits, no premium mode, a missing market proxy)."""
+        under = self.with_options(prior=assumptions.prior,
+                                  reference_prices=reference_prices)
+        out = under.analysis(weights, risk_free_rate, n_points,
+                             constraints=assumptions.constraints)
+        out["name"] = assumptions.name
+        out["assumptions"] = assumptions.to_dict()
+        return out
 
     def meta(self, risk_free_rate: float) -> dict:
         """What this analysis was run on: window, method, whether expected
