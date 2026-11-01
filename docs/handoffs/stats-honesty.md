@@ -1,5 +1,7 @@
 # Handoff — `feature/stats-honesty`
 
+**Merged 2026-11-01**; branch and worktree removed.
+
 <!-- Copy of docs/handoffs/_template.md, seeded by scripts/new-worktree.sh.
      Lives at docs/handoffs/stats-honesty.md on the branch. Keep "Status" current. -->
 

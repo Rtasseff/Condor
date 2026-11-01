@@ -23,3 +23,6 @@ Merged (kept as records):
 - `ledger-mirror.md` — `feature/ledger-mirror`, merged 2026-10-24:
   ledger v2 (cost basis, income/fees, currency, bills) and read-only
   mirror import (ADR 0005).
+- `stats-honesty.md` — `feature/stats-honesty`, merged 2026-11-01:
+  expected return = T-bill + premium, constant-correlation shrinkage,
+  portfolio history, CLI meta (ADR 0006).
