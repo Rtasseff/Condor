@@ -38,11 +38,19 @@ whole-share rebalancing plans, scheduled contributions with a
 where-should-it-go DCA plan and login reminder, and a whole-account
 forecast (holdings + cash at the T-bill rate) (ADR 0004). A CSV ledger kept
 elsewhere can be mirrored read-only with
-`python web/manage.py import_ledger LEDGER.csv [--targets T.csv] --user NAME --replace`
+`python web/manage.py import_ledger LEDGER.csv [--targets T.csv] [--payin P.csv] [--rules R.csv] --user NAME --replace`
 (format: `docs/LEDGER-FORMAT.md`, ADR 0005): average cost, realized and
 unrealized gain, dividends/interest/fees as return, one currency per
 account, and bills that accrete to nominal; `export_ledger` writes the
 same format back out. `/account?account=<id>` switches between accounts.
+With the format's v1.1 files (`--targets` with `timing`/`line`, `--payin`,
+`--rules`; ADR 0007) a mirror also shows the pay-in tracker (progress per
+line, the whole-share buy list for tranche k with catch-up sizing, budget
+trim and the reservoir sale or purchase, completion), rule alerts (index
+below its 52-week high, position below average cost, drift, muted during
+the pay-in), a money-weighted return (XIRR) beside the time-weighted one,
+and a combined USD + EUR total across your accounts. All of it is advice:
+nothing is bought for you.
 Everything else recomputes live from market data.
 
 Core analytics can also be used directly:
@@ -107,7 +115,9 @@ Expected returns are the T-bill rate plus each asset's premium over T-bills;
 | `condor/history.py` | History engine: max drawdown, calendar-year returns, CAGR of a value series (pure) |
 | `condor/forecast.py` | Forecast engine: closed-form fan-chart bands with estimation-error overlay |
 | `condor/accounting.py` | Account engine: ledger replay (cost basis, income, bills), valuation/TWR, whole-share rebalance plans |
-| `condor/ledger_io.py` | Ledger exchange format v1: validating CSV reader / writer (pure; no Django) |
+| `condor/ledger_io.py` | Ledger exchange format v1.1: validating CSV readers (ledger, targets, pay-in, rules) / writer (pure; no Django) |
+| `condor/payin.py` | Pay-in engine: whole-share catch-up buy lists, budget trim, reservoir trade, completion |
+| `condor/alerts.py` | Rule alerts: below-high / below-cost / drift, and how fired rules extend the buy list |
 | `condor/cli.py` | CLI: `python -m condor analyze/portfolio/frontier/data` |
 | `condor/data/` | Price store (`~/.condor/prices`, Parquet) + sources (yfinance, Tiingo) + FRED risk-free rate |
 

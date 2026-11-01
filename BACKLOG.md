@@ -38,7 +38,7 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     dividend/interest/fee kinds, R4 CSV import/export into read-only
     mirror accounts, R5 one currency per account, R6 accreting bills,
     account selector.
-  - **B `account-plans`** — *in a worktree* (ADR 0007, format v1.1): R7 rule alerts (index >10% below
+  - **B `account-plans`** — *built, see Done* (ADR 0007, format v1.1): R7 rule alerts (index >10% below
     52-wk high, position >X% below avg cost, drift >N pp), R8 pay-in
     tracker (N tranches, bought-vs-plan, reservoir asset, drift alerts
     muted until done; **whole-share catch-up**: each tranche line
@@ -192,7 +192,10 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
       USFR), constant-correlation Ledoit-Wolf, portfolio worst fall / worst
       year / growth per year (`condor/history.py`), `meta` in CLI JSON and
       `/api/analyze`; `--no-premium` / `premium: false` for the raw numbers.
-
+- [x] **Account plans (bucket B, ADR 0007)** — pay-in tracker with
+      whole-share catch-up buy lists, rule alerts, XIRR beside TWR and a
+      USD + EUR combined total on mirror accounts; format v1.1
+      (`--payin`, `--rules`, targets `timing`/`line`).
 - [x] **Mirror import (ADR 0005)** — 2026-10-24. Ledger v2 engine (average
       cost, realized/unrealized, dividend/interest/fee as return, redeem,
       straight-line bills), `condor/ledger_io.py` + `import_ledger` /

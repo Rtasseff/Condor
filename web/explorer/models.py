@@ -181,6 +181,12 @@ class Account(models.Model):
     def target_weights(self):
         return {t.ticker: t.weight for t in self.targets.all()}
 
+    def target_specs(self):
+        """[(ticker, weight, timing, line)] in target order (weight desc,
+        ticker) — the order buy lists are listed in."""
+        return [(t.ticker, t.weight, t.timing, t.line_key)
+                for t in self.targets.all()]
+
 
 class AccountTarget(models.Model):
     """Setpoint allocation: fraction of total value per ticker.
@@ -192,6 +198,10 @@ class AccountTarget(models.Model):
                                 related_name="targets")
     ticker = models.CharField(max_length=10)
     weight = models.FloatField()
+    # format v1.1 (ADR 0007): the ticker's pay-in role and its line
+    # (group key for drift/progress); "" line = the ticker lowercased.
+    timing = models.CharField(max_length=10, blank=True, default="")
+    line = models.CharField(max_length=40, blank=True, default="")
 
     class Meta:
         constraints = [models.UniqueConstraint(
@@ -200,6 +210,45 @@ class AccountTarget(models.Model):
 
     def __str__(self):
         return f"{self.ticker} {self.weight:.1%}"
+
+    @property
+    def line_key(self):
+        return self.line or self.ticker.lower()
+
+
+class PayInPlan(models.Model):
+    """A pay-in plan imported from the source ledger (ADR 0007): the
+    total to invest and the tranche dates (ISO strings)."""
+
+    account = models.OneToOneField(Account, on_delete=models.CASCADE,
+                                   related_name="payin")
+    total = models.FloatField()
+    dates = models.JSONField(default=list)
+
+    def __str__(self):
+        return f"{self.total:g} in {len(self.dates)} tranches"
+
+
+class AccountRule(models.Model):
+    """One imported rule (ADR 0007), evaluated fresh on every view."""
+
+    account = models.ForeignKey(Account, on_delete=models.CASCADE,
+                                related_name="rules")
+    rule_id = models.CharField(max_length=40)
+    rule = models.CharField(max_length=20)
+    ticker = models.CharField(max_length=24, blank=True, default="")
+    threshold = models.FloatField()
+    action = models.CharField(max_length=12)
+    tranches = models.IntegerField(null=True, blank=True)
+    targets = models.CharField(max_length=120, blank=True, default="")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["account", "rule_id"], name="unique_rule_per_account")]
+        ordering = ["pk"]
+
+    def __str__(self):
+        return f"{self.rule_id} ({self.rule} > {self.threshold:g})"
 
 
 class AccountEvent(models.Model):

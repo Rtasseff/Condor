@@ -1,0 +1,4 @@
+account,id,rule,ticker,threshold,action,tranches,target
+broker_b,idx_drawdown,below_52w_high,^IDX,10,accelerate,2,
+broker_b,ccc_below_cost,below_avg_cost,CCC,20,accelerate,1,CCC DDD
+broker_b,drift,drift,,5,alert,,

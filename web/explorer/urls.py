@@ -40,6 +40,8 @@ urlpatterns = [
          name="api_account_event"),
     path("api/account/target", account.api_account_target,
          name="api_account_target"),
+    path("api/account/tranche", account.api_account_tranche,
+         name="api_account_tranche"),
     path("api/account/plan", account.api_account_plan,
          name="api_account_plan"),
     path("api/account/plan/confirm", account.api_account_plan_confirm,

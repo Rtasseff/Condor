@@ -14,6 +14,8 @@
     <label>Account <select id="acct-select"></select></label>
   </div>
 
+  <p class="sub combinedline" id="a-combined" hidden></p>
+
   <div class="card mirrorbanner" id="mirrorbanner" hidden></div>
 
   <section class="card startercard" id="startercard" hidden
@@ -50,6 +52,7 @@
       <div class="tile"><span class="label">Net contributions</span><span class="value" id="a-contrib">–</span><span class="gloss">money you put in, minus taken out</span></div>
       <div class="tile"><span class="label">Gain</span><span class="value" id="a-gain">–</span><span class="gloss">value minus what you put in</span></div>
       <div class="tile"><span class="label">Return <small>(time-weighted)</small></span><span class="value" id="a-twr">–</span><span class="gloss">growth of a dollar — deposits don't count as return</span></div>
+      <div class="tile"><span class="label">Money-weighted <small>(XIRR)</small></span><span class="value" id="a-xirr">–</span><span class="gloss">what your actual dollars earned, per year — timing of deposits counts</span></div>
     </div>
     <p class="sub gainbreak" id="a-breakdown" hidden></p>
     <p class="sub" id="a-asof"></p>
@@ -63,6 +66,69 @@
   </div>
 
   <div id="error" class="error card" hidden></div>
+
+  <section class="card" id="payin" hidden>
+    <h2 id="payin-title">Pay-in</h2>
+    <p class="sub">Your plan, line by line: what it says to hold by now, and how
+       much is actually bought (gross dollars, fees left out).</p>
+    <p class="sub warn" id="payin-unbought" hidden></p>
+    <div class="tablewrap">
+      <table id="payin-progress">
+        <thead><tr>
+          <th scope="col">Line</th>
+          <th scope="col">Timing</th>
+          <th scope="col" class="num">Plan</th>
+          <th scope="col" class="num">Bought</th>
+          <th scope="col" class="num">%</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="subpanel" id="payin-buy">
+      <h3 id="payin-buytitle">Buy list</h3>
+      <div class="sideactions">
+        <label>Through tranche <select id="payin-through"></select></label>
+        <label class="checkline" id="payin-rulewrap" hidden><input type="checkbox" id="payin-rules" checked> Include fired rules</label>
+        <span id="payin-status" class="status" role="status"></span>
+      </div>
+      <div class="tablewrap">
+        <table id="payin-orders">
+          <thead><tr>
+            <th scope="col">Ticker</th>
+            <th scope="col" class="num">Due</th>
+            <th scope="col" class="num">Shares</th>
+            <th scope="col" class="num">Price</th>
+            <th scope="col" class="num">Amount</th>
+            <th scope="col">Note</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="sub" id="payin-reservoir"></p>
+      <p class="sub" id="payin-budget"></p>
+      <p class="sub" id="payin-includes" hidden></p>
+      <p class="sub warn" id="payin-cancel">Cancel last month’s unfilled orders before placing these — this list already includes what they didn’t buy.</p>
+      <p class="sub advice" id="payin-advice" hidden>Advice only — place trades at your broker and record them in your ledger.</p>
+    </div>
+  </section>
+
+  <section class="card" id="rules" hidden>
+    <h2>Rules</h2>
+    <p class="sub">Checked fresh on every visit. Nothing is bought for you — a
+       fired rule only changes the buy list above.</p>
+    <div class="tablewrap">
+      <table id="rules-table">
+        <thead><tr>
+          <th scope="col">Rule</th>
+          <th scope="col" class="num">Now</th>
+          <th scope="col" class="num">Threshold</th>
+          <th scope="col">Status</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
 
   <section class="card" id="chartcard2" hidden>
     <h2>Value over time</h2>

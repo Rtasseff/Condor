@@ -1,4 +1,4 @@
-"""Ledger exchange format v1: read, validate and write the CSVs.
+"""Ledger exchange format v1.1: read, validate and write the CSVs.
 
 See docs/LEDGER-FORMAT.md (the contract with the portfolio repo) and
 ADR 0005. Pure: files/streams in, DataFrames out; no Django, no
@@ -23,6 +23,13 @@ from .accounting import EVENT_COLUMNS
 LEDGER_HEADER = ["date", "account", "ticker", "side", "qty", "price", "fees",
                  "ccy", "maturity", "note"]
 TARGETS_HEADER = ["account", "ticker", "weight"]
+TARGETS_HEADER_V11 = ["account", "ticker", "weight", "timing", "line"]
+PAYIN_HEADER = ["account", "total", "date"]
+RULES_HEADER = ["account", "id", "rule", "ticker", "threshold", "action",
+                "tranches", "target"]
+TIMINGS = ("dca", "lump", "reservoir")
+RULE_KINDS = ("below_52w_high", "below_avg_cost", "drift")
+ACTIONS = ("alert", "accelerate")
 
 # copied from web/explorer/views.py (condor must not import from web)
 TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,10}$")
@@ -51,6 +58,27 @@ class LedgerFormatError(ValueError):
         super().__init__("; ".join(self.errors))
 
 
+class TargetSpec(NamedTuple):
+    weight: float
+    timing: str          # "" | dca | lump | reservoir
+    line: str            # group key; default = ticker lowercased
+
+
+class PayInSpec(NamedTuple):
+    total: float
+    dates: tuple         # of datetime.date, strictly increasing
+
+
+class RuleSpec(NamedTuple):
+    id: str
+    rule: str
+    ticker: str
+    threshold: float
+    action: str
+    tranches: int | None
+    targets: tuple       # tickers; () = every dca line
+
+
 class LedgerImport(NamedTuple):
     currency: str
     events: pd.DataFrame        # EVENT_COLUMNS + note, in file order
@@ -63,8 +91,9 @@ def _open(src):
     return open(src, newline="", encoding="utf-8-sig"), True
 
 
-def _rows(src, header):
-    """-> (list[(line_no, row)], errors). Header must match as a set."""
+def _rows(src, header, alt_headers=()):
+    """-> (list[(line_no, row)], errors). Header must match as a set
+    (`header`, or one of `alt_headers`)."""
     stream, close = _open(src)
     try:
         reader = csv.reader(stream)
@@ -74,9 +103,12 @@ def _rows(src, header):
             return [], ["line 1: empty file (header missing)."]
         if head and head[0].startswith("﻿"):
             head[0] = head[0][1:]
-        if sorted(head) != sorted(header) or len(set(head)) != len(head):
+        options = [header, *alt_headers]
+        if len(set(head)) != len(head) or not any(
+                sorted(head) == sorted(h) for h in options):
+            want = " or ".join(",".join(h) for h in options)
             return [], [f"line 1: header must be exactly "
-                        f"{','.join(header)} (got {','.join(head)})."]
+                        f"{want} (got {','.join(head)})."]
         rows = []
         for row in reader:
             if not row:
@@ -288,13 +320,15 @@ def read_ledger(src, today: date | None = None) -> dict[str, LedgerImport]:
         for label, recs in out.items()}
 
 
-def read_targets(src) -> dict[str, dict[str, float]]:
-    """Parse targets.csv -> {label: {ticker: weight}}."""
-    rows, errs = _rows(src, TARGETS_HEADER)
+def read_targets_full(src) -> dict[str, dict[str, TargetSpec]]:
+    """Parse targets.csv (v1 or v1.1) -> {label: {ticker: TargetSpec}}.
+    v1 files (no timing/line) get timing "" and line = ticker lowercased."""
+    rows, errs = _rows(src, TARGETS_HEADER, [TARGETS_HEADER_V11])
     if errs:
         raise LedgerFormatError(errs)
-    out: dict[str, dict[str, float]] = {}
+    out: dict[str, dict[str, TargetSpec]] = {}
     where: dict[str, int] = {}
+    reservoir: dict[str, str] = {}
     for line, r in rows:
         if r is None:
             errs.append(f"line {line}: wrong number of columns.")
@@ -309,6 +343,14 @@ def read_targets(src) -> dict[str, dict[str, float]]:
         w = _num(r["weight"], "weight", errs, line)
         if w is not None and w > 1:
             errs.append(f"line {line}: weight must be in [0, 1].")
+        timing = r.get("timing", "")
+        if timing and timing not in TIMINGS:
+            errs.append(f"line {line}: timing '{timing}' is not one of "
+                        f"{' '.join(TIMINGS)} (or empty).")
+        key = r.get("line", "")
+        if key and not LABEL_RE.match(key):
+            errs.append(f"line {line}: line '{key}' must match "
+                        "[a-z0-9_]{1,40}.")
         if len(errs) > n0:
             continue
         acc = out.setdefault(r["account"], {})
@@ -316,12 +358,135 @@ def read_targets(src) -> dict[str, dict[str, float]]:
             errs.append(f"line {line}: duplicate target for "
                         f"{r['account']}/{r['ticker']}.")
             continue
-        acc[r["ticker"]] = w
+        if timing == "reservoir":
+            if r["account"] in reservoir:
+                errs.append(
+                    f"line {line}: '{r['account']}' already has a reservoir "
+                    f"ticker ({reservoir[r['account']]}); at most one.")
+                continue
+            reservoir[r["account"]] = r["ticker"]
+        acc[r["ticker"]] = TargetSpec(w, timing, key or r["ticker"].lower())
         where[r["account"]] = line
     for label, ws in out.items():
-        if sum(ws.values()) > 1 + 1e-9:
+        if sum(s.weight for s in ws.values()) > 1 + 1e-9:
             errs.append(f"line {where[label]}: targets for '{label}' sum to "
-                        f"{sum(ws.values()):.6g}, more than 1.")
+                        f"{sum(s.weight for s in ws.values()):.6g}, "
+                        "more than 1.")
+    if errs:
+        raise LedgerFormatError(errs)
+    return out
+
+
+def read_targets(src) -> dict[str, dict[str, float]]:
+    """Parse targets.csv -> {label: {ticker: weight}} (weights only)."""
+    return {label: {t: s.weight for t, s in specs.items()}
+            for label, specs in read_targets_full(src).items()}
+
+
+def read_payin(src) -> dict[str, PayInSpec]:
+    """Parse payin.csv (v1.1) -> {label: PayInSpec}. Future dates are
+    fine: it is a plan."""
+    rows, errs = _rows(src, PAYIN_HEADER)
+    if errs:
+        raise LedgerFormatError(errs)
+    tot: dict[str, float] = {}
+    dts: dict[str, list[date]] = {}
+    for line, r in rows:
+        if r is None:
+            errs.append(f"line {line}: wrong number of columns.")
+            continue
+        n0 = len(errs)
+        label = r["account"]
+        if not LABEL_RE.match(label):
+            errs.append(f"line {line}: account '{label}' must match "
+                        "[a-z0-9_]{1,40}.")
+        total = _num(r["total"], "total", errs, line)
+        if total is not None and total <= 0:
+            errs.append(f"line {line}: total must be > 0.")
+        d = _iso(r["date"], "date", errs, line)
+        if len(errs) > n0:
+            continue
+        if label in tot and abs(tot[label] - total) > 1e-9:
+            errs.append(f"line {line}: total {r['total']} differs from "
+                        f"{tot[label]:g} on the account's earlier rows.")
+            continue
+        if dts.get(label) and d <= dts[label][-1]:
+            errs.append(f"line {line}: date {d} is not after the previous "
+                        f"tranche ({dts[label][-1]}); dates must strictly "
+                        "increase.")
+            continue
+        tot.setdefault(label, total)
+        dts.setdefault(label, []).append(d)
+    if errs:
+        raise LedgerFormatError(errs)
+    return {label: PayInSpec(tot[label], tuple(ds))
+            for label, ds in dts.items()}
+
+
+def read_rules(src) -> dict[str, list[RuleSpec]]:
+    """Parse rules.csv (v1.1) -> {label: [RuleSpec]} in file order."""
+    rows, errs = _rows(src, RULES_HEADER)
+    if errs:
+        raise LedgerFormatError(errs)
+    out: dict[str, list[RuleSpec]] = {}
+    for line, r in rows:
+        if r is None:
+            errs.append(f"line {line}: wrong number of columns.")
+            continue
+        n0 = len(errs)
+        label, rid = r["account"], r["id"]
+        if not LABEL_RE.match(label):
+            errs.append(f"line {line}: account '{label}' must match "
+                        "[a-z0-9_]{1,40}.")
+        if not LABEL_RE.match(rid):
+            errs.append(f"line {line}: id '{rid}' must match "
+                        "[a-z0-9_]{1,40}.")
+        elif any(x.id == rid for x in out.get(label, [])):
+            errs.append(f"line {line}: duplicate rule id '{rid}' for "
+                        f"'{label}'.")
+        kind = r["rule"]
+        if kind not in RULE_KINDS:
+            errs.append(f"line {line}: rule '{kind}' is not one of "
+                        f"{' '.join(RULE_KINDS)}.")
+        ticker = r["ticker"]
+        if kind == "drift":
+            if ticker:
+                errs.append(f"line {line}: a drift rule takes no ticker.")
+        elif kind in RULE_KINDS:
+            if not ticker:
+                errs.append(f"line {line}: {kind} needs a ticker.")
+            elif not TICKER_RE.match(ticker) or ticker == CASH:
+                errs.append(f"line {line}: ticker '{ticker}' is not an "
+                            "exchange ticker.")
+        thr = _num(r["threshold"], "threshold", errs, line)
+        if thr is not None and thr <= 0:
+            errs.append(f"line {line}: threshold must be > 0.")
+        action = r["action"]
+        if action not in ACTIONS:
+            errs.append(f"line {line}: action '{action}' is not one of "
+                        f"{' '.join(ACTIONS)}.")
+        tranches = None
+        if action == "accelerate":
+            if not re.match(r"^[1-9]\d{0,3}$", r["tranches"]):
+                errs.append(f"line {line}: accelerate needs tranches, an "
+                            "integer >= 1.")
+            else:
+                tranches = int(r["tranches"])
+        elif action == "alert" and r["tranches"]:
+            errs.append(f"line {line}: tranches must be empty on an alert.")
+        targets = tuple(r["target"].split())
+        for t in targets:
+            if not TICKER_RE.match(t) or t == CASH:
+                errs.append(f"line {line}: target '{t}' is not an exchange "
+                            "ticker.")
+        if len(set(targets)) != len(targets):
+            errs.append(f"line {line}: target lists a ticker twice.")
+        if len(r["target"]) > 120:
+            errs.append(f"line {line}: target is longer than 120 characters.")
+        if len(errs) > n0:
+            continue
+        out.setdefault(label, []).append(
+            RuleSpec(rid, kind, ticker, thr, action, tranches, targets))
     if errs:
         raise LedgerFormatError(errs)
     return out

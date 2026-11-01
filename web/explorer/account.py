@@ -9,6 +9,7 @@ import datetime as dt
 import functools
 import logging
 import uuid
+from types import SimpleNamespace
 
 import pandas as pd
 from django.contrib.auth.decorators import login_required
@@ -20,7 +21,9 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from condor import AssetSet, DataFetchError, PriceStore, fetch_prices
 from condor import accounting as acct
+from condor import alerts, payin
 from condor.data import risk_free_rate
+from condor.ledger_io import RuleSpec
 
 from .models import (Account, AccountEvent, AccountTarget,
                      ContributionSchedule)
@@ -30,6 +33,14 @@ from .views import (MAX_ASSETS, TICKER_RE, _bad, _clean_anchor, _json_body,
 log = logging.getLogger(__name__)
 
 PRICE_BUFFER_DAYS = 10   # history fetched a bit before the first event
+INDEX_LOOKBACK_DAYS = 400   # 52-week window + slack; also keeps the store's
+#                             MIN_OBS check happy for a first fetch
+FX_PAIR = "EURUSD"          # USD per EUR; stored as the ticker EURUSD=X
+
+
+def _today() -> dt.date:
+    """Seam for tests: the date every pay-in/tranche calculation uses."""
+    return dt.date.today()
 
 
 # ---------------------------------------------------------------- helpers
@@ -113,11 +124,10 @@ def _opt(x, nd=4):
     return None if x is None or pd.isna(x) else round(float(x), nd)
 
 
-def _state(account: Account) -> dict:
-    """Everything the account page needs, derived fresh from the ledger."""
+def _live(account: Account, today: dt.date) -> SimpleNamespace:
+    """The account's ledger replayed and its raw closes loaded."""
     ev_df = account.events_frame()
     state = acct.ledger_state(ev_df)
-    shares, cash, contrib = state.shares, state.cash, state.contributions
     bills = acct.bill_tickers(ev_df)
     targets = account.target_weights()
     # every exchange ticker ever traded must be priced (a sold-out
@@ -126,7 +136,6 @@ def _state(account: Account) -> dict:
         ["buy", "sell", "set_shares"]), "ticker"].dropna())
     tickers = sorted((traded | set(targets)) - bills)
 
-    today = dt.date.today()
     first = ev_df["date"].min() if len(ev_df) else today
     start = pd.Timestamp(first).date() - dt.timedelta(days=PRICE_BUFFER_DAYS)
 
@@ -138,18 +147,187 @@ def _state(account: Account) -> dict:
         closes = pd.DataFrame(index=pd.bdate_range(start, today))
         last = pd.Series(dtype=float)
         as_of = str(today)
+    return SimpleNamespace(ev_df=ev_df, state=state, bills=bills,
+                           targets=targets, closes=closes, last=last,
+                           as_of=as_of)
+
+
+def _priced(live, day) -> pd.Series:
+    """Last closes plus every open bill at its accreted value on `day`."""
+    prices = live.last.copy()
+    open_bills = [t for t in live.state.shares if t in live.bills]
+    if open_bills:
+        bp = acct.bill_prices(live.ev_df, pd.DatetimeIndex([day])).iloc[0]
+        for t in open_bills:
+            prices[t] = bp[t]
+    return prices
+
+
+def _plan_for(account: Account):
+    """The account's imported pay-in plan as an engine plan, or None."""
+    rec = getattr(account, "payin", None)
+    if rec is None:
+        return None
+    return payin.PayInPlan.build(
+        rec.total, [dt.date.fromisoformat(d) for d in rec.dates],
+        account.target_specs())
+
+
+def _payin_numbers(plan, live, prices, today) -> SimpleNamespace:
+    """Everything the pay-in panel and the tranche preview share."""
+    shares, cash = live.state.shares, live.state.cash
+    bought = payin.gross_bought(live.ev_df)
+    res = plan.reservoir
+    res_held = shares.get(res, 0.0) if res else 0.0
+    res_val = 0.0
+    if res_held > 0:
+        if res not in prices.index or pd.isna(prices[res]):
+            raise KeyError(res)        # held but unpriced: never value at 0
+        res_val = res_held * float(prices[res])
+    budget = payin.spendable(plan, bought, cash, res_val)
+    k_due = payin.tranches_due(plan, today)
+    return SimpleNamespace(
+        bought=bought, cash=cash, budget=budget, k_due=k_due,
+        res_held=res_held, unbought=payin.unbought(plan, bought),
+        reserve=payin.reserve_needed(plan, bought),
+        complete=payin.is_complete(plan, bought, prices, budget, today))
+
+
+def _payin_payload(plan, nums, today) -> dict:
+    prog = payin.progress(plan, nums.bought, today)
+    upcoming = [d for d in plan.dates if d > today]
+    return {
+        "total": _round(plan.total), "n": plan.n, "k_due": nums.k_due,
+        "next_date": str(upcoming[0]) if upcoming else None,
+        "complete": nums.complete,
+        "unbought": _round(nums.unbought),
+        "unbought_pct": _round(100 * nums.unbought / plan.total, 1),
+        "reserve": _round(nums.reserve), "budget": _round(nums.budget),
+        "dates": [str(d) for d in plan.dates],
+        "rows": [{
+            "line": line, "tickers": list(r["tickers"]),
+            "timing": r["timing"], "plan": _round(r["plan"]),
+            "bought": _round(r["bought"]), "pct": _round(r["pct"], 1),
+            "scheduled": (None if pd.isna(r["scheduled"])
+                          else _round(r["scheduled"])),
+        } for line, r in prog.iterrows()],
+    }
+
+
+def _rule_text(r) -> str:
+    if r.rule == "below_52w_high":
+        return f"{r.ticker} more than {r.threshold:g}% below its 52-week high"
+    if r.rule == "below_avg_cost":
+        return f"{r.ticker} more than {r.threshold:g}% below average cost"
+    return f"A line more than {r.threshold:g} points from its target"
+
+
+def _action_text(r) -> str:
+    if r.action != "accelerate":
+        return "Alert"
+    which = ", ".join(r.targets) if r.targets else "every line"
+    s = "" if r.tranches == 1 else "s"
+    return f"Buy {r.tranches} tranche{s} early ({which})"
+
+
+def _rule_dict(r) -> dict:
+    return {
+        "id": r.id, "rule": r.rule, "ticker": r.ticker or None,
+        "threshold": r.threshold,
+        "measured": None if r.measured is None else round(r.measured, 2),
+        "fired": r.fired, "muted": r.muted, "action": r.action,
+        "tranches": r.tranches, "targets": list(r.targets),
+        "breaches": [{"line": ln, "weight": round(w, 2), "target": round(t, 2)}
+                     for ln, w, t in r.breaches],
+        "text": _rule_text(r), "action_text": _action_text(r),
+    }
+
+
+def _rule_results(account, live, prices, active, today) -> list:
+    """Evaluate the account's imported rules. Index closes are fetched
+    only when a below_52w_high rule needs them; a failed fetch leaves that
+    rule unmeasured (not fired) rather than failing the page."""
+    rules = [RuleSpec(r.rule_id, r.rule, r.ticker, r.threshold, r.action,
+                      r.tranches, tuple(r.targets.split()))
+             for r in account.rules.all()]
+    if not rules:
+        return []
+    need = sorted({r.ticker for r in rules if r.rule == "below_52w_high"})
+    index_closes = {}
+    if need:
+        start = today - dt.timedelta(days=INDEX_LOOKBACK_DAYS)
+        for t in need:
+            try:
+                index_closes[t] = _close_history([t], start)[t].dropna()
+            except Exception as e:      # a missing index must not sink the page
+                log.warning("no closes for rule ticker %s: %s", t, e)
+    shares = live.state.shares
+    hold = acct.holdings(live.state, prices)
+    weights = acct.allocation(shares, prices, live.state.cash)["weight"]
+    specs = {t: (w, tm, ln) for t, w, tm, ln in account.target_specs()}
+    return alerts.evaluate(rules, holdings=hold, weights=weights,
+                           targets=specs, index_closes=index_closes,
+                           payin_active=active)
+
+
+def _account_total(account: Account, today) -> float:
+    live = _live(account, today)
+    daily = acct.daily_state(live.ev_df, live.closes)
+    return float(daily["value"].iloc[-1]) if len(daily) else live.state.cash
+
+
+def _combined(account: Account, total: float, today):
+    """Everything the user owns in USD and in EUR, or None (one currency,
+    unsupported pair, or the FX close could not be had)."""
+    accounts = list(Account.objects.filter(owner=account.owner))
+    # never blend pretend money with real: any mirrors -> mirrors only
+    mirrors = [a for a in accounts if a.mirror]
+    scope = "mirrored" if mirrors else "all"
+    accounts = mirrors or accounts
+    ccys = {a.currency for a in accounts}
+    if len(ccys) < 2:
+        return None
+    try:
+        if not ccys <= {"USD", "EUR"}:
+            log.warning("combined total supports USD+EUR only (got %s)",
+                        sorted(ccys))
+            return None
+        values: dict[str, float] = {}
+        for a in accounts:
+            v = total if a.pk == account.pk else _account_total(a, today)
+            values[a.currency] = values.get(a.currency, 0.0) + v
+        ticker = FX_PAIR + "=X"
+        fx = _close_history(
+            [ticker], today - dt.timedelta(days=INDEX_LOOKBACK_DAYS)
+        )[ticker].dropna()
+        rate = float(fx.iloc[-1])
+        rates = {FX_PAIR: rate}
+        return {"scope": scope,
+                "USD": _round(acct.combined_total(values, rates, "USD")),
+                "EUR": _round(acct.combined_total(values, rates, "EUR")),
+                "fx": {"pair": FX_PAIR, "rate": round(rate, 4),
+                       "as_of": str(fx.index[-1].date())}}
+    except Exception:
+        log.exception("combined total unavailable for %s", account.pk)
+        return None
+
+
+def _state(account: Account) -> dict:
+    """Everything the account page needs, derived fresh from the ledger."""
+    today = _today()
+    live = _live(account, today)
+    ev_df, state, bills = live.ev_df, live.state, live.bills
+    targets, closes, last, as_of = (live.targets, live.closes, live.last,
+                                    live.as_of)
+    shares, cash, contrib = state.shares, state.cash, state.contributions
 
     daily = acct.daily_state(ev_df, closes)
     twr = acct.time_weighted_return(daily)
+    xirr = acct.money_weighted_return(daily)
     total = float(daily["value"].iloc[-1]) if len(daily) else cash
 
-    prices = last.copy()
-    open_bills = [t for t in shares if t in bills]
-    if open_bills:
-        day = daily.index[-1] if len(daily) else pd.Timestamp(today)
-        bp = acct.bill_prices(ev_df, pd.DatetimeIndex([day])).iloc[0]
-        for t in open_bills:
-            prices[t] = bp[t]
+    day = daily.index[-1] if len(daily) else pd.Timestamp(today)
+    prices = _priced(live, day)
     alloc = acct.allocation(shares, prices, cash) if shares else None
     hold = acct.holdings(state, prices) if shares else None
     positions = []
@@ -176,7 +354,17 @@ def _state(account: Account) -> dict:
         }
         positions.append(pos)
 
-    return {
+    plan = _plan_for(account)
+    payin_out = rules_out = None
+    active = False
+    if plan is not None:
+        nums = _payin_numbers(plan, live, prices, today)
+        payin_out = _payin_payload(plan, nums, today)
+        active = not nums.complete
+    rules_out = [_rule_dict(r) for r in
+                 _rule_results(account, live, prices, active, today)]
+
+    out = {
         "account": {
             "id": str(account.id), "name": account.name,
             "label": account.label, "currency": account.currency,
@@ -198,6 +386,11 @@ def _state(account: Account) -> dict:
         "charges_total": _round(state.charges),
         "trade_fees_total": _round(state.trade_fees),
         "twr": round(twr, 6),
+        "xirr": _opt(xirr, 6),
+        "xirr_span_days": (int((daily.index[-1] - daily.index[0]).days)
+                           if len(daily) > 1 else 0),
+        "payin": payin_out,
+        "rules": rules_out,
         "target_cash_weight": round(1.0 - sum(targets.values()), 6),
         "positions": positions,
         "series": {
@@ -214,6 +407,10 @@ def _state(account: Account) -> dict:
             "note": e.note,
         } for e in account.events.order_by("-date", "-created_at", "-pk")],
     }
+    combined = _combined(account, total, today)
+    if combined is not None:        # only with accounts in 2+ currencies
+        out["combined"] = combined
+    return out
 
 
 def _state_response(account):
@@ -435,6 +632,70 @@ def api_account_target(request):
             AccountTarget(account=account, ticker=t, weight=w)
             for t, w in weights.items())
     return _state_response(account)
+
+
+@api_login_required
+@_json_404
+@require_http_methods(["GET"])
+def api_account_tranche(request):
+    """Buy-list preview for tranche `through` (advice only: no confirm
+    endpoint, allowed on mirrors). `apply_rules=1` folds the fired
+    accelerate rules into the list."""
+    account = _account_for(request)
+    plan = _plan_for(account)
+    if plan is None:
+        return _bad("This account has no pay-in plan.")
+    today = _today()
+    try:
+        live = _live(account, today)
+        prices = _priced(live, pd.Timestamp(today))
+        nums = _payin_numbers(plan, live, prices, today)
+        raw = request.GET.get("through")
+        try:
+            through = max(nums.k_due, 1) if raw in (None, "") else int(raw)
+        except ValueError:
+            through = 0
+        if not 1 <= through <= plan.n:
+            return _bad(f"through must be a whole number from 1 to {plan.n}.")
+
+        applied, extra = [], {}
+        if request.GET.get("apply_rules") in ("1", "true"):
+            results = _rule_results(account, live, prices, not nums.complete,
+                                    today)
+            acc_through, extra = alerts.accelerations(
+                results, nums.k_due, plan.n)
+            through = max(through, acc_through)
+            applied = [r.id for r in results
+                       if r.fired and r.action == "accelerate"]
+        lump = payin.lump_orders(plan, nums.bought, prices)
+        tranche = payin.tranche_orders(plan, nums.bought, prices, through,
+                                       extra, nums.budget)
+    except DataFetchError as e:
+        return _bad(str(e))
+    except KeyError as e:
+        return _bad(f"Missing a price: {e.args[0]}.")
+    orders = []
+    for kind, frame in (("lump", lump), ("tranche", tranche)):
+        for t, r in frame.iterrows():
+            orders.append({
+                "ticker": t,
+                "timing": "lump" if kind == "lump" else plan.timing[t],
+                "due": _round(r["due"]), "qty": int(r["qty"]),
+                "price": _round(r["price"], 4), "amount": _round(r["amount"]),
+                "note": r["note"]})
+    buys = float(lump["amount"].sum() + tranche["amount"].sum())
+    trade = payin.reservoir_trade(plan, nums.cash, prices, buys,
+                                  held=nums.res_held)
+    if trade is not None:
+        trade = {**trade, "price": _round(trade["price"], 4),
+                 "amount": _round(trade["amount"])}
+        if "short" in trade:
+            trade["short"] = _round(trade["short"])
+    return JsonResponse({
+        "through": through, "n": plan.n, "applied_rules": applied,
+        "cash": _round(nums.cash), "reserve": _round(nums.reserve),
+        "budget": _round(nums.budget), "orders": orders,
+        "reservoir_trade": trade})
 
 
 @api_login_required
