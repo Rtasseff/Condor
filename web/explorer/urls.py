@@ -53,6 +53,8 @@ urlpatterns = [
     path("api/account/contribution/confirm",
          account.api_account_contribution_confirm,
          name="api_account_contribution_confirm"),
+    path("api/account/reconcile", account.api_account_reconcile,
+         name="api_account_reconcile"),
     path("api/account/forecast", account.api_account_forecast,
          name="api_account_forecast"),
     path("api/assumptions", views.api_assumptions, name="api_assumptions"),

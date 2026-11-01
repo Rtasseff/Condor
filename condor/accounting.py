@@ -550,7 +550,7 @@ def reconcile(events: pd.DataFrame | None, prices: pd.Series,
     no price."""
     state = ledger_state(events)
     cash = _broker_cash(events)
-    positions, securities = [], Decimal(0)
+    positions, securities, exact = [], Decimal(0), state.cash
     for t in sorted(state.shares):
         px = prices.get(t) if hasattr(prices, "get") else None
         if px is None or pd.isna(px):
@@ -558,6 +558,7 @@ def reconcile(events: pd.DataFrame | None, prices: pd.Series,
         shown = shown_close(px)
         val = _cents(_dec(state.shares[t]) * shown)
         securities += val
+        exact += state.shares[t] * float(px)
         positions.append({"ticker": t, "qty": state.shares[t],
                           "price": float(shown), "value": float(val)})
     value = securities + cash
@@ -565,7 +566,7 @@ def reconcile(events: pd.DataFrame | None, prices: pd.Series,
     return {"cash": float(cash), "securities": float(securities),
             "value": float(value), "positions": positions,
             "as_of": as_of,
-            "exact_cash": state.cash,
+            "exact_cash": state.cash, "exact_value": float(exact),
             "cash_check": _check(reported_cash, cash, _CASH_TOL),
             "securities_check": _check(reported_securities, securities, tol),
             "value_check": _check(reported_value, value, tol)}

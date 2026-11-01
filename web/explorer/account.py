@@ -1023,3 +1023,61 @@ def api_account_forecast(request):
     payload = fc.to_dict()
     payload["start_value"] = _round(total)
     return JsonResponse(payload)
+
+
+# ------------------------------------------------ check against a broker
+
+
+def _typed_amount(body, field):
+    """-> (float | None, error). Missing / null / "" = nothing typed."""
+    raw = body.get(field)
+    if raw is None or raw == "":
+        return None, None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None, f"{field} must be a number."
+    try:
+        v = float(raw)
+    except ValueError:
+        return None, f"{field} must be a number."
+    if v != v or v in (float("inf"), float("-inf")):
+        return None, f"{field} must be a number."
+    return v, None
+
+
+@api_login_required
+@_json_404
+@require_POST
+def api_account_reconcile(request):
+    """What a broker should show if the ledger is complete, and (when
+    typed) whether it does. A preview: reads only, writes nothing, and
+    never stores or logs the typed amounts (they travel in the body)."""
+    account = _account_for(request)
+    if not account.mirror:
+        return _bad("This check is for accounts mirroring a broker.")
+    body, err = _json_body(request)
+    if err:
+        return _bad(err)
+    if not isinstance(body, dict):
+        return _bad("Request body must be a JSON object.")
+    typed = {}
+    for field in ("cash", "securities", "value"):
+        typed[field], err = _typed_amount(body, field)
+        if err:
+            return _bad(err)
+    try:
+        live = _live(account, _today())
+        as_of = live.as_of
+        prices = _priced(live, pd.Timestamp(as_of))
+        res = acct.reconcile(live.ev_df, prices, typed["cash"],
+                             typed["value"], typed["securities"],
+                             as_of=as_of)
+    except DataFetchError as e:
+        return _bad(str(e))
+    except ValueError as e:
+        return _bad(str(e))
+    last = live.ev_df["date"].max() if len(live.ev_df) else None
+    res["last_event"] = str(pd.Timestamp(last).date()) if last is not None else None
+    res["imported_at"] = (account.imported_at.isoformat()
+                          if account.imported_at else None)
+    res["currency"] = account.currency
+    return JsonResponse(res)

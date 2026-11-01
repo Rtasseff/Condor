@@ -497,3 +497,67 @@ class ManualEventTests(WebTestBase):
             res = self.post(body, expect=400)
             self.assertEqual(res["error"],
                              "Bills come in through import_ledger only.")
+
+
+class ReconcileEndpointTests(WebTestBase):
+    """Synthetic numbers: cash 1000 - 501 + 5 - 2 = 502; AAA closes 60."""
+
+    def setUp(self):
+        super().setUp()
+        self.acc = self.mirror()
+        self.url = f"/api/account/reconcile?account={self.acc.id}"
+
+    def counts(self):
+        return (Account.objects.count(), AccountEvent.objects.count(),
+                AccountTarget.objects.count(),
+                list(AccountEvent.objects.values_list("pk", "amount")))
+
+    def test_nothing_typed_gives_expected_and_null_checks(self):
+        before = self.counts()
+        res = self.call("post", self.url, {})
+        self.assertEqual((res["cash"], res["securities"], res["value"]),
+                         (502.0, 600.0, 1102.0))
+        self.assertEqual(res["positions"], [
+            {"ticker": "AAA", "qty": 10.0, "price": 60.0, "value": 600.0}])
+        for k in ("cash_check", "securities_check", "value_check"):
+            self.assertIsNone(res[k])
+        self.assertEqual(res["as_of"], "2026-01-08")
+        self.assertEqual(res["last_event"], "2026-01-07")
+        self.assertEqual(res["imported_at"], None)
+        self.assertEqual(self.counts(), before)
+
+    def test_typed_values_are_checked_and_nothing_is_written(self):
+        before = self.counts()
+        res = self.call("post", self.url,
+                        {"cash": "502.00", "securities": 600.05,
+                         "value": 1100})
+        self.assertTrue(res["cash_check"]["match"])
+        self.assertFalse(res["securities_check"]["match"])
+        self.assertAlmostEqual(res["securities_check"]["difference"], 0.05)
+        self.assertAlmostEqual(res["value_check"]["difference"], -2.0)
+        res = self.call("post", self.url, {"cash": 480})
+        self.assertAlmostEqual(res["cash_check"]["difference"], -22.0)
+        self.assertFalse(res["cash_check"]["match"])
+        self.assertEqual(self.counts(), before)
+
+    def test_bad_input_is_400(self):
+        for body in ({"cash": "abc"}, {"value": True}, {"securities": [1]},
+                     {"cash": "nan"}, {"value": "inf"}, [1]):
+            res = self.call("post", self.url, body, expect=400)
+            self.assertIn("error", res, body)
+        res = self.client.post(self.url, data="{", content_type="application/json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_manual_account_is_400(self):
+        man = Account.objects.create(owner=self.user, name="manual")
+        res = self.call("post", f"/api/account/reconcile?account={man.id}",
+                        {}, expect=400)
+        self.assertEqual(res["error"],
+                         "This check is for accounts mirroring a broker.")
+
+    def test_foreign_account_is_404_and_get_is_405(self):
+        other = User.objects.create_user("zed", password="pw")
+        theirs = Account.objects.create(owner=other, name="t", mirror=True)
+        self.call("post", f"/api/account/reconcile?account={theirs.id}", {},
+                  expect=404)
+        self.assertEqual(self.client.get(self.url).status_code, 405)
