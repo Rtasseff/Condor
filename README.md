@@ -54,8 +54,17 @@ prices = fetch_prices(["MSFT", "NEE", "CVX"], years=10)
 aset = AssetSet(prices, method="robust")      # owns μ and Σ for this set
 aset.summary()                                # expected return & dispersion per asset
 
+# premium mode: expected return = today's T-bill + premium measured on
+# excess returns over the daily T-bill history (docs/decisions/0006)
+from condor import risk_free_history, risk_free_rate
+rf = risk_free_rate()["rate"]
+aset = AssetSet(prices, method="robust", rf_history=risk_free_history(), rf_level=rf)
+aset.premiums                                 # per-asset premium over T-bills
+
 mine = aset.portfolio({"MSFT": 0.5, "NEE": 0.3, "CVX": 0.2})
 mine.expected_return, mine.dispersion, mine.sharpe(risk_free_rate=0.04)
+mine.history().to_dict()                      # worst fall, worst year, growth/yr
+                                              # (fixed weights, rebalanced)
 
 fr = aset.frontier(risk_free_rate=0.04)       # every point is a Portfolio
 fr.tangency.weights                           # the 'reasonable guess'
@@ -84,6 +93,9 @@ python -m condor data ls                         # what the price store holds
 
 `--rf` defaults to the live FRED 3-month T-bill; pass `--rf 4` (percent)
 or `--rf 0.04` to override. `--method robust|normal`, `--json` everywhere.
+Expected returns are the T-bill rate plus each asset's premium over T-bills;
+`--no-premium` gives the raw historical averages instead (see
+[`docs/CLI.md`](docs/CLI.md)).
 
 ## Layers
 
@@ -92,6 +104,7 @@ or `--rf 0.04` to override. `--method robust|normal`, `--json` everywhere.
 | `condor/model.py` | Domain objects: `Asset`, `AssetSet`, `Portfolio`, `Frontier` |
 | `condor/stats.py` | Estimation engine: expected returns, risk matrix (normal / robust) |
 | `condor/frontier.py` | Optimization engine (`_perf`, `_solve`) + `compute_analysis` facade |
+| `condor/history.py` | History engine: max drawdown, calendar-year returns, CAGR of a value series (pure) |
 | `condor/forecast.py` | Forecast engine: closed-form fan-chart bands with estimation-error overlay |
 | `condor/accounting.py` | Account engine: ledger replay (cost basis, income, bills), valuation/TWR, whole-share rebalance plans |
 | `condor/ledger_io.py` | Ledger exchange format v1: validating CSV reader / writer (pure; no Django) |

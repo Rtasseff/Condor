@@ -14,8 +14,9 @@ condor/frontier.py         compute_analysis(...)  — procedural facade, one dic
         │
 condor/model.py            DOMAIN MODEL: Asset → AssetSet → Portfolio, Frontier
         │
-condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns
+condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns, excess returns / premium
 condor/frontier.py         OPTIMIZATION ENGINE: _perf, _solve, _weights_dict
+condor/history.py          HISTORY ENGINE: max drawdown, calendar-year returns, CAGR of a value series
 condor/forecast.py         FORECAST ENGINE: fan-chart bands (closed form, bootstrap, μ anchors)
 condor/accounting.py       ACCOUNT ENGINE: ledger replay, valuation/TWR, rebalance plans
 condor/ledger_io.py        FORMAT I/O: ledger CSV v1 read/validate/write (pure, no Django)
