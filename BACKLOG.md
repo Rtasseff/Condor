@@ -50,25 +50,10 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     base-currency total via daily FX. *R3 fractional plans dropped
     2026-10-24: RT never buys fractional shares; fractional
     recording stays.*
-  - **In a worktree: `assumptions-1`** (ADR 0008) — "under my assumptions and
-    rules, where is the best point and how far is my plan from it?"
-    Agreed design + RT's decisions (2026-10-24, all defaults; "Condor
-    is for fun — go with the defaults and see where it takes us"):
-    that repo's `docs/condor-assumptions-mode.md` § "Agreed design"
-    (commit 8cc5df4). Scope: A1 constraints (constrained-frontier QP,
-    max Sharpe along it), A2 one estimator — equilibrium prior Π =
-    δΣw_ref with w_ref = VT, δ from the market premium (MARKET_ANCHOR −
-    T-bill ≈ 3.8%), history as a view with Ω = Σ/T, so μ_post = (T₀Π +
-    Tμ̂)/(T₀ + T) with **T₀ = 20 years** (robust: T × 2/π), optional BL
-    views — A6-lite (Sharpe gap; return gap at the plan's risk; risk
-    gap at the plan's return), an `AssumptionSet` (copied, not linked),
-    and an opt-in side-by-side view (history stays the default). Seed
-    set to validate: USFR ≥ 5%, STIP ≥ 15%, VST and DNN ≤ 10% each with
-    DNN ≤ 3.4%, {VST, URNM, DNN} ≤ 20%, GLDM ≤ 15%. Headline check,
-    reported not asserted: does the constrained tangency land near RT's
-    plan, and how big are the three gaps? Later: A3 narrowed (T-bill vs TIPS as
-    the risk-free, real display, inflation beta, real-dollar fan), A5
-    named-window scenarios on C's `history.py`, tangency stability bands.
+  - **`assumptions-1`** — *built 2026-11-01 (ADR 0008)*: see Done. Still
+    open as the next bucket: A3 narrowed (T-bill vs TIPS as the risk-free,
+    real display, inflation beta, real-dollar fan), A5 named-window
+    scenarios on C's `history.py`, tangency stability bands.
 
 ## Next
 
@@ -188,6 +173,12 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Done
 
+- [x] **`assumptions-1` (ADR 0008)** — limits (per-asset and group), an
+      equilibrium prior blended with history (T₀ = 20 years) and optional
+      views, the constrained best mix, and three gaps from your plan to it.
+      `condor/assumptions.py`, `AssumptionSet` + `/api/assumptions`,
+      `assumed` in `/api/analyze`, the "Under my assumptions" card on
+      Optimize, and `--assumptions` in the CLI.
 - [x] **C `stats-honesty` (ADR 0006)** — expected return = T-bill level +
       premium measured on excess returns (robust tangency no longer 95%
       USFR), constant-correlation Ledoit-Wolf, portfolio worst fall / worst

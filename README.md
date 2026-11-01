@@ -69,6 +69,13 @@ rf = risk_free_rate()["rate"]
 aset = AssetSet(prices, method="robust", rf_history=risk_free_history(), rf_level=rf)
 aset.premiums                                 # per-asset premium over T-bills
 
+# assumptions mode: limits + a long-run view (docs/decisions/0008)
+from condor.assumptions import Assumptions
+a = Assumptions.from_dict({"name": "Mine",
+    "constraints": {"bounds": {"MSFT": {"max": 0.4}}}})
+under = aset.with_options(prior=a.prior, reference_prices=fetch_prices(["VT"])["VT"])
+under.frontier(0.04, constraints=a.constraints).gaps(under.portfolio({"MSFT": 1}))
+
 mine = aset.portfolio({"MSFT": 0.5, "NEE": 0.3, "CVX": 0.2})
 mine.expected_return, mine.dispersion, mine.sharpe(risk_free_rate=0.04)
 mine.history().to_dict()                      # worst fall, worst year, growth/yr
@@ -97,6 +104,8 @@ python -m condor portfolio MSFT=30 NEE=40 CVX=30 # a given mix (any scale)
 python -m condor frontier MSFT NEE CVX --csv     # the curve, point by point
 python -m condor frontier MSFT NEE CVX --html chart.html
 python -m condor data ls                         # what the price store holds
+python -m condor portfolio MSFT=30 NEE=40 CVX=30 --assumptions mine.json
+                                                 # ...and under your limits + long-run view
 ```
 
 `--rf` defaults to the live FRED 3-month T-bill; pass `--rf 4` (percent)
@@ -110,7 +119,8 @@ Expected returns are the T-bill rate plus each asset's premium over T-bills;
 | Module | Role |
 |---|---|
 | `condor/model.py` | Domain objects: `Asset`, `AssetSet`, `Portfolio`, `Frontier` |
-| `condor/stats.py` | Estimation engine: expected returns, risk matrix (normal / robust) |
+| `condor/stats.py` | Estimation engine: expected returns, risk matrix (normal / robust), equilibrium prior / blend / views |
+| `condor/assumptions.py` | `Assumptions`: weight limits + a long-run view, validated (pure; ADR 0008) |
 | `condor/frontier.py` | Optimization engine (`_perf`, `_solve`) + `compute_analysis` facade |
 | `condor/history.py` | History engine: max drawdown, calendar-year returns, CAGR of a value series (pure) |
 | `condor/forecast.py` | Forecast engine: closed-form fan-chart bands with estimation-error overlay |
