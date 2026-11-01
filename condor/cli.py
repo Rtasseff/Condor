@@ -19,7 +19,8 @@ import json
 import sys
 from datetime import date
 
-from . import AssetSet, DataFetchError, PriceStore, fetch_prices, risk_free_rate
+from . import (AssetSet, DataFetchError, PriceStore, fetch_prices,
+               risk_free_history, risk_free_rate)
 from .stats import METHODS
 
 DEFAULT_METHOD = "robust"  # matches the Explorer UI's default
@@ -60,16 +61,35 @@ def _resolve_rf(value: str) -> tuple[float, str]:
     return rf, f"{_pct(rf)} (given)"
 
 
-def _asset_set(args) -> AssetSet:
+def _asset_set(args, rf: float) -> AssetSet:
+    """Premium mode (expected return = rf + premium over T-bills) unless
+    `--no-premium`; raw mode, with one warning, if the history is missing."""
     prices = fetch_prices(args.tickers, years=args.years,
                           source=getattr(args, "source", None))
-    return AssetSet(prices, method=args.method)
+    history = None
+    if not args.no_premium:
+        try:
+            history = risk_free_history()
+        except DataFetchError:
+            print("warning: expected returns are raw: T-bill history "
+                  "unavailable", file=sys.stderr)
+    return AssetSet(prices, method=args.method, rf_history=history, rf_level=rf)
 
 
 def _header(aset: AssetSet, rf_note: str) -> str:
+    if aset.premium_mode:
+        basis = (f"T-bill {_pct(aset.rf_level)} + premium over T-bills "
+                 f"(window T-bill mean {_pct(aset.tbill_window_mean)})")
+    else:
+        basis = "historical average (raw)"
     return (f"{', '.join(aset.tickers)} — {aset.method} statistics, "
             f"{aset.start} to {aset.end} ({aset.n_days:,} trading days)\n"
-            f"risk-free {rf_note}\n")
+            f"risk-free {rf_note}\n"
+            f"expected return = {basis}\n")
+
+
+def _meta(aset: AssetSet, rf: float, rf_note: str) -> dict:
+    return {**aset.meta(rf), "risk_free_source": rf_note}
 
 
 # ----------------------------------------------------------------------
@@ -77,15 +97,20 @@ def _header(aset: AssetSet, rf_note: str) -> str:
 # ----------------------------------------------------------------------
 def cmd_analyze(args) -> int:
     rf, rf_note = _resolve_rf(args.rf)
-    aset = _asset_set(args)
+    aset = _asset_set(args, rf)
     if args.json:
-        print(json.dumps(aset.analysis(risk_free_rate=rf), indent=1))
+        payload = aset.analysis(risk_free_rate=rf)
+        payload["meta"] = _meta(aset, rf, rf_note)
+        print(json.dumps(payload, indent=1))
         return 0
     out = [_header(aset, rf_note)]
-    out.append(f"{'Asset':<8}{'Exp. return':>12}{'Dispersion':>12}")
+    prem = aset.premium_mode
+    out.append(f"{'Asset':<8}{'Exp. return':>12}{'Dispersion':>12}"
+               + (f"{'Premium':>10}" if prem else ""))
     for t, row in aset.summary().iterrows():
         out.append(f"{t:<8}{_pct(row['expected_return']):>12}"
-                   f"{_pct(row['dispersion']):>12}")
+                   f"{_pct(row['dispersion']):>12}"
+                   + (f"{_pct(row['premium']):>10}" if prem else ""))
     out.append("")
     out.append(f"{'Portfolio':<16}{'Ret':>10}{'Disp':>12}{'Sharpe':>8}   Weights")
     out.append(_row("Equal weights", aset.equal_weight().to_dict(rf)))
@@ -109,23 +134,40 @@ def cmd_portfolio(args) -> int:
         weights[ticker.upper()] = float(w)
     rf, rf_note = _resolve_rf(args.rf)
     args.tickers = list(weights)
-    aset = _asset_set(args)
+    aset = _asset_set(args, rf)
     port = aset.portfolio(weights, label="Portfolio")
     if args.json:
-        print(json.dumps(port.to_dict(rf), indent=1))
+        print(json.dumps({**port.to_dict(rf), "meta": _meta(aset, rf, rf_note)},
+                         indent=1))
         return 0
     print(_header(aset, rf_note))
     print(f"{'Portfolio':<16}{'Ret':>10}{'Disp':>12}{'Sharpe':>8}   Weights")
     print(_row("Given mix", port.to_dict(rf)))
+    print()
+    print(_history_lines(port.history()))
     return 0
+
+
+def _history_lines(h) -> str:
+    dd = h.max_drawdown
+    rec = f"recovered {dd['recovery'].date()}" if dd["recovery"] is not None \
+        else "not yet recovered"
+    wy, wr = h.worst_year
+    partial = " (partial year)" if h.is_partial(wy) else ""
+    return (f"History — {h.basis}\n"
+            f"  worst fall   {_pct(dd['depth'])}  {dd['peak'].date()} → "
+            f"{dd['trough'].date()}, {rec}\n"
+            f"  worst year   {wy}: {_pct(wr)}{partial}\n"
+            f"  growth/year  {_pct(h.cagr)}")
 
 
 def cmd_frontier(args) -> int:
     rf, rf_note = _resolve_rf(args.rf)
-    aset = _asset_set(args)
+    aset = _asset_set(args, rf)
     fr = aset.frontier(risk_free_rate=rf, n_points=args.points)
     if args.json:
-        print(json.dumps(fr.to_dict(), indent=1))
+        print(json.dumps({**fr.to_dict(), "meta": _meta(aset, rf, rf_note)},
+                         indent=1))
         return 0
     if args.csv:
         cols = ["expected_return", "dispersion", "sharpe"] + aset.tickers
@@ -227,6 +269,9 @@ def _add_common(sub, tickers=True):
                      help="risk-free rate: 'auto' (FRED 3-mo, default), "
                           "3.9 (percent) or 0.039 (decimal)")
     sub.add_argument("--source", choices=["yfinance", "tiingo"], default=None)
+    sub.add_argument("--no-premium", action="store_true",
+                     help="raw historical expected returns instead of "
+                          "T-bill rate + premium over T-bills")
     sub.add_argument("--json", action="store_true", help="raw JSON payload")
 
 

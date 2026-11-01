@@ -425,6 +425,18 @@ class AssetSet:
                    timeframe=timeframe, samp_int=samp_int, basis=basis,
                    rf_history=rf_history, rf_level=rf_level)
 
+    def meta(self, risk_free_rate: float) -> dict:
+        """What this analysis was run on: window, method, whether expected
+        returns are premium-based, the rate and the window's T-bill mean."""
+        return {
+            "window": {"start": self.start, "end": self.end,
+                       "n_days": self.n_days},
+            "method": self.method,
+            "premium": self.premium_mode,
+            "risk_free_rate": risk_free_rate,
+            "tbill_window_mean": self.tbill_window_mean,
+        }
+
     # -- the Explorer payload (what compute_analysis returns) -----------
     def analysis(self, weights: Mapping[str, float] | None = None,
                  risk_free_rate: float = 0.02,
@@ -468,14 +480,7 @@ class AssetSet:
             "end": self.end,
             "n_days": self.n_days,
             "portfolio": mine.to_dict(risk_free_rate),
-            "meta": {
-                "window": {"start": self.start, "end": self.end,
-                           "n_days": self.n_days},
-                "method": self.method,
-                "premium": self.premium_mode,
-                "risk_free_rate": risk_free_rate,
-                "tbill_window_mean": self.tbill_window_mean,
-            },
+            "meta": self.meta(risk_free_rate),
         }
         result.update(self.frontier(risk_free_rate, n_points).to_dict())
         return result

@@ -29,6 +29,9 @@ def offline(monkeypatch, prices):
     monkeypatch.setattr(cli, "risk_free_rate",
                         lambda: {"rate": 0.03, "as_of": "2026-08-20",
                                  "maturity": "3m", "series": "DGS3MO"})
+    t = np.linspace(0, 1, len(prices))
+    monkeypatch.setattr(cli, "risk_free_history",
+                        lambda: pd.Series(0.01 + 0.02 * t, index=prices.index))
 
 
 def run(capsys, *argv):
@@ -83,7 +86,7 @@ class TestFrontier:
 
     def test_json_and_html(self, capsys, tmp_path):
         code, out = run(capsys, "frontier", "AAA", "BBB", "--json")
-        assert set(json.loads(out)) == {"min_vol", "tangency", "frontier", "cal"}
+        assert set(json.loads(out)) == {"min_vol", "tangency", "frontier", "cal", "meta"}
         f = tmp_path / "chart.html"
         code, out = run(capsys, "frontier", "AAA", "BBB", "--html", str(f))
         assert code == 0 and "Plotly.newPlot" in f.read_text()
@@ -118,3 +121,55 @@ class TestData:
         assert "XYZ: removed" in out and "NOPE: not in store" in out
         code, out = run(capsys, "data", "ls")
         assert "(empty)" in out
+
+
+class TestPremiumAndMeta:
+    META = {"window", "method", "premium", "risk_free_rate",
+            "tbill_window_mean", "risk_free_source"}
+
+    @pytest.mark.parametrize("cmd", [["analyze", "AAA", "BBB"],
+                                     ["portfolio", "AAA=1", "BBB=1"],
+                                     ["frontier", "AAA", "BBB", "--points", "5"]])
+    def test_json_meta_on_all_three(self, capsys, cmd):
+        code, out = run(capsys, *cmd, "--json")
+        d = json.loads(out)
+        assert code == 0 and set(d["meta"]) == self.META
+        assert d["meta"]["premium"] is True
+        assert d["meta"]["risk_free_source"].startswith("3.00% (3-mo T-bill")
+        assert d["meta"]["window"]["n_days"] == 500
+        if cmd[0] == "portfolio":
+            assert set(d["history"]) >= {"max_drawdown", "worst_year", "cagr"}
+
+    def test_header_and_premium_column(self, capsys):
+        code, out = run(capsys, "analyze", "AAA", "BBB")
+        import re
+        m = re.search(r"expected return = T-bill 3\.00% \+ premium over T-bills "
+                      r"\(window T-bill mean (\d\.\d\d)%\)", out)
+        assert m and 1.0 <= float(m.group(1)) <= 3.0
+        assert "Premium" in out
+
+    def test_no_premium_reproduces_raw_numbers(self, capsys, prices):
+        from condor import AssetSet
+        code, out = run(capsys, "analyze", "AAA", "BBB", "--json", "--no-premium")
+        d = json.loads(out)
+        raw = AssetSet(prices[["AAA", "BBB"]], "robust").analysis(risk_free_rate=0.03)
+        assert d["meta"]["premium"] is False
+        assert {k: v for k, v in d.items() if k != "meta"} == \
+            {k: v for k, v in raw.items() if k != "meta"}
+        _, table = run(capsys, "analyze", "AAA", "BBB", "--no-premium")
+        assert "Premium" not in table and "historical average (raw)" in table
+
+    def test_history_unavailable_warns_and_runs_raw(self, capsys, monkeypatch):
+        def boom():
+            raise cli.DataFetchError("FRED down")
+        monkeypatch.setattr(cli, "risk_free_history", boom)
+        code = cli.main(["analyze", "AAA", "BBB", "--json"])
+        cap = capsys.readouterr()
+        assert code == 0
+        assert cap.err.count("expected returns are raw: T-bill history unavailable") == 1
+        assert json.loads(cap.out)["meta"]["premium"] is False
+
+    def test_portfolio_prints_history(self, capsys):
+        code, out = run(capsys, "portfolio", "AAA=1", "BBB=1")
+        assert "worst fall" in out and "worst year" in out and "growth/year" in out
+        assert "fixed weights" in out
