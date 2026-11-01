@@ -18,8 +18,10 @@ condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns,
 condor/frontier.py         OPTIMIZATION ENGINE: _perf, _solve, _weights_dict
 condor/history.py          HISTORY ENGINE: max drawdown, calendar-year returns, CAGR of a value series
 condor/forecast.py         FORECAST ENGINE: fan-chart bands (closed form, bootstrap, μ anchors)
-condor/accounting.py       ACCOUNT ENGINE: ledger replay, valuation/TWR, rebalance plans
-condor/ledger_io.py        FORMAT I/O: ledger CSV v1 read/validate/write (pure, no Django)
+condor/accounting.py       ACCOUNT ENGINE: ledger replay, valuation/TWR/XIRR, rebalance plans
+condor/payin.py            PAY-IN ENGINE: tranche plans, whole-share catch-up buy lists (ADR 0007)
+condor/alerts.py           RULE ENGINE: below-high / below-cost / drift alerts, accelerations
+condor/ledger_io.py        FORMAT I/O: ledger/targets/pay-in/rules CSV v1.1 read/validate/write (pure, no Django)
         │
 condor/data/               DATA LAYER: PriceStore (~/.condor/prices) + sources + FRED rf
 ```
