@@ -35,7 +35,8 @@ from django.views.decorators.http import require_http_methods, require_POST
 from django_ratelimit.decorators import ratelimit
 
 from condor import (AssetSet, DataFetchError, Forecast, PriceStore,
-                    compute_analysis, fetch_prices, risk_free_rate)
+                    compute_analysis, fetch_prices, risk_free_history,
+                    risk_free_rate)
 from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
 from condor.stats import METHODS
@@ -519,6 +520,16 @@ def api_analyze(request):
     if weights is not None and not isinstance(weights, dict):
         return _bad("weights must be an object of ticker -> weight.")
 
+    # Premium mode (expected return = rf + premium over T-bills, ADR 0006)
+    # unless the client opts out or FRED has no history: then raw mode, and
+    # meta.premium says so.
+    history = None
+    if body.get("premium", True) is not False:
+        try:
+            history = risk_free_history()
+        except Exception:
+            log.warning("T-bill history unavailable; analysing in raw mode")
+
     try:
         prices = fetch_prices(tickers, years=settings["years"])
         result = compute_analysis(
@@ -526,6 +537,8 @@ def api_analyze(request):
             weights=weights,
             risk_free_rate=settings["risk_free_rate"],
             method=settings["method"],
+            rf_history=history,
+            rf_level=settings["risk_free_rate"],
         )
     except DataFetchError as e:
         return _bad(str(e))

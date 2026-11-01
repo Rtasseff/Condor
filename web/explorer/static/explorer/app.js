@@ -248,6 +248,7 @@ async function analyze() {
 // ---------- rendering ----------
 function renderAll() {
   renderChart();
+  renderBasisNote();
   renderTiles();
   renderTable();
   renderPoint(state.selected);
@@ -489,6 +490,35 @@ function wireChartClicks() {
   });
 }
 
+// One muted line under the chart saying what the expected returns are built on.
+function renderBasisNote() {
+  const el = $("basisnote");
+  const m = state.result && state.result.meta;
+  if (!m) { el.hidden = true; return; }
+  el.textContent = m.premium
+    ? `Expected returns: T-bill rate (${(100 * m.risk_free_rate).toFixed(2)}%) + ` +
+      `each asset's premium over T-bills, ${m.window.start} – ${m.window.end}.`
+    : "Expected returns: historical averages (T-bill history unavailable).";
+  el.hidden = false;
+}
+
+// "Worst fall −d% (peak → trough) · worst year yyyy r% · g%/yr" for a point
+// that carries a `history` (fixed-weight backtest).
+function renderHistNote(sel) {
+  const el = $("histnote");
+  const h = sel && sel.history;
+  if (!h) { el.hidden = true; return; }
+  const dd = h.max_drawdown, wy = h.worst_year;
+  const signed = (x) => (x < 0 ? "−" : "") + pct(Math.abs(x));
+  el.textContent =
+    `Worst fall −${pct(Math.abs(dd.depth))} (${dd.peak} → ${dd.trough}) · ` +
+    `worst year ${wy.year}${wy.partial ? " (partial)" : ""} ${signed(wy.ret)} · ` +
+    `${signed(h.cagr)}/yr`;
+  el.title = "Backtest of these weights held fixed (rebalanced every period) " +
+    "over the lookback window — not a forecast, and not a buy-and-hold account.";
+  el.hidden = false;
+}
+
 function renderTiles() {
   const p = state.result.portfolio;
   $("tiles").hidden = false;
@@ -513,6 +543,7 @@ function renderPoint(sel) {
   const sharpe = sel.sharpe == null ? "—" : sel.sharpe.toFixed(2);
   $("pointstats").textContent =
     `Reward ${pct(sel.ret)} · risk ${pct(sel.vol)} · Sharpe ${sharpe}`;
+  renderHistNote(sel);
 
   const box = $("pointweights");
   box.replaceChildren();
