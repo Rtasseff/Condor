@@ -389,7 +389,7 @@ function wireScenarios() {
     const name = $("scenname").value.trim() || `${start} to ${end}`;
     if (!start || !end || start >= end || start < "1900-01-01" ||
         end > "2100-12-31") {
-      $("scenstatus").textContent = "Pick a start date before the end date.";
+      $("scenstatus").textContent = "Those dates don't work: use real dates, with the start before the end.";
       return;
     }
     $("scenstatus").textContent = "";

@@ -1,5 +1,7 @@
 # Handoff — `feature/scenarios`
 
+**Merged 2026-11-01**; branch and worktree removed.
+
 | | |
 |---|---|
 | Branch | `feature/scenarios` |

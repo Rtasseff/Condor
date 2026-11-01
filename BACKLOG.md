@@ -50,10 +50,12 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     base-currency total via daily FX. *R3 fractional plans dropped
     2026-10-24: RT never buys fractional shares; fractional
     recording stays.*
-  - **`assumptions-1`** — *built 2026-11-01 (ADR 0008)*: see Done. Still
-    open as the next bucket: A3 narrowed (T-bill vs TIPS as the risk-free,
-    real display, inflation beta, real-dollar fan), A5 named-window
-    scenarios on C's `history.py`, tangency stability bands.
+  - **`assumptions-1`** — *merged 2026-11-01 (ADR 0008)*, with stress-period
+    scenarios and tangency stability bands (`scenarios`, same day). Still
+    open: A3 narrowed (T-bill vs TIPS as the risk-free, real display, inflation
+    beta, real-dollar fan), which needs design first because a TIPS real yield
+    isn't directly comparable with nominal daily returns; no need before the
+    2027-04 sleeve review. Phone layout of the newer panels is unverified.
 
 ## Next
 

@@ -34,3 +34,5 @@ Merged (kept as records):
   (ADR 0008).
 - `broker-reconcile.md` — `feature/broker-reconcile`, merged 2026-11-01:
   check a mirror account against the broker, to the cent.
+- `scenarios.md` — `feature/scenarios`, merged 2026-11-01: stress-period
+  returns and tangency stability bands.
