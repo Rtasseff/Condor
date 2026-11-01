@@ -195,3 +195,33 @@ class AnalyzeAssumedTests(TestCase):
         edited = self.analyze({**BODY, "assumptions": row.payload}).json()
         self.assertNotEqual(first["assumed"]["tangency"],
                             edited["assumed"]["tangency"])
+
+
+class OptimizePageTests(TestCase):
+    """The card is on the workbench, wired to its script; signed-out visitors
+    get the editor and an invitation to sign in instead of the save controls."""
+
+    def page(self, user=None):
+        from explorer.models import DraftPortfolio
+        if user:
+            self.client.force_login(user)
+            draft = DraftPortfolio.objects.create(owner=user)
+            draft.set_assets([("AAA", 0.6), ("BBB", 0.4)])
+            draft.save()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            return self.client.get("/optimize").content.decode()
+
+    def test_signed_in(self):
+        html = self.page(make_user())
+        for want in ("Under my assumptions", 'id="chart-assumed"',
+                     'id="asmsave"', "explorer/assumptions.js",
+                     "History alone mostly picks whatever won lately"):
+            self.assertIn(want, html)
+        self.assertLess(html.index("explorer/app.js"),
+                        html.index("explorer/assumptions.js"))
+
+    def test_signed_out_gets_editor_and_sign_in_invite(self):
+        html = self.page()
+        self.assertIn('id="asmcard"', html)
+        self.assertNotIn('id="asmsave"', html)
+        self.assertIn("to save your sets", html)
