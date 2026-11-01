@@ -51,6 +51,11 @@ below its 52-week high, position below average cost, drift, muted during
 the pay-in), a money-weighted return (XIRR) beside the time-weighted one,
 and a combined USD + EUR total across your accounts. All of it is advice:
 nothing is bought for you.
+A mirror also has a **Check against your broker** card: what your broker should
+show if the ledger is complete (cash booked to the cent per event, securities
+value and account value at the last close), with boxes to type what it does
+show and a match / mismatch in words. Cash is the authoritative check. Read-only
+(`POST /api/account/reconcile`); nothing typed is stored.
 Everything else recomputes live from market data.
 
 Core analytics can also be used directly:
