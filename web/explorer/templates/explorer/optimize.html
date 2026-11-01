@@ -344,6 +344,56 @@
     <div class="tile"><span class="label">Sharpe ratio</span><span class="value" id="t-sharpe">–</span><span class="gloss">reward per unit of bumpiness — higher is better</span></div>
   </section>
 
+  <section class="card" id="scencard" hidden aria-label="How it would have done">
+    <h2>How it would have done</h2>
+    <p class="sub">Return and worst fall inside named stress periods, for your
+       portfolio and for the best mix. Fixed weights, rebalanced daily.
+       One path through history, not a forecast.</p>
+    <div class="tablewrap">
+      <table id="scentable">
+        <thead>
+          <tr><th scope="col" rowspan="2">Period</th>
+            <th scope="colgroup" colspan="2" class="num grp">Your portfolio</th>
+            <th scope="colgroup" colspan="2" class="num grp">Best mix</th></tr>
+          <tr><th scope="col" class="num">Return</th>
+            <th scope="col" class="num">Worst fall</th>
+            <th scope="col" class="num">Return</th>
+            <th scope="col" class="num">Worst fall</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <form class="fcontrols scenform" id="scenform" autocomplete="off">
+      <label>Your own dates
+        <input id="scenname" maxlength="40" placeholder="Name, e.g. Rate shock"
+               aria-label="Name for your own period"></label>
+      <label>From <input id="scenstart" type="date" required></label>
+      <label>To <input id="scenend" type="date" required></label>
+      <button class="ghost small" type="submit" id="scenadd">Add</button>
+      <button class="ghost small" type="button" id="scenclear" hidden>Remove</button>
+      <span class="status" id="scenstatus" role="status"></span>
+    </form>
+    <p class="sub" id="scennote" hidden></p>
+  </section>
+
+  <section class="card" id="stabcard" hidden aria-label="How stable is the best mix?">
+    <h2>How stable is the best mix?</h2>
+    <p class="sub">How much would the best mix move on a different seven years?
+       This is a check on the answer, not a new answer.</p>
+    <div class="fcontrols">
+      <button id="stabhist" class="primary small" type="button">Check the best mix</button>
+      <button id="stabasm" class="ghost small" type="button" hidden>Check it under my assumptions</button>
+      <span class="status" id="stabstatus" role="status"></span>
+    </div>
+    <div id="stabresult" hidden>
+      <h3 id="stabtitle"></h3>
+      <ul class="stablist" id="stablist"></ul>
+      <p class="sub warn" id="stabfailed" hidden></p>
+      <p class="sub">Re-running the optimizer on reshuffled versions of your
+         history. Wide ranges mean history can&rsquo;t pin this mix down.</p>
+    </div>
+  </section>
+
   <section class="card" id="forecastcard" hidden aria-label="Forecast">
     <h2>Forecast <span class="modeltag" id="fbadge">steady rates (simplest)</span></h2>
     <p class="sub">Where your mix could take a starting amount — an honest

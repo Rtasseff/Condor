@@ -123,3 +123,19 @@ class StabilityApiTests(TestCase):
         for _ in range(2):
             self.assertEqual(self.stab().status_code, 200)
         self.assertEqual(self.stab().status_code, 429)
+
+
+class OptimizePageTests(TestCase):
+    def test_new_cards_are_on_the_page(self):
+        from explorer.tests import make_user
+        from explorer.models import DraftPortfolio
+        user = make_user("rt")
+        self.client.force_login(user)
+        draft = DraftPortfolio.objects.create(owner=user)
+        draft.set_assets([("AAA", 1.0)])
+        draft.save()
+        with patch("explorer.views.risk_free_rate", side_effect=OSError):
+            res = self.client.get("/optimize")
+        self.assertContains(res, "How it would have done")
+        self.assertContains(res, "How stable is the best mix?")
+        self.assertContains(res, "Re-running the optimizer on reshuffled")

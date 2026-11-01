@@ -134,7 +134,7 @@ Hand-checked; pin each in a test.
 - [x] Phase 1 scenarios
 - [x] Phase 2 stability
 - [x] Phase 3 API
-- [ ] Phase 4 UI
+- [x] Phase 4 UI
 - [ ] Phase 5 CLI + docs + hand review of own diff
 
 ## Questions for the handoff session

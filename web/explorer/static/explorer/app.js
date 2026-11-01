@@ -43,6 +43,10 @@ const state = {
   savedName: "",
   source: "draft",      // "draft" | "real" — where the sidebar came from
   forked: false,        // edited away from the real portfolio (fix 2)
+  lastBody: null,       // the request body behind state.result (stability reuses it)
+  builtinWindows: null, // the server's default scenario windows, echoed back
+  customWindow: null,   // {name, start, end} the visitor added; never saved
+  stabBusy: false,
 };
 
 // What the server says this user actually has to optimize (fix 1/2). The
@@ -225,6 +229,8 @@ async function analyze() {
     };
     const asked = asmHooks.request();
     if (asked) body.assumptions = asked;
+    if (state.customWindow && state.builtinWindows)
+      body.scenario_windows = [...state.builtinWindows, state.customWindow];
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
@@ -233,6 +239,12 @@ async function analyze() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
     state.result = data;
+    state.lastBody = { tickers: body.tickers, years: body.years,
+      risk_free_rate: body.risk_free_rate, method: body.method,
+      assumptions: asked || null };
+    if (!state.builtinWindows && data.scenarios)
+      state.builtinWindows = data.scenarios.portfolio.map((w) =>
+        ({ name: w.name, start: w.start, end: w.end }));
     state.selected = null;
     // reflect normalized weights back into the sidebar
     // (0 for excluded assets — the server omits near-zero weights)
@@ -257,12 +269,183 @@ async function analyze() {
   }
 }
 
+// ---------- scenarios ("How it would have done") ----------
+const signedPct = (x) => (x > 0 ? "+" : x < 0 ? "\u2212" : "") +
+  (100 * Math.abs(x)).toFixed(1) + "%";
+
+function scenarioGap(w, resultEnd) {
+  // why a window isn't covered, in words: before the data starts, or after it ends
+  return w.start < w.first
+    ? `Not in this mix\u2019s shared history (starts ${w.first})`
+    : `Not in this mix\u2019s shared history (ends ${resultEnd})`;
+}
+
+function renderScenarios() {
+  const r = state.result;
+  const sc = r && r.scenarios;
+  $("scencard").hidden = !sc;
+  if (!sc) return;
+  const tb = $("scentable").querySelector("tbody");
+  tb.replaceChildren();
+  const td = (txt, cls) => {
+    const c = document.createElement("td");
+    c.textContent = txt;
+    if (cls) c.className = cls;
+    return c;
+  };
+  sc.portfolio.forEach((w, i) => {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th");
+    th.scope = "row";
+    th.textContent = w.name;
+    const dates = document.createElement("small");
+    dates.className = "sub";
+    dates.textContent = ` ${w.start} to ${w.end}`;
+    th.append(dates);
+    tr.append(th);
+    if (!w.covered) {
+      const c = td(scenarioGap(w, r.end), "na");
+      c.colSpan = 4;
+      tr.append(c);
+    } else {
+      const t = sc.tangency && sc.tangency[i];
+      tr.append(td(signedPct(w.ret), "num"), td(signedPct(w.max_drawdown), "num"));
+      if (t && t.covered)
+        tr.append(td(signedPct(t.ret), "num"), td(signedPct(t.max_drawdown), "num"));
+      else {
+        const c = td("No mix beats the risk-free rate", "na");
+        c.colSpan = 2;
+        tr.append(c);
+      }
+    }
+    tb.append(tr);
+  });
+  $("scenclear").hidden = !state.customWindow;
+  const note = $("scennote");
+  note.hidden = !sc.portfolio.some((w) => !w.covered);
+  note.textContent = "A period counts only when your mix\u2019s shared history " +
+    "covers both its first and last day; otherwise no number is shown.";
+}
+
+function wireScenarios() {
+  $("scenform").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const start = $("scenstart").value, end = $("scenend").value;
+    const name = $("scenname").value.trim() || `${start} to ${end}`;
+    if (!start || !end || start >= end) {
+      $("scenstatus").textContent = "Pick a start date before the end date.";
+      return;
+    }
+    $("scenstatus").textContent = "";
+    state.customWindow = { name, start, end };
+    analyze();
+  });
+  $("scenclear").addEventListener("click", () => {
+    state.customWindow = null;
+    $("scenstatus").textContent = "";
+    analyze();
+  });
+}
+
+// ---------- stability ("How stable is the best mix?") ----------
+function renderStabilityControls() {
+  const r = state.result;
+  $("stabcard").hidden = !r || !state.lastBody || state.lastBody.tickers.length < 2;
+  const a = r && r.assumed && !r.assumed.error && state.lastBody &&
+    state.lastBody.assumptions;
+  $("stabasm").hidden = !a;
+  if (a) $("stabasm").textContent = `Check it under \u201c${r.assumed.name}\u201d`;
+  // a new analysis makes the old bands a different question
+  $("stabresult").hidden = true;
+  $("stabstatus").textContent = "";
+}
+
+async function runStability(underSet) {
+  if (state.stabBusy || !state.lastBody) return;
+  state.stabBusy = true;
+  const buttons = [$("stabhist"), $("stabasm")];
+  buttons.forEach((b) => b.setAttribute("aria-disabled", "true"));
+  $("stabresult").hidden = true;
+  const N = 100;
+  const t0 = Date.now();
+  const say = () => {
+    const secs = Math.floor((Date.now() - t0) / 1000);
+    $("stabstatus").textContent = secs < 4
+      ? `Re-running the optimizer on ${N} reshuffled versions of your history\u2026`
+      : secs < 12
+        ? `Still re-running the optimizer on ${N} versions of your history (${secs}s)\u2026`
+        : `Still working (${secs}s). This is the slowest check; it should finish soon.`;
+  };
+  say();
+  const timer = setInterval(say, 1000);
+  try {
+    const b = state.lastBody;
+    const body = { tickers: b.tickers, years: b.years,
+      risk_free_rate: b.risk_free_rate, method: b.method, n: N };
+    if (underSet) body.assumptions = b.assumptions;
+    const res = await fetch("/api/stability", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+    renderStability(data, underSet ? data.name : null);
+    $("stabstatus").textContent = "";
+  } catch (err) {
+    $("stabstatus").textContent = `Couldn\u2019t run the check: ${err.message}`;
+  } finally {
+    clearInterval(timer);
+    state.stabBusy = false;
+    buttons.forEach((x) => x.removeAttribute("aria-disabled"));
+  }
+}
+
+function renderStability(d, setName) {
+  $("stabtitle").textContent = setName
+    ? `Under \u201c${setName}\u201d, ${d.n} reshuffles of your history`
+    : `On your history alone, ${d.n} reshuffles`;
+  const ul = $("stablist");
+  ul.replaceChildren();
+  const rows = Object.entries(d.assets).filter(([, v]) => v.held_share);
+  rows.sort((a, b) => b[1].p50 - a[1].p50);
+  const whole = (x) => Math.round(100 * x);
+  for (const [t, v] of rows) {
+    const li = document.createElement("li");
+    const tk = document.createElement("span");
+    tk.className = "tk";
+    tk.textContent = t;
+    const rng = document.createElement("span");
+    rng.className = "range";
+    rng.textContent = `${whole(v.p10)}\u2013${whole(v.p90)}%, typically ` +
+      `${whole(v.p50)}%; held in ${whole(v.held_share)}% of resamples`;
+    li.append(tk, rng);
+    ul.append(li);
+  }
+  const failed = $("stabfailed");
+  failed.hidden = !d.n_failed;
+  failed.textContent = d.n_failed >= d.n
+    ? "In none of the reshuffles did any allowed mix beat the risk-free rate, " +
+      "so there are no ranges to show."
+    : `In ${d.n_failed} of ${d.n} reshuffles no allowed mix beat the ` +
+      "risk-free rate (or the optimizer couldn\u2019t finish); the ranges " +
+      "above come from the rest.";
+  $("stabresult").hidden = false;
+}
+
+function wireStability() {
+  $("stabhist").addEventListener("click", () => runStability(false));
+  $("stabasm").addEventListener("click", () => runStability(true));
+}
+
 // ---------- rendering ----------
 function renderAll() {
   renderChart();
   renderBasisNote();
   renderTiles();
   renderTable();
+  renderScenarios();
+  renderStabilityControls();
   renderPoint(state.selected);
 }
 
@@ -1308,6 +1491,8 @@ function deepLinkForecast() {
     $("hintstrip").hidden = true;
   });
   wireChartClicks();
+  wireScenarios();
+  wireStability();
   await loadTickers();
   const presetEl = $("preset"); // /p/<uuid> injects the saved config
   const prefilled = presetEl ? false : await loadDraftPrefill();
