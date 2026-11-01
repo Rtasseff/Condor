@@ -12,6 +12,8 @@ state from it:
 - `combined_total`     -> accounts in several currencies in one base
 - `holdings`           -> per-position cost / unrealized / realized / income
 - `bill_prices`        -> straight-line accretion of zero-coupon bills
+- `broker_cash`        -> cash as a broker books it (each event to the cent)
+- `reconcile`          -> what a broker should show vs. what was typed
 - `allocation`         -> actual weights (incl. cash) at given prices
 - `rebalance_plan`     -> whole-share trades from here to a target
 
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 
 import numpy as np
 import pandas as pd
@@ -456,6 +459,116 @@ def combined_total(values: dict[str, float], fx: dict[str, float],
         else:
             raise KeyError(f"no FX rate between {ccy} and {base}")
     return total
+
+
+# ------------------------------------------------- broker reconciliation
+# Brokers book every fill to the cent; the ledger keeps exact fills (so
+# average cost stays 80.355 while the broker debited 80.36). The replay
+# below is separate from `ledger_state` on purpose: nothing else moves.
+
+_CENT = Decimal("0.01")
+_CASH_TOL = Decimal("0.005")
+_VALUE_TOL = Decimal("0.01")
+
+
+def _dec(x) -> Decimal:
+    return Decimal(str(float(x)))
+
+
+def _cents(d: Decimal) -> Decimal:
+    return d.quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+def _amt(x) -> Decimal:
+    return Decimal(0) if x is None or pd.isna(x) else _dec(x)
+
+
+def _broker_cash(events) -> Decimal:
+    cash = Decimal(0)
+    for ev in _norm_events(events).itertuples(index=False):
+        kind, fee = ev.kind, _amt(ev.fees)
+        if kind == "deposit":
+            cash += _cents(_amt(ev.amount))
+        elif kind in ("withdraw", "fee"):
+            cash -= _cents(_amt(ev.amount))
+        elif kind == "buy":
+            cash -= _cents(_amt(ev.shares) * _amt(ev.price) + fee)
+        elif kind in ("sell", "redeem"):
+            cash += _cents(_amt(ev.shares) * _amt(ev.price) - fee)
+        elif kind in ("dividend", "interest"):
+            cash += _cents(_amt(ev.amount) - fee)
+        elif kind == "set_cash":
+            cash = _cents(_amt(ev.amount))
+        elif kind == "set_shares":
+            pass
+        else:
+            raise ValueError(f"unknown event kind: {kind!r}")
+    return cash
+
+
+def broker_cash(events: pd.DataFrame | None) -> float:
+    """Cash as a broker books it: each event rounded half-up to the cent
+    on exact decimals (`Decimal(str(x))`, since binary floats get
+    half-cents wrong). BUY debits round(qty*price + fees); SELL/REDEEM
+    credit round(qty*price - fees); DIV/INTEREST credit round(amount -
+    fees); DEPOSIT/WITHDRAW/FEE round(amount); `set_cash` sets the
+    balance; `set_shares` does not move cash."""
+    return float(_broker_cash(events))
+
+
+def shown_close(price) -> Decimal:
+    """The close as a broker page shows it: 2 dp, or 4 dp under $1.
+    Stored closes carry float noise (101.199997 is 101.20)."""
+    d = Decimal(repr(round(float(price), 6)))
+    return d.quantize(Decimal("0.0001") if d < 1 else _CENT,
+                      rounding=ROUND_HALF_UP)
+
+
+def _check(reported, expected: Decimal, tol: Decimal) -> dict | None:
+    if reported is None:
+        return None
+    diff = _dec(reported) - expected
+    return {"reported": float(reported), "expected": float(expected),
+            "difference": float(diff), "match": abs(diff) <= tol}
+
+
+def reconcile(events: pd.DataFrame | None, prices: pd.Series,
+              reported_cash: float | None = None,
+              reported_value: float | None = None,
+              reported_securities: float | None = None,
+              as_of: str | None = None) -> dict:
+    """What a broker should show if the ledger is complete, against what
+    was typed.
+
+    `prices`: last closes by ticker; a bill's entry is its accreted value
+    per 1 nominal (`bill_prices`). Securities = sum of round(qty * shown
+    close); value = securities + broker cash. Cash matches within $0.005
+    (the authoritative check); securities and account value within $0.01
+    per position plus $0.01, since brokers round differently. Each check
+    is None when nothing was typed, else {reported, expected, difference
+    (typed - expected), match}. Raises ValueError for a held ticker with
+    no price."""
+    state = ledger_state(events)
+    cash = _broker_cash(events)
+    positions, securities = [], Decimal(0)
+    for t in sorted(state.shares):
+        px = prices.get(t) if hasattr(prices, "get") else None
+        if px is None or pd.isna(px):
+            raise ValueError(f"no price for {t}")
+        shown = shown_close(px)
+        val = _cents(_dec(state.shares[t]) * shown)
+        securities += val
+        positions.append({"ticker": t, "qty": state.shares[t],
+                          "price": float(shown), "value": float(val)})
+    value = securities + cash
+    tol = _VALUE_TOL * len(positions) + _VALUE_TOL
+    return {"cash": float(cash), "securities": float(securities),
+            "value": float(value), "positions": positions,
+            "as_of": as_of,
+            "exact_cash": state.cash,
+            "cash_check": _check(reported_cash, cash, _CASH_TOL),
+            "securities_check": _check(reported_securities, securities, tol),
+            "value_check": _check(reported_value, value, tol)}
 
 
 def allocation(shares: dict | pd.Series, prices: pd.Series,
