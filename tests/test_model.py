@@ -116,7 +116,7 @@ class TestPortfolio:
         assert p.dispersion == eng["vol"]
         assert p.sharpe(rf) == eng["sharpe"]
         d = p.to_dict(rf)
-        assert set(d) == {"weights", "ret", "vol", "sharpe"}
+        assert set(d) == {"weights", "ret", "vol", "sharpe", "history"}
         assert d["weights"] == {"AAA": 0.4, "BBB": 0.1, "CCC": 0.3, "DDD": 0.2}
         assert "Portfolio(" in repr(p)
 

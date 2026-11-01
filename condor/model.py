@@ -42,11 +42,12 @@ import pandas as pd
 
 from . import stats
 from . import forecast as _forecast_engine
+from . import history as _history
 from .stats import annual_factor
 from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix, _perf,
                        _solve, _weights_dict)
 
-__all__ = ["Asset", "AssetSet", "Portfolio", "Frontier"]
+__all__ = ["Asset", "AssetSet", "Portfolio", "PortfolioHistory", "Frontier"]
 
 _UNSET = object()  # "argument not given", where None is a meaningful value
 
@@ -533,7 +534,8 @@ class Portfolio:
     def to_dict(self, risk_free_rate: float = 0.0) -> dict:
         """UI payload shape: weights (non-trivial only) + ret/vol/sharpe."""
         return {"weights": _weights_dict(self._w, self.tickers),
-                **self.perf(risk_free_rate)}
+                **self.perf(risk_free_rate),
+                "history": self.history().to_dict()}
 
     # -- the asset-like face -------------------------------------------
     @cached_property
@@ -567,6 +569,14 @@ class Portfolio:
         start = max(first - stats.return_window(aset.timeframe), 0)
         return rets_idx.insert(0, idx[start])
 
+    def history(self) -> "PortfolioHistory":
+        """What this mix went through: worst fall, calendar years, growth.
+
+        A backtest of *fixed weights, rebalanced every period* — that is
+        what `value_index` is — not of a buy-and-hold account.
+        """
+        return PortfolioHistory(self)
+
     def forecast(self, horizon_years: float = 2,
                  levels=_forecast_engine.DEFAULT_LEVELS, *,
                  cash_weight: float = 0.0,
@@ -598,6 +608,55 @@ class Portfolio:
 
     def as_asset(self) -> Asset:
         return Asset(self.label, self.label)
+
+
+# ----------------------------------------------------------------------
+# PortfolioHistory
+# ----------------------------------------------------------------------
+class PortfolioHistory:
+    """Worst fall, calendar-year returns and growth per year of a portfolio,
+    over its `value_index` (fixed weights, rebalanced every period).
+    Numbers come from `condor/history.py`."""
+
+    BASIS = "fixed weights, rebalanced every period"
+
+    def __init__(self, portfolio: Portfolio):
+        v = portfolio.value_index
+        self.basis = self.BASIS
+        self.start = v.index[0]
+        self.end = v.index[-1]
+        self.max_drawdown = _history.max_drawdown(v)
+        self.years = _history.calendar_year_returns(v)
+        self.cagr = _history.cagr(v)
+
+    def is_partial(self, year: int) -> bool:
+        """First/last year are partial unless the series covers them whole."""
+        if year == self.start.year and (self.start.month, self.start.day) > (1, 7):
+            return True
+        return year == self.end.year and (self.end.month, self.end.day) < (12, 24)
+
+    @property
+    def worst_year(self) -> tuple[int, float]:
+        y = int(self.years.idxmin())
+        return y, float(self.years.loc[y])
+
+    def to_dict(self) -> dict:
+        iso = lambda d: None if d is None else str(d.date())  # noqa: E731
+        dd = self.max_drawdown
+        wy, wr = self.worst_year
+        return {
+            "basis": self.basis,
+            "start": iso(self.start),
+            "end": iso(self.end),
+            "max_drawdown": {"depth": dd["depth"], "peak": iso(dd["peak"]),
+                             "trough": iso(dd["trough"]),
+                             "recovery": iso(dd["recovery"])},
+            "years": [{"year": int(y), "ret": float(r),
+                       "partial": self.is_partial(int(y))}
+                      for y, r in self.years.items()],
+            "worst_year": {"year": wy, "ret": wr, "partial": self.is_partial(wy)},
+            "cagr": self.cagr,
+        }
 
 
 # ----------------------------------------------------------------------
