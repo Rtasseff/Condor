@@ -490,6 +490,14 @@ function renderStability(d, setName) {
     li.append(tk, rng);
     ul.append(li);
   }
+  // an asset the optimizer never picks is an answer, not a gap
+  const never = Object.entries(d.assets)
+    .filter(([, v]) => v.held_share === 0).map(([t]) => t);
+  if (never.length) {
+    const li = document.createElement("li");
+    li.textContent = `Never held: ${never.join(", ")}`;
+    ul.append(li);
+  }
   const failed = $("stabfailed");
   failed.hidden = !d.n_failed;
   failed.textContent = d.n_failed >= d.n

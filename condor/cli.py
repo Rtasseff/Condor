@@ -203,11 +203,16 @@ def _stability_lines(st: dict, label: str) -> list[str]:
     """Stability bands as text; the numbers are the model's."""
     out = [f"How stable is the best mix? {label}: {st['n']} reshuffles of the "
            f"history (blocks of {st['block']} days, seed {st['seed']})",
-           f"{'Asset':<8}{'p10':>7}{'median':>8}{'p90':>7}{'held':>7}"]
+           f"{'Asset':<8}{'p10':>9}{'median':>9}{'p90':>9}{'held':>9}"]
+    never = []
     for t, v in st["assets"].items():
         if v["held_share"]:
-            out.append(f"{t:<8}{_pct(v['p10']):>7}{_pct(v['p50']):>8}"
-                       f"{_pct(v['p90']):>7}{_pct(v['held_share']):>7}")
+            out.append(f"{t:<8}{_pct(v['p10']):>9}{_pct(v['p50']):>9}"
+                       f"{_pct(v['p90']):>9}{_pct(v['held_share']):>9}")
+        elif v["held_share"] == 0:
+            never.append(t)
+    if never:  # an asset the optimizer never picks is an answer, not a gap
+        out.append(f"  never held: {', '.join(never)}")
     if st["n_failed"]:
         out.append(f"  {st['n_failed']} of {st['n']} reshuffles had no mix "
                    "beating the risk-free rate or no solution; ranges are "

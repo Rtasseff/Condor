@@ -201,6 +201,15 @@ class TestScenariosAndStability:
         plain = json.loads(run(capsys, "analyze", "AAA", "BBB", "CCC", "--json")[1])
         assert "stability" not in plain
 
+    def test_stability_text_names_assets_never_held(self):
+        from condor.cli import _stability_lines
+        row = {"p10": 0.0, "p50": 0.5, "p90": 1.0, "held_share": 1.0}
+        none = {"p10": 0.0, "p50": 0.0, "p90": 0.0, "held_share": 0.0}
+        lines = _stability_lines({"n": 5, "n_failed": 0, "block": 21, "seed": 0,
+                                  "assets": {"AAA": row, "BBB": none}}, "on history")
+        assert "  never held: BBB" in lines
+        assert "100.00%" in lines[2] and " 100.00%" in lines[2]  # columns stay apart
+
     def test_stability_json_with_one_ticker_is_null_not_a_crash(self, capsys):
         code, out = run(capsys, "analyze", "AAA", "--json", "--stability", "5")
         assert code == 0 and json.loads(out)["stability"] is None
