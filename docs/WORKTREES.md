@@ -80,7 +80,7 @@ adds **one** layer matched to risk, not two:
 |---|---|
 | Docs, copy, small UI | Read the diff; run the suites. No automated review. |
 | Ordinary features | Run the suites; targeted read of the risky files. |
-| Engine numerics (anything that computes money, returns, bands, or plans), auth/permission changes, migrations touching account/ledger tables, deploy config (`Dockerfile`, `fly.toml`, `web/config/settings.py`) | **One** `/code-review` at *medium*, run **by the branch session on its own branch before reporting done** — the brief orders it explicitly, so the reviewer has full context and the fixes land as the branch's final commit. The handoff session then spot-checks only what was flagged plus the money-math paths. |
+| Engine numerics (anything that computes money, returns, bands, or plans), auth/permission changes, migrations touching account/ledger tables, deploy config (`Dockerfile`, `fly.toml`, `web/config/settings.py`) | **One** `/code-review` at *medium*, run **by the branch session on its own branch before reporting done** — the brief orders it explicitly, so the reviewer has full context and the fixes land as the branch's final commit. The handoff session then spot-checks only what was flagged plus the money-math paths. *(2026-11-01: when `main` moves during the branch's work, the review tool compares against the moved `main` and reviews the wrong code; twice it did. Then the handoff session rebases the branch and runs the review itself, and the branch lands the fixes.)* |
 
 Always, before merge (the branch records these as its baseline before
 starting and must not make them worse):

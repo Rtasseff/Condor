@@ -116,6 +116,13 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   and dollar-cost-averaging plans for new money.
   References: `reference materials/Portfolio-ManagementProcess/
   Kritzman2008-Portfolio_Rebalancing…`, `MRebalancing.pdf`.
+- [ ] **From the first month of real use** (`investments-b9`, 2026-11-01):
+  open-order awareness (nothing models a placed-but-unfilled order, and
+  catch-up double-buys if last month's is still working: needs an optional
+  `open_orders` file, format v1.2, two repos, RT's go-ahead); the order
+  ticket (limit conventions per asset, the source repo fixes it first, then
+  they could ride in `rules.csv`); event-level FX for the Gipuzkoa return,
+  April 2027 (every USD event at that day's ECB rate: R5 taken further).
 - [ ] **Account follow-ons:** ~~multiple accounts per user~~ (done,
   ADR 0005); ~~dividends~~ (done: dividend/interest/fee kinds) — splits
   still open; benchmark overlay on the value chart (SPY / your setpoint
