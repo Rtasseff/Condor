@@ -71,6 +71,21 @@ class TestHistory:
         idx = pd.bdate_range("2026-01-05", periods=4)   # Mon..Thu
         return pd.DataFrame({"AAA": [50.0, 50.0, 60.0, 60.0]}, index=idx)
 
+    def test_twr_counts_the_funding_day(self):
+        # Regression (2026-11-01, first real mirror): the first day used to
+        # be only a base, so a gain on the day the money went in was lost.
+        # Deposit 1000, buy 10 @ 50; closes 55 then 60. Mon: 500 cash + 550
+        # = 1050 (+5%). Tue: 500 + 600 = 1100. Total 1100 / 1000 - 1 = +10%.
+        idx = pd.bdate_range("2026-01-05", periods=2)
+        closes = pd.DataFrame({"AAA": [55.0, 60.0]}, index=idx)
+        events = frame(
+            ev("2026-01-05", "deposit", amount=1000.0),
+            ev("2026-01-05", "buy", "AAA", shares=10, price=50.0),
+        )
+        d = daily_state(events, closes)
+        assert d["value"].tolist() == [1050.0, 1100.0]
+        assert time_weighted_return(d) == pytest.approx(0.10)
+
     def test_hand_case(self, closes):
         events = frame(
             ev("2026-01-05", "deposit", amount=1000.0),

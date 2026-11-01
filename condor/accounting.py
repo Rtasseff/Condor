@@ -389,18 +389,17 @@ def daily_state(events: pd.DataFrame | None,
 def time_weighted_return(daily: pd.DataFrame) -> float:
     """Geometrically-linked daily returns with start-of-day flows.
 
-    r_t = V_t / (V_{t-1} + F_t) - 1. The first day is the base (its
-    flow funds the account). Days where the denominator is 0 are
-    skipped (empty account). -> total TWR over the whole series.
+    r_t = V_t / (V_{t-1} + F_t) - 1, with V_0 = 0, so the first day
+    counts too: fills on the funding day that close above or below their
+    price are return. Days where the denominator is 0 are skipped (empty
+    account). -> total TWR over the whole series.
     """
-    if len(daily) < 2:
-        return 0.0
     v = daily["value"].to_numpy(dtype=float)
     f = daily["flow"].to_numpy(dtype=float)
-    denom = v[:-1] + f[1:]
+    denom = np.concatenate(([0.0], v[:-1])) + f
     ok = denom > 1e-12
     growth = np.ones_like(denom)
-    growth[ok] = v[1:][ok] / denom[ok]
+    growth[ok] = v[ok] / denom[ok]
     return float(np.prod(growth) - 1.0)
 
 
