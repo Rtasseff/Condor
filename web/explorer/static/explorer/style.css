@@ -886,3 +886,17 @@ details.transcript > summary:hover { color: var(--ink); }
 .reconresult p { margin: 4px 0 0; }
 .reconresult.ok { border-left-color: var(--accent-hi); }
 .reconresult.off { border-left-color: var(--danger); }
+
+/* Scenarios and stability (Optimize) */
+#scentable th.grp { text-align: center; }
+#scentable td.na { color: var(--muted); font-size: 13px; }
+.scenform { margin-top: 14px; }
+.scenform input[type="date"] { width: 150px; }
+.scenform #scenname { width: 200px; }
+.stablist { list-style: none; margin: 8px 0 12px; padding: 0;
+  display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.stablist .tk { font-weight: 600; margin-right: 6px; }
+.stablist .range { font-variant-numeric: tabular-nums; }
+#scentable th[scope="row"] { font-weight: 400; }
+#scentable .pname { display: block; font-weight: 600; color: var(--ink); font-size: 14px; }
+#scentable .pdates { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }

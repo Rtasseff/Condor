@@ -1,7 +1,7 @@
 """Explorer views: the page, the JSON analysis endpoint, and saved portfolios.
 
 This is the HTTP boundary only: validate input, build the domain objects
-(via the `compute_analysis` facade today), return `to_dict()` payloads as
+(via `AssetSet.analysis`), return `to_dict()` payloads as
 JSON. No numerics here — see ARCHITECTURE.md. Persistence is the same deal
 in reverse: `explorer.models` stores the inputs, `condor` does the maths.
 """
@@ -36,7 +36,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from django_ratelimit.decorators import ratelimit
 
 from condor import (AssetSet, DataFetchError, Forecast, PriceStore,
-                    compute_analysis, fetch_prices, risk_free_history,
+                    fetch_prices, risk_free_history,
                     risk_free_rate)
 from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
@@ -498,6 +498,47 @@ def _clean_weights(raw):
     return {t: weights[t] for t in tickers}, None
 
 
+MAX_SCENARIO_WINDOWS = 5
+MAX_STABILITY_N = 300
+DEFAULT_STABILITY_N = 100
+
+
+def _clean_windows(raw):
+    """Validate `scenario_windows` -> (windows or None, error message).
+
+    Up to 5 `{name, start, end}` with ISO dates and start before end.
+    Absent / null means the built-in scenarios.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, list) or not raw:
+        return None, "scenario_windows must be a list of {name, start, end}."
+    if len(raw) > MAX_SCENARIO_WINDOWS:
+        return None, f"At most {MAX_SCENARIO_WINDOWS} scenario windows."
+    out = []
+    for w in raw:
+        if not isinstance(w, dict):
+            return None, "each scenario window must be an object."
+        name = str(w.get("name") or "").strip()
+        if not name or len(name) > MAX_NAME:
+            return None, "each scenario window needs a short name."
+        dates = []
+        for key in ("start", "end"):
+            try:
+                d = datetime.date.fromisoformat(str(w.get(key)))
+            except ValueError:
+                return None, (f"'{name}': {key} must be a date like "
+                              "2020-02-19.")
+            if not 1900 <= d.year <= 2100:
+                return None, f"'{name}': {key} is out of range."
+            dates.append(d)
+        if dates[0] >= dates[1]:
+            return None, f"'{name}': the start must be before the end."
+        out.append({"name": name, "start": dates[0].isoformat(),
+                    "end": dates[1].isoformat()})
+    return out, None
+
+
 # ---------------------------------------------------------------- analyze
 
 
@@ -523,6 +564,10 @@ def api_analyze(request):
     if weights is not None and not isinstance(weights, dict):
         return _bad("weights must be an object of ticker -> weight.")
 
+    windows, err = _clean_windows(body.get("scenario_windows"))
+    if err:
+        return _bad(err)
+
     # Premium mode (expected return = rf + premium over T-bills, ADR 0006)
     # unless the client opts out or FRED has no history: then raw mode, and
     # meta.premium says so.
@@ -535,14 +580,11 @@ def api_analyze(request):
 
     try:
         prices = fetch_prices(tickers, years=settings["years"])
-        result = compute_analysis(
-            prices,
-            weights=weights,
-            risk_free_rate=settings["risk_free_rate"],
-            method=settings["method"],
-            rf_history=history,
+        result = AssetSet(
+            prices, method=settings["method"], rf_history=history,
             rf_level=settings["risk_free_rate"],
-        )
+        ).analysis(weights=weights, risk_free_rate=settings["risk_free_rate"],
+                   scenario_windows=windows)
     except DataFetchError as e:
         return _bad(str(e))
     except Exception:
@@ -551,12 +593,12 @@ def api_analyze(request):
 
     if body.get("assumptions") is not None:
         result["assumed"] = _assumed(body["assumptions"], tickers, prices,
-                                     settings, history, weights)
+                                     settings, history, weights, windows)
 
     return JsonResponse(result)
 
 
-def _assumed(raw, tickers, prices, settings, history, weights):
+def _assumed(raw, tickers, prices, settings, history, weights, windows=None):
     """The analysis under the caller's assumptions (a copy, never an id).
     Never raises: any failure is `{"error": ...}` and the history result
     still renders."""
@@ -575,7 +617,7 @@ def _assumed(raw, tickers, prices, settings, history, weights):
                         rf_level=settings["risk_free_rate"])
         return aset.analysis_under(
             assumptions, weights, settings["risk_free_rate"],
-            reference_prices=ref)
+            reference_prices=ref, scenario_windows=windows)
     except ValueError as e:
         return {"error": str(e)}
     except OptimizationError as e:
@@ -584,6 +626,78 @@ def _assumed(raw, tickers, prices, settings, history, weights):
         log.exception("assumed analysis failed for %s", tickers)
         return {"error": "The analysis under your assumptions failed "
                          "unexpectedly; see server log."}
+
+
+@json_rate_limit("stability", "6/m", method="POST")
+@require_POST
+def api_stability(request):
+    """How much the best mix moves on a different history: a block
+    bootstrap of the tangency weights (`AssetSet.stability`).
+
+    Same public access, input cleaning and rate limiting as `api_analyze`
+    (its own, tighter bucket: this is the heaviest compute a visitor can
+    ask for).  An optional `assumptions` copy is applied in every
+    resample.  `n` is the number of resamples, 1-300 (default 100).
+    Nothing is stored.
+    """
+    body, err = _json_body(request)
+    if err:
+        return _bad(err)
+    tickers, err = _clean_tickers(body.get("tickers") or [])
+    if err:
+        return _bad(err)
+    if len(tickers) < 2:
+        return _bad("Stability needs at least two assets.")
+    settings, err = _clean_settings(body)
+    if err:
+        return _bad(err)
+    raw_n = body.get("n", DEFAULT_STABILITY_N)
+    if isinstance(raw_n, bool) or not isinstance(raw_n, (int, float)) \
+            or not math.isfinite(raw_n) or raw_n != int(raw_n) \
+            or not 1 <= raw_n <= MAX_STABILITY_N:
+        return _bad(f"n must be a whole number from 1 to {MAX_STABILITY_N}.")
+    n = int(raw_n)
+    assumptions = None
+    if body.get("assumptions") is not None:
+        try:
+            assumptions = Assumptions.from_dict(body["assumptions"])
+        except ValueError as e:
+            return _bad(str(e))
+
+    history = None
+    if body.get("premium", True) is not False:
+        try:
+            history = risk_free_history()
+        except Exception:
+            log.warning("T-bill history unavailable; stability in raw mode")
+    if assumptions is not None and history is None:
+        return _bad("Assumptions need the T-bill history, which is off or "
+                    "unavailable right now.")
+
+    try:
+        prices = fetch_prices(tickers, years=settings["years"])
+        aset = AssetSet(prices, method=settings["method"], rf_history=history,
+                        rf_level=settings["risk_free_rate"])
+        constraints = None
+        if assumptions is not None:
+            ref = resolve_proxy(assumptions.prior, tickers,
+                                years=settings["years"], fetch=fetch_prices)
+            aset = aset.with_options(prior=assumptions.prior,
+                                     reference_prices=ref)
+            constraints = assumptions.constraints
+        result = aset.stability(settings["risk_free_rate"],
+                                constraints=constraints, n=n)
+        if assumptions is not None:
+            result["name"] = assumptions.name
+    except DataFetchError as e:
+        return _bad(str(e))
+    except (ValueError, OptimizationError) as e:
+        return _bad(str(e))
+    except Exception:
+        log.exception("stability failed for %s", tickers)
+        return _bad("Stability run failed unexpectedly; see server log.",
+                    status=500)
+    return JsonResponse(result)
 
 
 @json_rate_limit("forecast", "15/m", method="POST")

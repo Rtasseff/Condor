@@ -29,6 +29,7 @@ urlpatterns = [
          name="password_reset_complete"),
     path("p/<uuid:pid>", views.shared_portfolio, name="shared_portfolio"),
     path("api/analyze", views.api_analyze, name="api_analyze"),
+    path("api/stability", views.api_stability, name="api_stability"),
     path("api/forecast", views.api_forecast, name="api_forecast"),
     path("api/draft", views.api_draft, name="api_draft"),
     path("api/asset", views.api_asset, name="api_asset"),

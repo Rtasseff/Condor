@@ -7,6 +7,8 @@ positive).  `Portfolio.history()` feeds these its fixed-weight
     max_drawdown(values)         worst peak-to-trough fall and its dates
     calendar_year_returns(values) return per calendar year (first/last partial)
     cagr(values)                 compound growth per year, years = days / 365.25
+    window_stats(values, start, end)  return and worst fall inside a date window
+    SCENARIOS                    named stress windows (S&P 500 closing high to low)
 """
 
 from __future__ import annotations
@@ -71,3 +73,48 @@ def cagr(values: pd.Series) -> float:
     if years <= 0:
         raise ValueError("series spans no time")
     return float((v.iloc[-1] / v.iloc[0]) ** (1.0 / years) - 1.0)
+
+
+# Named stress windows: S&P 500 closing high to closing low, plus calendar
+# 2022 (the stock-and-bond year).  Dates are ISO strings.
+SCENARIOS = (
+    {"name": "2008 financial crisis", "start": "2007-10-09", "end": "2009-03-09"},
+    {"name": "2018 Q4 selloff", "start": "2018-09-20", "end": "2018-12-24"},
+    {"name": "2020 Covid crash", "start": "2020-02-19", "end": "2020-03-23"},
+    {"name": "2022 inflation shock", "start": "2021-12-31", "end": "2022-12-30"},
+)
+
+
+def window_stats(values: pd.Series, start, end) -> dict:
+    """Return and worst fall of a value series between two dates.
+
+    -> {'ret', 'max_drawdown', 'covered', 'first', 'reason'}.  The window starts at the
+    last value on or before `start` and ends at the last value on or before
+    `end`; `max_drawdown` is the worst fall from a running peak along that
+    path (negative, 0.0 if it never falls).  A window counts only if the
+    series covers *both* ends -- `start` no earlier than its first date and
+    `end` no later than its last; otherwise `covered` is False and `ret` /
+    `max_drawdown` are None (never a partial number).  `first` is the
+    series' first date (ISO string).  `reason` is None when covered, else
+    'before_start', 'after_end' or 'no_trading_days' (the window holds no
+    value after its opening one).  Raises ValueError if start >= end.
+    """
+    v = _clean(values).sort_index()
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    if start >= end:
+        raise ValueError("a window's start must be before its end")
+    first = str(v.index[0].date())
+    if start < v.index[0] or end > v.index[-1]:
+        return {"ret": None, "max_drawdown": None, "covered": False,
+                "first": first,
+                "reason": "before_start" if start < v.index[0] else "after_end"}
+    path = v.loc[:end]
+    i0 = path.index.searchsorted(start, side="right") - 1
+    path = path.iloc[i0:]
+    if len(path) < 2:
+        return {"ret": None, "max_drawdown": None, "covered": False,
+                "first": first, "reason": "no_trading_days"}
+    ret = float(path.iloc[-1] / path.iloc[0] - 1.0)
+    dd = float((path / path.cummax() - 1.0).min())
+    return {"ret": ret, "max_drawdown": dd, "covered": True, "first": first,
+            "reason": None}

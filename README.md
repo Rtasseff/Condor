@@ -85,6 +85,8 @@ mine = aset.portfolio({"MSFT": 0.5, "NEE": 0.3, "CVX": 0.2})
 mine.expected_return, mine.dispersion, mine.sharpe(risk_free_rate=0.04)
 mine.history().to_dict()                      # worst fall, worst year, growth/yr
                                               # (fixed weights, rebalanced)
+mine.scenarios()                              # return / worst fall in named stress periods
+aset.stability(0.04, n=100)                   # how far the best mix moves on reshuffled history
 
 fr = aset.frontier(risk_free_rate=0.04)       # every point is a Portfolio
 fr.tangency.weights                           # the 'reasonable guess'
@@ -127,7 +129,8 @@ Expected returns are the T-bill rate plus each asset's premium over T-bills;
 | `condor/stats.py` | Estimation engine: expected returns, risk matrix (normal / robust), equilibrium prior / blend / views |
 | `condor/assumptions.py` | `Assumptions`: weight limits + a long-run view, validated (pure; ADR 0008) |
 | `condor/frontier.py` | Optimization engine (`_perf`, `_solve`) + `compute_analysis` facade |
-| `condor/history.py` | History engine: max drawdown, calendar-year returns, CAGR of a value series (pure) |
+| `condor/history.py` | History engine: max drawdown, calendar-year returns, CAGR, named stress windows (pure) |
+| `condor/stability.py` | Stability engine: block-bootstrap indices and percentile summary for the tangency-weight bands (pure) |
 | `condor/forecast.py` | Forecast engine: closed-form fan-chart bands with estimation-error overlay |
 | `condor/accounting.py` | Account engine: ledger replay (cost basis, income, bills), valuation/TWR, whole-share rebalance plans |
 | `condor/ledger_io.py` | Ledger exchange format v1.1: validating CSV readers (ledger, targets, pay-in, rules) / writer (pure; no Django) |

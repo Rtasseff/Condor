@@ -45,6 +45,7 @@ from pypfopt.exceptions import OptimizationError
 from . import stats
 from . import forecast as _forecast_engine
 from . import history as _history
+from . import stability as _stability
 from .stats import annual_factor
 from .assumptions import Constraints, Prior, ResolvedConstraints
 from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix,
@@ -592,7 +593,8 @@ class AssetSet:
     def analysis_under(self, assumptions, weights=None,
                        risk_free_rate: float = 0.02,
                        n_points: int = N_FRONTIER_POINTS,
-                       reference_prices: pd.Series | None = None) -> dict:
+                       reference_prices: pd.Series | None = None,
+                       scenario_windows=None) -> dict:
         """The `analysis()` payload computed under `assumptions`
         (an `Assumptions`): its prior and limits, plus `name` and an echo
         of the assumptions.  Raises ValueError when they can't be applied
@@ -600,10 +602,84 @@ class AssetSet:
         under = self.with_options(prior=assumptions.prior,
                                   reference_prices=reference_prices)
         out = under.analysis(weights, risk_free_rate, n_points,
-                             constraints=assumptions.constraints)
+                             constraints=assumptions.constraints,
+                             scenario_windows=scenario_windows)
         out["name"] = assumptions.name
         out["assumptions"] = assumptions.to_dict()
         return out
+
+    # -- stability of the best mix ------------------------------------------
+    def _aligned_reference(self) -> pd.Series:
+        return _stability.align_reference(self._reference_prices,
+                                          self.prices.index)
+
+    def _resampled(self, idx) -> "AssetSet":
+        """This set rebuilt on resampled history: the daily return rows
+        `idx` picked for every asset, the T-bill and an outside market
+        proxy alike.  Same dates, options, prior and rate level, so the
+        set's own estimators run on the reshuffled data."""
+        prices = _stability.resample_prices(self.prices, idx)
+        dates = self.prices.index[1:]
+        rf = (None if self._rf_history is None else
+              _stability.resample_series(self._rf_history, dates, idx))
+        ref = None
+        if self._reference_prices is not None:
+            ref = _stability.resample_reference(self._aligned_reference(), idx)
+        return AssetSet(prices, method=self.method,
+                        names={a.ticker: a.name for a in self.assets if a.name},
+                        rf_history=rf, rf_level=self._rf_level,
+                        prior=self._prior, reference_prices=ref,
+                        **self._options)
+
+    def stability(self, risk_free_rate: float, constraints=None, n: int = 100,
+                  block: int = _stability.DEFAULT_BLOCK, seed: int = 0) -> dict:
+        """How much the best (tangency) mix moves on a different history.
+
+        Block-bootstraps the set's daily rows `n` times -- the same blocks
+        for every asset and the T-bill -- and re-runs this set's estimators
+        and the tangency solve (with `constraints` and any prior) on each
+        resample.  A diagnostic on the weights, not a new answer.
+
+        -> {n, n_failed, block, seed, assets: {ticker: {p10, p50, p90,
+        held_share}}}.  A resample whose solve fails, or where nothing beats
+        the rate, counts in `n_failed`; the percentiles and `held_share`
+        are over the `n - n_failed` that solved.  Seeded, so reproducible.
+        """
+        self._require_pair()
+        if n < 1:
+            raise ValueError("n must be at least 1")
+        if (self.premium_mode and risk_free_rate is not None
+                and float(risk_free_rate) != self._rf_level):
+            return self.with_options(rf_level=risk_free_rate).stability(
+                risk_free_rate, constraints, n, block, seed)
+        resolved = self._resolved(constraints)
+        # Once, on the set itself: infeasible limits, a proxy that overlaps
+        # too little, a missing market proxy.  These are the caller's to fix
+        # and raise ValueError; they must not read as "nothing beat the rate".
+        self.tangency(risk_free_rate, resolved)
+        first_valid = 0
+        if self._reference_prices is not None:
+            aligned = self._aligned_reference()
+            first_valid = int(aligned.index.get_loc(aligned.first_valid_index()))
+        rng = np.random.default_rng(seed)
+        n_rows = len(self.prices) - 1
+        ok, failed = [], 0
+        for _ in range(int(n)):
+            idx = _stability.split_block_indices(n_rows, block, rng, first_valid)
+            try:
+                p = self._resampled(idx).tangency(risk_free_rate, resolved)
+            except (ValueError, OptimizationError, cp.error.SolverError,
+                    np.linalg.LinAlgError, FloatingPointError):
+                # the set itself solved, so what is left is the optimizer
+                # failing on this resample (it raises ValueError for that)
+                p = None
+            if p is None:
+                failed += 1
+            else:
+                ok.append(p.weight_array)
+        return {"n": int(n), "n_failed": failed, "block": int(block),
+                "seed": int(seed),
+                "assets": _stability.summarize(ok, self.tickers)}
 
     def meta(self, risk_free_rate: float) -> dict:
         """What this analysis was run on: window, method, whether expected
@@ -623,7 +699,7 @@ class AssetSet:
                  n_points: int = N_FRONTIER_POINTS, *,
                  metric: str | None = None, timeframe: str | None = None,
                  samp_int=_UNSET, basis: str | None = None,
-                 constraints=None) -> dict:
+                 constraints=None, scenario_windows=None) -> dict:
         """Everything the Explorer UI needs, as one plain dict.
 
         Lenient at the boundary: unknown tickers in `weights` are ignored,
@@ -639,12 +715,13 @@ class AssetSet:
             return self.with_options(rf_level=risk_free_rate).analysis(
                 weights, risk_free_rate, n_points, metric=metric,
                 timeframe=timeframe, samp_int=samp_int, basis=basis,
-                constraints=constraints)
+                constraints=constraints, scenario_windows=scenario_windows)
         override = self.with_options(metric=metric, timeframe=timeframe,
                                      samp_int=samp_int, basis=basis)
         if override is not self:
             return override.analysis(weights, risk_free_rate, n_points,
-                                     constraints=constraints)
+                                     constraints=constraints,
+                                     scenario_windows=scenario_windows)
 
         if weights:
             clean = {t: max(0.0, float(weights.get(t, 0.0))) for t in self.tickers}
@@ -671,6 +748,11 @@ class AssetSet:
             result["constraints"]["ignored"] += self.ignored_views()
         if constraints is not None:
             result["gaps"] = fr.gaps(mine)
+        result["scenarios"] = {
+            "basis": "fixed_weights_daily",
+            "portfolio": mine.scenarios(scenario_windows),
+            "tangency": (fr.tangency.scenarios(scenario_windows)
+                         if fr.tangency is not None else None)}
         if self._prior is not None:
             result["prior_note"] = self.prior_note()
             result["premiums"] = {
@@ -779,6 +861,30 @@ class Portfolio:
         what `value_index` is — not of a buy-and-hold account.
         """
         return self._history
+
+    def scenarios(self, windows=None) -> list[dict]:
+        """How this mix did in named stress windows.
+
+        `windows` is a list of `{name, start, end}` (dates, ISO strings);
+        default `history.SCENARIOS`.  Each result carries the window plus
+        `ret`, `max_drawdown`, `covered`, `first` from `history.window_stats`
+        on a fixed-weight series rebalanced every *day* from the set's
+        prices, whatever the set's `timeframe` (a monthly grid would land
+        weeks away from the stated dates).  A window the shared history
+        doesn't cover has `covered: False` and null numbers.  Raises
+        ValueError for a window whose start is not before its end.
+        """
+        prices = self.asset_set.prices
+        daily = prices.pct_change().iloc[1:].to_numpy(dtype=float) @ self._w
+        values = pd.Series(
+            100.0 * np.concatenate([[1.0], np.cumprod(1.0 + daily)]),
+            index=prices.index)
+        out = []
+        for w in (_history.SCENARIOS if windows is None else windows):
+            st = _history.window_stats(values, w["start"], w["end"])
+            out.append({"name": w["name"], "start": str(w["start"]),
+                        "end": str(w["end"]), **st})
+        return out
 
     def forecast(self, horizon_years: float = 2,
                  levels=_forecast_engine.DEFAULT_LEVELS, *,
