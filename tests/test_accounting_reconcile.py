@@ -105,8 +105,10 @@ def test_bill_uses_accreted_value_and_redeem_credits_nominal():
                   day="2027-01-01")])
     px = acct.bill_prices(ev, pd.DatetimeIndex(["2027-04-01"])).iloc[0]
     r = acct.reconcile(ev, px)
+    # the exact accreted price, not a display-rounded one
     assert r["positions"][0]["value"] == pytest.approx(
-        round(10 * round(px["BILL"], 4), 2))
+        round(10 * px["BILL"], 2))
+    assert r["positions"][0]["is_bill"]
     assert 9.8 < r["securities"] < 10.0
     ev2 = pd.concat([ev, frame([e("redeem", "BILL", 10, 1.0,
                                   day="2027-07-01")])], ignore_index=True)
@@ -117,3 +119,41 @@ def test_bill_uses_accreted_value_and_redeem_credits_nominal():
 def test_missing_price_raises():
     with pytest.raises(ValueError):
         acct.reconcile(LEDGER, pd.Series({"AAA": 1.0}))
+
+
+def test_bill_value_rounds_nominal_times_exact_price_not_the_price():
+    """10,000 nominal at accreted 0.97994475 is 9,799.4475 -> 9,799.45.
+    Rounding the price to 4 dp first (0.9799) would give 9,799.00, which
+    is wrong: a broker values the bill, not a rounded quote."""
+    ev = frame([e("deposit", amount=20000, day="2027-01-01"),
+                e("buy", "BILL", 10000, 0.97, maturity="2027-07-01",
+                  day="2027-01-01")])
+    r = acct.reconcile(ev, pd.Series({"BILL": 0.97994475}))
+    assert r["positions"][0]["value"] == 9799.45
+    assert r["securities"] == 9799.45
+
+
+def test_no_prices_still_checks_cash():
+    r = acct.reconcile(LEDGER, None, reported_cash=96.16, reported_value=1)
+    assert r["cash_check"]["match"]
+    assert r["securities"] is None and r["value"] is None
+    assert r["positions"] is None and r["value_check"] is None
+
+
+def test_rounding_flags():
+    r = acct.reconcile(LEDGER, PRICES)
+    assert r["rounding"]["cash"] is True       # 96.16 booked vs 96.165 exact
+    assert r["rounding"]["prices"] is False
+    ev = frame([e("deposit", amount=100, day="2027-01-04"),
+                e("buy", "X", 3, 10.0)])
+    r = acct.reconcile(ev, pd.Series({"X": 10.0}))
+    assert r["rounding"] == {"cash": False, "prices": False}
+    r = acct.reconcile(ev, pd.Series({"X": 10.004}))   # 30.012 exact, 30.00 shown
+    assert r["rounding"] == {"cash": False, "prices": True}
+
+
+def test_precomputed_state_gives_same_answer():
+    st = acct.ledger_state(LEDGER)
+    assert acct.reconcile(LEDGER, PRICES, state=st,
+                          bills=acct.bill_tickers(LEDGER)) \
+        == acct.reconcile(LEDGER, PRICES)

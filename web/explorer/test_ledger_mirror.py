@@ -518,7 +518,10 @@ class ReconcileEndpointTests(WebTestBase):
         self.assertEqual((res["cash"], res["securities"], res["value"]),
                          (502.0, 600.0, 1102.0))
         self.assertEqual(res["positions"], [
-            {"ticker": "AAA", "qty": 10.0, "price": 60.0, "value": 600.0}])
+            {"ticker": "AAA", "qty": 10.0, "price": 60.0, "value": 600.0,
+              "is_bill": False}])
+        self.assertEqual(res["rounding"], {"cash": False, "prices": False})
+        self.assertNotIn("exact_value", res)
         for k in ("cash_check", "securities_check", "value_check"):
             self.assertIsNone(res[k])
         self.assertEqual(res["as_of"], "2026-01-08")
@@ -542,11 +545,68 @@ class ReconcileEndpointTests(WebTestBase):
 
     def test_bad_input_is_400(self):
         for body in ({"cash": "abc"}, {"value": True}, {"securities": [1]},
-                     {"cash": "nan"}, {"value": "inf"}, [1]):
+                     {"cash": "nan"}, {"value": "inf"}, [1],
+                     {"cash": "1_000"}, {"cash": 10 ** 400},
+                     {"cash": "1" + "0" * 400}):
             res = self.call("post", self.url, body, expect=400)
             self.assertIn("error", res, body)
         res = self.client.post(self.url, data="{", content_type="application/json")
         self.assertEqual(res.status_code, 400)
+
+    def test_cash_survives_a_price_failure(self):
+        from condor import DataFetchError
+        before = self.counts()
+        with patch("explorer.account._close_history",
+                   side_effect=DataFetchError("prices down")):
+            res = self.client.post(self.url, data=json.dumps(
+                {"cash": 502, "value": 1102}), content_type="application/json")
+        self.assertEqual(res.status_code, 200, res.content)
+        res = res.json()
+        self.assertEqual(res["prices_error"], "prices down")
+        self.assertTrue(res["cash_check"]["match"])
+        self.assertEqual(res["cash"], 502.0)
+        for k in ("securities", "value", "positions", "value_check",
+                  "securities_check", "as_of"):
+            self.assertIsNone(res[k], k)
+        self.assertEqual(self.counts(), before)
+
+    def test_missing_close_for_a_held_ticker_keeps_cash(self):
+        with patch("explorer.account._close_history",
+                   return_value=pd.DataFrame({"AAA": pd.Series(
+                       [float("nan")], index=pd.bdate_range("2026-01-08",
+                                                            periods=1))})):
+            res = self.client.post(self.url, data=json.dumps({"cash": 500}),
+                                   content_type="application/json").json()
+        self.assertTrue(res["prices_error"])
+        self.assertFalse(res["cash_check"]["match"])
+        self.assertIsNone(res["value"])
+
+    def test_only_held_tickers_are_fetched(self):
+        acc = self.mirror("sold", rows=[
+            dep("2026-01-05", 1000),
+            dict(date="2026-01-06", kind="buy", ticker="AAA", shares=10,
+                 price=50),
+            dict(date="2026-01-07", kind="sell", ticker="AAA", shares=10,
+                 price=55)])
+        AccountTarget.objects.create(account=acc, ticker="BBB", weight=0.5)
+        with patch("explorer.account._close_history") as ch:
+            res = self.client.post(f"/api/account/reconcile?account={acc.id}",
+                                   data="{}", content_type="application/json")
+        self.assertEqual(res.status_code, 200, res.content)
+        ch.assert_not_called()
+        self.assertEqual(res.json()["positions"], [])
+        self.assertEqual(res.json()["cash"], 1050.0)
+
+    def test_bill_value_uses_the_exact_accreted_price(self):
+        acc = self.mirror("bills", rows=[
+            dep("2026-01-05", 20000),
+            dict(date="2026-01-05", kind="buy", ticker="BILL", shares=10000,
+                 price=0.97, maturity="2026-07-05")])
+        res = self.call("post", f"/api/account/reconcile?account={acc.id}", {})
+        p = res["positions"][0]
+        self.assertTrue(p["is_bill"])
+        self.assertEqual(p["value"], round(p["qty"] * p["price"], 2))
+        self.assertEqual(res["securities"], p["value"])
 
     def test_manual_account_is_400(self):
         man = Account.objects.create(owner=self.user, name="manual")

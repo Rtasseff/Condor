@@ -137,9 +137,34 @@ Change from the handoff session (not a deviation): a third check,
 **securities value** (`securities_check`, POST `securities`, third input
 "Securities value your broker shows", expected 116.61 on the brief's ledger).
 
-Notes: `reconcile` also returns `securities`, `exact_cash`, `exact_value`
-(the unrounded replay; the UI shows the round-to-the-cent note when it differs
-from `value`). The "value also depends on the price date" line also appears on
+Review round (handoff session rebased onto main, ran the code review and a
+real-browser pass with a real account: match, mismatch and positions table
+render, no console errors, three real figures matched to the cent). Findings:
+1. Bills: FIXED. Value = round(nominal x exact accreted price); the old test
+   pinned the wrong number (4 dp price rounding gave 9,799.00 for 9,799.45).
+2. Cash independent of market data: FIXED. Cash and `cash_check` always return;
+   a price failure gives 200 with `prices_error`, securities/value/positions and
+   their checks null. Closes are fetched only for held non-bill tickers.
+3. Bad input: FIXED. `validity.badInput` names the box; no request, no verdict.
+4. Error banner: FIXED. Reconcile errors show in the card (`rc-error`);
+   `showError` is no longer touched by this panel.
+5. Stale figures: FIXED. `clearReconcile()` on account switch bumps `reconSeq`
+   and clears figures/table/verdict; a failed Check clears the old verdict.
+6. No numerics in JS: FIXED. The server returns `rounding: {cash, prices}`; the
+   note's wording follows it (cash-rounding, price-rounding, or both).
+7. Quantity display: FIXED. Same `toLocaleString()` as the holdings table;
+   bills read "N nominal".
+8. `_typed_amount`: FIXED. OverflowError caught; strings must match a plain
+   decimal regex (rejects "1_000").
+9. Efficiency: FIXED. `reconcile` takes `state`/`bills` from the view. The
+   page-load round trip (one extra POST on a mirror) is left as is, per the
+   handoff session.
+10. Dead code: FIXED. Removed `hasattr` branch, `currency`, `exact_cash`,
+   `exact_value`, `as_of` through the engine (set in the view); `_is_set` and
+   `math.isfinite` used.
+Unverified here: the JS changes (node --check only, no browser).
+
+Notes: `reconcile` also returns `securities`, `rounding`. The "value also depends on the price date" line also appears on
 a securities mismatch.
 
 ## Questions for the handoff session

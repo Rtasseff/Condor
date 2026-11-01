@@ -480,7 +480,7 @@ def _cents(d: Decimal) -> Decimal:
 
 
 def _amt(x) -> Decimal:
-    return Decimal(0) if x is None or pd.isna(x) else _dec(x)
+    return _dec(x) if _is_set(x) else Decimal(0)
 
 
 def _broker_cash(events) -> Decimal:
@@ -532,44 +532,60 @@ def _check(reported, expected: Decimal, tol: Decimal) -> dict | None:
             "difference": float(diff), "match": abs(diff) <= tol}
 
 
-def reconcile(events: pd.DataFrame | None, prices: pd.Series,
+def reconcile(events: pd.DataFrame | None, prices: pd.Series | None,
               reported_cash: float | None = None,
               reported_value: float | None = None,
               reported_securities: float | None = None,
-              as_of: str | None = None) -> dict:
+              state: LedgerState | None = None,
+              bills: set[str] | None = None) -> dict:
     """What a broker should show if the ledger is complete, against what
     was typed.
 
-    `prices`: last closes by ticker; a bill's entry is its accreted value
-    per 1 nominal (`bill_prices`). Securities = sum of round(qty * shown
-    close); value = securities + broker cash. Cash matches within $0.005
+    `prices`: last closes by ticker, or None when they are unavailable
+    (cash is still checked; securities/value and their checks are None).
+    A bill's entry is its exact accreted value per 1 nominal
+    (`bill_prices`); its value is round(nominal * that) to the cent, with
+    no display rounding of the price. Other positions: round(qty * shown
+    close). Value = securities + broker cash. Cash matches within $0.005
     (the authoritative check); securities and account value within $0.01
     per position plus $0.01, since brokers round differently. Each check
     is None when nothing was typed, else {reported, expected, difference
-    (typed - expected), match}. Raises ValueError for a held ticker with
-    no price."""
-    state = ledger_state(events)
+    (typed - expected), match}. `rounding` says why the exact-fill total
+    can differ from the broker's: {cash, prices}. Raises ValueError for a
+    held ticker with no price. `state` / `bills` skip a second replay."""
+    if state is None:
+        state = ledger_state(events)
+    if bills is None:
+        bills = bill_tickers(events)
     cash = _broker_cash(events)
-    positions, securities, exact = [], Decimal(0), state.cash
+    out = {"cash": float(cash), "securities": None, "value": None,
+           "positions": None,
+           "cash_check": _check(reported_cash, cash, _CASH_TOL),
+           "securities_check": None, "value_check": None,
+           "rounding": {"cash": abs(cash - _dec(state.cash)) >= _CASH_TOL,
+                        "prices": False}}
+    if prices is None:
+        return out
+    positions, securities, exact = [], Decimal(0), 0.0
     for t in sorted(state.shares):
-        px = prices.get(t) if hasattr(prices, "get") else None
+        px = prices.get(t)
         if px is None or pd.isna(px):
             raise ValueError(f"no price for {t}")
-        shown = shown_close(px)
+        shown = _dec(px) if t in bills else shown_close(px)
         val = _cents(_dec(state.shares[t]) * shown)
         securities += val
         exact += state.shares[t] * float(px)
         positions.append({"ticker": t, "qty": state.shares[t],
-                          "price": float(shown), "value": float(val)})
+                          "price": float(shown), "value": float(val),
+                          "is_bill": t in bills})
     value = securities + cash
     tol = _VALUE_TOL * len(positions) + _VALUE_TOL
-    return {"cash": float(cash), "securities": float(securities),
-            "value": float(value), "positions": positions,
-            "as_of": as_of,
-            "exact_cash": state.cash, "exact_value": float(exact),
-            "cash_check": _check(reported_cash, cash, _CASH_TOL),
-            "securities_check": _check(reported_securities, securities, tol),
-            "value_check": _check(reported_value, value, tol)}
+    out.update(
+        securities=float(securities), value=float(value), positions=positions,
+        securities_check=_check(reported_securities, securities, tol),
+        value_check=_check(reported_value, value, tol))
+    out["rounding"]["prices"] = abs(_dec(exact) - securities) >= _CASH_TOL
+    return out
 
 
 def allocation(shares: dict | pd.Series, prices: pd.Series,

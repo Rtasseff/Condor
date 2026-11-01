@@ -8,6 +8,8 @@ RAW closes from the shared PriceStore; nothing derived is stored.
 import datetime as dt
 import functools
 import logging
+import math
+import re
 import uuid
 from types import SimpleNamespace
 
@@ -1028,20 +1030,52 @@ def api_account_forecast(request):
 # ------------------------------------------------ check against a broker
 
 
+_NUMBER_RE = re.compile(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?")
+
+
 def _typed_amount(body, field):
-    """-> (float | None, error). Missing / null / "" = nothing typed."""
+    """-> (float | None, error). Missing / null / "" = nothing typed.
+    Strings must look like plain decimal numbers (no "1_000", "nan")."""
     raw = body.get(field)
     if raw is None or raw == "":
         return None, None
+    bad = f"{field} must be a number."
     if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
-        return None, f"{field} must be a number."
+        return None, bad
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not _NUMBER_RE.fullmatch(raw):
+            return None, bad
     try:
         v = float(raw)
-    except ValueError:
-        return None, f"{field} must be a number."
-    if v != v or v in (float("inf"), float("-inf")):
-        return None, f"{field} must be a number."
+    except (ValueError, OverflowError):
+        return None, bad
+    if not math.isfinite(v):
+        return None, bad
     return v, None
+
+
+def _reconcile_prices(ev_df, state, bills, today):
+    """-> (prices Series, as_of) for the positions actually held: raw last
+    closes for exchange tickers, accreted value for bills. May raise
+    DataFetchError or KeyError/ValueError for a missing close."""
+    held = sorted(t for t in state.shares if t not in bills)
+    if held:
+        first = ev_df["date"].min() if len(ev_df) else today
+        start = min(pd.Timestamp(first).date(), today) - dt.timedelta(
+            days=PRICE_BUFFER_DAYS)
+        closes = _close_history(held, start)
+        prices = _last_closes(closes)
+        as_of = closes.index[-1]
+    else:
+        prices = pd.Series(dtype=float)
+        as_of = pd.Timestamp(today)
+    open_bills = [t for t in state.shares if t in bills]
+    if open_bills:
+        bp = acct.bill_prices(ev_df, pd.DatetimeIndex([as_of])).iloc[0]
+        for t in open_bills:
+            prices[t] = bp[t]
+    return prices, str(as_of.date())
 
 
 @api_login_required
@@ -1050,7 +1084,9 @@ def _typed_amount(body, field):
 def api_account_reconcile(request):
     """What a broker should show if the ledger is complete, and (when
     typed) whether it does. A preview: reads only, writes nothing, and
-    never stores or logs the typed amounts (they travel in the body)."""
+    never stores or logs the typed amounts (they travel in the body).
+    Cash never depends on market data: if closes can't be had, cash and
+    its check still come back, with `prices_error` in place of the rest."""
     account = _account_for(request)
     if not account.mirror:
         return _bad("This check is for accounts mirroring a broker.")
@@ -1064,20 +1100,27 @@ def api_account_reconcile(request):
         typed[field], err = _typed_amount(body, field)
         if err:
             return _bad(err)
+    ev_df = account.events_frame()
+    state = acct.ledger_state(ev_df)
+    bills = acct.bill_tickers(ev_df)
+    prices_error, as_of, prices = None, None, None
     try:
-        live = _live(account, _today())
-        as_of = live.as_of
-        prices = _priced(live, pd.Timestamp(as_of))
-        res = acct.reconcile(live.ev_df, prices, typed["cash"],
-                             typed["value"], typed["securities"],
-                             as_of=as_of)
+        prices, as_of = _reconcile_prices(ev_df, state, bills, _today())
     except DataFetchError as e:
-        return _bad(str(e))
-    except ValueError as e:
-        return _bad(str(e))
-    last = live.ev_df["date"].max() if len(live.ev_df) else None
+        prices_error = str(e)
+    except (KeyError, ValueError):
+        prices_error = "No recent close was available for a position you hold."
+    try:
+        res = acct.reconcile(ev_df, prices, typed["cash"], typed["value"],
+                             typed["securities"], state=state, bills=bills)
+    except ValueError as e:      # a held ticker with no close
+        prices_error = str(e)
+        res = acct.reconcile(ev_df, None, typed["cash"], typed["value"],
+                             typed["securities"], state=state, bills=bills)
+    res["prices_error"] = prices_error
+    res["as_of"] = as_of if prices_error is None else None
+    last = ev_df["date"].max() if len(ev_df) else None
     res["last_event"] = str(pd.Timestamp(last).date()) if last is not None else None
     res["imported_at"] = (account.imported_at.isoformat()
                           if account.imported_at else None)
-    res["currency"] = account.currency
     return JsonResponse(res)

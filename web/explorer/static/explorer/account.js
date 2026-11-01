@@ -147,6 +147,7 @@ function switchAccount(id) {
   trancheSeq++;
   clearTranche();
   for (const p of ["planpanel", "targetpanel", "contribpanel"]) $(p).hidden = true;
+  clearReconcile();
   clearForecastFan();
   forecastMode = null;
   forecastSeq++;
@@ -388,11 +389,39 @@ function renderRules() {
 
 // ---------- check against your broker (mirror accounts) ----------
 // The server does all the arithmetic (POST /api/account/reconcile). What is
-// typed stays in these inputs: never saved, never in the URL.
+// typed stays in these inputs: never saved, never in the URL. Errors from
+// this card stay in this card (rc-error), not the page-wide banner.
 const RC_INPUTS = { cash: "rc-in-cash", securities: "rc-in-securities",
                     value: "rc-in-value" };
+const RC_LABELS = { cash: "Cash", securities: "Securities value",
+                    value: "Account value" };
 let reconSeq = 0;
 let reconAccountKey = null;
+
+function rcError(msg) {
+  const e = $("rc-error");
+  e.textContent = msg;
+  e.hidden = !msg;
+}
+
+function clearVerdict() {
+  const box = $("rc-result");
+  box.replaceChildren();
+  box.hidden = true;
+}
+
+// expected figures, positions table, verdict, notes: all of it
+function clearReconcile() {
+  reconSeq++;
+  for (const id of ["rc-cash", "rc-securities", "rc-value"]) $(id).textContent = "–";
+  $("rc-asof").textContent = "";
+  $("rc-table").querySelector("tbody").replaceChildren();
+  $("rc-roundnote").hidden = true;
+  $("rc-check").disabled = false;
+  $("rc-status").textContent = "";
+  clearVerdict();
+  rcError("");
+}
 
 function renderReconcile() {
   const m = isMirror();
@@ -402,31 +431,40 @@ function renderReconcile() {
   if (key === reconAccountKey) return;   // same account: keep what was typed
   reconAccountKey = key;
   for (const id of Object.values(RC_INPUTS)) $(id).value = "";
-  $("rc-result").hidden = true;
-  $("rc-roundnote").hidden = true;
+  clearReconcile();
   runReconcile(false);
 }
 
 async function runReconcile(typed) {
-  const seq = ++reconSeq;
   const body = {};
   if (typed) {
+    // a number input hands back "" for text it can't parse: say so rather
+    // than quietly checking nothing
     for (const [k, id] of Object.entries(RC_INPUTS)) {
-      const v = $(id).value.trim();
+      const el = $(id);
+      if (el.validity.badInput) {
+        clearVerdict();
+        rcError(`${RC_LABELS[k]} wasn't understood: type just a number, `
+          + "such as 1234.56.");
+        return;
+      }
+      const v = el.value.trim();
       if (v !== "") body[k] = v;
     }
   }
+  const seq = ++reconSeq;
   const btn = $("rc-check");
   btn.disabled = true;
   $("rc-status").textContent = "Checking…";
+  rcError("");
+  if (typed) clearVerdict();   // an old verdict must not outlive its inputs
   try {
     const r = await api("/api/account/reconcile",
                         { method: "POST", body: JSON.stringify(body) });
     if (seq !== reconSeq) return;
-    showError("");
     paintReconcile(r, typed && Object.keys(body).length > 0);
   } catch (err) {
-    if (seq === reconSeq && typed) showError(err.message);
+    if (seq === reconSeq) { clearVerdict(); rcError(err.message); }
   } finally {
     if (seq === reconSeq) {
       btn.disabled = false;
@@ -454,25 +492,37 @@ function reconLine(label, c, r, isCash) {
 }
 
 function paintReconcile(r, showResult) {
+  const priced = !r.prices_error;
   $("rc-cash").textContent = money(r.cash);
-  $("rc-securities").textContent = money(r.securities);
-  $("rc-value").textContent = money(r.value);
-  $("rc-asof").textContent = `Securities and value are at the ${r.as_of} close.`;
+  $("rc-securities").textContent = priced ? money(r.securities) : "–";
+  $("rc-value").textContent = priced ? money(r.value) : "–";
+  $("rc-asof").textContent = priced
+    ? `Securities and value are at the ${r.as_of} close.` : "";
+  rcError(priced ? "" : "Securities and account value couldn't be checked "
+    + `(${r.prices_error}). Cash doesn't depend on prices, so that check still stands.`);
   const tb = $("rc-table").querySelector("tbody");
   tb.replaceChildren();
-  for (const p of r.positions) {
+  for (const p of (r.positions || [])) {
     const tr = document.createElement("tr");
-    tr.append(td(p.ticker), td(String(p.qty), "num"),
+    tr.append(td(p.ticker),
+              td(p.is_bill ? `${p.qty.toLocaleString()} nominal`
+                           : p.qty.toLocaleString(), "num"),
               td(moneyP(p.price), "num"), td(money(p.value), "num"));
     tb.appendChild(tr);
   }
-  if (!r.positions.length) {
+  if (priced && !r.positions.length) {
     const tr = document.createElement("tr");
     tr.append(td("No open positions."), td(""), td(""), td(""));
     tb.appendChild(tr);
   }
-  // tile vs panel: exact fills vs a broker rounding each fill
-  $("rc-roundnote").hidden = Math.abs(r.value - r.exact_value) < 0.005;
+  // why the tile and the panel can differ by a cent: the server says
+  const note = $("rc-roundnote");
+  const why = r.rounding || {};
+  note.hidden = !(why.cash || why.prices);
+  note.textContent = why.cash
+    ? "Your total above uses exact fill prices; your broker rounds each fill "
+      + "to the cent" + (why.prices ? " and shows prices rounded." : ".")
+    : "Your total above uses unrounded prices; your broker shows prices rounded.";
 
   const box = $("rc-result");
   box.replaceChildren();
@@ -488,8 +538,9 @@ function paintReconcile(r, showResult) {
     lines.push(`Value also depends on the price date: compare after the close of `
       + `${r.as_of}, or check cash first.`);
   }
-  const allMatch = [r.cash_check, r.securities_check, r.value_check]
-    .filter(Boolean).every((c) => c.match);
+  const checks = [r.cash_check, r.securities_check, r.value_check].filter(Boolean);
+  if (!checks.length) { box.hidden = true; return; }   // only unchecked figures were typed
+  const allMatch = checks.every((c) => c.match);
   box.classList.toggle("ok", allMatch);
   box.classList.toggle("off", !allMatch);
   const head = document.createElement("strong");
