@@ -110,6 +110,7 @@ CACHES = {
 CONDOR_RATE_LIMITS = {
     "analyze": "15/m",
     "forecast": "15/m",
+    "stability": "6/m",
     "asset": "60/m",
     "login": "10/m",
     "signup": "5/h",
