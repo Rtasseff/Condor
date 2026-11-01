@@ -294,7 +294,7 @@ class TestFacade:
         assert len(via_fn["frontier"]) <= 12
         assert set(via_fn) == {"tickers", "method", "risk_free_rate", "assets",
                                "start", "end", "n_days", "portfolio",
-                               "min_vol", "tangency", "frontier", "cal"}
+                               "min_vol", "tangency", "frontier", "cal", "meta"}
 
     def test_boundary_leniency(self, prices):
         # negatives clipped, all-zero -> equal weights; core API would raise
