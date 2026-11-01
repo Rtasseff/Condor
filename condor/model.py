@@ -37,17 +37,27 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Iterable, Iterator, Mapping
 
+import cvxpy as cp
 import numpy as np
 import pandas as pd
+from pypfopt.exceptions import OptimizationError
 
 from . import stats
 from . import forecast as _forecast_engine
 from . import history as _history
 from .stats import annual_factor
-from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix, _perf,
-                       _solve, _weights_dict)
+from .assumptions import Constraints, Prior, ResolvedConstraints
+from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix,
+                       _constrained_max_return, _constrained_tangency, _perf, _return_range, _solve,
+                       _weights_dict)
 
 __all__ = ["Asset", "AssetSet", "Portfolio", "PortfolioHistory", "Frontier"]
+
+def _series_dict(s) -> dict | None:
+    return None if s is None else {str(t): float(v) for t, v in s.items()}
+
+
+_SOLVE_ERRORS = (ValueError, OptimizationError, cp.error.SolverError)
 
 _UNSET = object()  # "argument not given", where None is a meaningful value
 
@@ -93,6 +103,15 @@ class AssetSet:
                 Σ is always estimated on raw returns.  Without it, expected
                 returns are the raw historical estimates.
 
+    prior:      optional `assumptions.Prior` (ADR 0008).  Needs premium
+                mode.  ``kind="equilibrium"`` blends the sample premiums with
+                equilibrium premiums for `prior.reference` (the prior counts
+                as `prior.t0` years of data) and applies the prior's views;
+                ``kind="history"`` keeps the sample premiums and applies only
+                the views.
+    reference_prices: prices of the reference when it isn't one of the
+                set's own assets (equilibrium only).
+
     Estimates are computed lazily once and cached; an AssetSet is treated
     as immutable — use `with_method()` / `with_options()` to re-estimate.
     """
@@ -102,7 +121,9 @@ class AssetSet:
                  metric: str = "relative", timeframe: str = "D",
                  samp_int: int | None = None, basis: str = "arithmetic",
                  rf_history: pd.Series | None = None,
-                 rf_level: float | None = None):
+                 rf_level: float | None = None,
+                 prior: Prior | None = None,
+                 reference_prices: pd.Series | None = None):
         if not isinstance(prices, pd.DataFrame) or prices.shape[1] == 0:
             raise ValueError("prices must be a non-empty DataFrame (one column per asset)")
         if prices.columns.has_duplicates:
@@ -123,6 +144,17 @@ class AssetSet:
             if rf_level is None:
                 rf_level = float(rf_history.dropna().sort_index().iloc[-1])
         self._rf_level = None if rf_level is None else float(rf_level)
+        self._prior = prior
+        self._reference_prices = reference_prices
+        if prior is not None:
+            if rf_history is None:
+                raise ValueError("assumptions need premium mode "
+                                 "(T-bill history is unavailable)")
+            if (prior.kind == "equilibrium"
+                    and prior.reference not in prices.columns
+                    and reference_prices is None):
+                raise ValueError(f"the market proxy {prior.reference} needs "
+                                 "its prices")
         names = names or {}
         self.assets: tuple[Asset, ...] = tuple(
             Asset(str(t), names.get(str(t))) for t in prices.columns
@@ -154,13 +186,98 @@ class AssetSet:
     def rf_level(self) -> float | None:
         return self._rf_level
 
+    @property
+    def prior(self) -> Prior | None:
+        return self._prior
+
+    @property
+    def reference_prices(self) -> pd.Series | None:
+        return self._reference_prices
+
     @cached_property
-    def premiums(self) -> pd.Series | None:
-        """Annualized premium over T-bills per asset; None when off."""
+    def sample_premiums(self) -> pd.Series | None:
+        """Premium over T-bills estimated from this window alone; None when
+        premium mode is off."""
         if self._rf_history is None:
             return None
         return stats.premium_annual(self.prices, self._rf_history,
                                     method=self.method, **self._options)
+
+    @property
+    def _equilibrium(self) -> bool:
+        return self._prior is not None and self._prior.kind == "equilibrium"
+
+    @cached_property
+    def t_years(self) -> float:
+        """Calendar years the price window spans."""
+        return float((self.prices.index[-1] - self.prices.index[0]).days
+                     / 365.25)
+
+    @cached_property
+    def market_premium(self) -> float | None:
+        """The market premium the equilibrium prior uses: the prior's own,
+        else the forecast's long-run anchor less today's T-bill rate."""
+        if not self._equilibrium:
+            return None
+        if self._prior.market_premium is not None:
+            return float(self._prior.market_premium)
+        return max(_forecast_engine.MARKET_ANCHOR - self._rf_level, 0.0)
+
+    @cached_property
+    def prior_premiums(self) -> pd.Series | None:
+        """Equilibrium premiums per asset; None without an equilibrium prior."""
+        if not self._equilibrium:
+            return None
+        ref = self._prior.reference
+        if ref in self.prices.columns:
+            sigma = self.risk_matrix
+        else:
+            joined = self.prices.join(
+                self._reference_prices.rename(ref), how="inner")
+            if len(joined) < 60:
+                raise ValueError(f"{ref} overlaps these assets for too few "
+                                 "days to price them")
+            sigma = stats.risk_matrix_annual(
+                joined, method=self.method, metric=self._metric,
+                timeframe=self._timeframe, samp_int=self._samp_int)
+        pi = stats.equilibrium_premiums(sigma, ref, self.market_premium)
+        return pi.reindex(self.tickers)
+
+    @cached_property
+    def premiums(self) -> pd.Series | None:
+        """The premium expected returns are built on: the sample estimate,
+        or with a prior the blended and viewed (posterior) premium."""
+        sample = self.sample_premiums
+        if self._prior is None:
+            return sample
+        t0 = self._prior.t0 if self._equilibrium else 0.0
+        post = sample
+        if self._equilibrium:
+            post = stats.blend_premiums(self.prior_premiums, sample, t0,
+                                        self.t_years, self.method)
+        views = [(v.ticker, v.ret - self._rf_level, v.sd)
+                 for v in self._prior.views if v.ticker in self.prices.columns]
+        tau = 1.0 / (t0 + stats.effective_years(self.t_years, self.method))
+        return stats.apply_views(post, self.risk_matrix, tau, views)
+
+    def ignored_views(self) -> list[str]:
+        """The prior's views on assets that aren't in this set."""
+        if self._prior is None:
+            return []
+        return [f"view on {v.ticker}" for v in self._prior.views
+                if v.ticker not in self.prices.columns]
+
+    def prior_note(self) -> dict | None:
+        """How much the prior counts, for display; None without a prior."""
+        if self._prior is None:
+            return None
+        t_eff = stats.effective_years(self.t_years, self.method)
+        eq = self._equilibrium
+        return {"kind": self._prior.kind,
+                "t0": float(self._prior.t0) if eq else 0.0,
+                "t_years": self.t_years, "t_effective": t_eff,
+                "market_premium": self.market_premium,
+                "reference": self._prior.reference if eq else None}
 
     @cached_property
     def tbill_window_mean(self) -> float | None:
@@ -277,6 +394,10 @@ class AssetSet:
                 "dispersion": self.dispersions}
         if self.premium_mode:
             cols["premium"] = self.premiums
+        if self._prior is not None:
+            cols["sample_premium"] = self.sample_premiums
+            if self._equilibrium:
+                cols["prior_premium"] = self.prior_premiums
         return pd.DataFrame(cols)
 
     def with_method(self, method: str) -> "AssetSet":
@@ -286,8 +407,12 @@ class AssetSet:
     def with_options(self, *, method: str | None = None,
                      metric: str | None = None, timeframe: str | None = None,
                      samp_int=_UNSET, basis: str | None = None,
-                     rf_level: float | None = None) -> "AssetSet":
+                     rf_level: float | None = None, prior=_UNSET,
+                     reference_prices=_UNSET) -> "AssetSet":
         """Same assets and prices, re-estimated under different options.
+
+        `prior` / `reference_prices` swap the assumptions prior (None clears
+        it); left out, they are carried over.
 
         `rf_level` re-levels a premium-mode set (the premiums are not
         re-estimated in substance, only the level they are added to); the
@@ -311,12 +436,16 @@ class AssetSet:
         opts["samp_int"] = stats.resolve_samp_int(opts["timeframe"],
                                                   opts["samp_int"])
         new_level = self._rf_level if rf_level is None else float(rf_level)
-        if opts == current and new_level == self._rf_level:
+        new_prior = self._prior if prior is _UNSET else prior
+        new_ref = (self._reference_prices if reference_prices is _UNSET
+                   else reference_prices)
+        if (opts == current and new_level == self._rf_level
+                and new_prior is self._prior and new_ref is self._reference_prices):
             return self
         return AssetSet(self.prices,
                         names={a.ticker: a.name for a in self.assets if a.name},
                         rf_history=self._rf_history, rf_level=new_level,
-                        **opts)
+                        prior=new_prior, reference_prices=new_ref, **opts)
 
     # -- portfolios over this set ---------------------------------------
     def _as_weight_array(self, weights) -> np.ndarray:
@@ -358,38 +487,73 @@ class AssetSet:
         if len(self) < 2:
             raise ValueError("optimization needs at least two assets")
 
-    def min_vol(self) -> "Portfolio":
-        """Minimum-dispersion portfolio."""
+    def _resolved(self, constraints) -> ResolvedConstraints | None:
+        """`Constraints` (or already resolved ones) -> solver input."""
+        if constraints is None:
+            return None
+        if isinstance(constraints, Constraints):
+            return constraints.resolve(self.tickers)
+        return constraints
+
+    def min_vol(self, constraints=None) -> "Portfolio":
+        """Minimum-dispersion portfolio (within `constraints`, if given)."""
         self._require_pair()
-        w = _solve(self.expected_returns, self.risk_matrix, "min_volatility")
+        w = _solve(self.expected_returns, self.risk_matrix, "min_volatility",
+                   self._resolved(constraints))
         return Portfolio(self, w, label="Min dispersion")
 
-    def tangency(self, risk_free_rate: float) -> "Portfolio | None":
-        """Max-Sharpe portfolio, or None if no asset beats the risk-free rate."""
+    def tangency(self, risk_free_rate: float,
+                 constraints=None) -> "Portfolio | None":
+        """Max-Sharpe portfolio, or None if no allowed mix beats the
+        risk-free rate."""
         self._require_pair()
+        if constraints is not None:
+            w = _constrained_tangency(self.expected_returns, self.risk_matrix,
+                                      risk_free_rate,
+                                      self._resolved(constraints))
+            return None if w is None else Portfolio(self, w, label="Tangency")
         if float(self.expected_returns.max()) <= risk_free_rate:
             return None
         w = _solve(self.expected_returns, self.risk_matrix, "max_sharpe",
                    risk_free_rate=risk_free_rate)
         return Portfolio(self, w, label="Tangency")
 
-    def efficient_return(self, target_return: float) -> "Portfolio":
-        """Min-dispersion portfolio achieving a target expected return."""
+    def efficient_return(self, target_return: float,
+                         constraints=None, *, exact: bool = False) -> "Portfolio":
+        """Min-dispersion portfolio achieving a target expected return
+        (at least that, or exactly with ``exact=True``)."""
         self._require_pair()
-        w = _solve(self.expected_returns, self.risk_matrix, "efficient_return",
+        w = _solve(self.expected_returns, self.risk_matrix,
+                   "exact_return" if exact else "efficient_return",
+                   self._resolved(constraints),
                    target_return=float(target_return))
         return Portfolio(self, w, label=f"Target return {target_return:.4f}")
 
-    def efficient_risk(self, target_dispersion: float) -> "Portfolio":
+    def efficient_risk(self, target_dispersion: float,
+                       constraints=None) -> "Portfolio":
         """Max-return portfolio at a target dispersion."""
         self._require_pair()
         w = _solve(self.expected_returns, self.risk_matrix, "efficient_risk",
+                   self._resolved(constraints),
                    target_volatility=float(target_dispersion))
         return Portfolio(self, w, label=f"Target dispersion {target_dispersion:.4f}")
 
+    def max_return(self, constraints=None) -> "Portfolio":
+        """Highest-return portfolio within `constraints`."""
+        self._require_pair()
+        resolved = self._resolved(constraints)
+        if resolved is None:
+            w = np.zeros(len(self))
+            w[int(np.argmax(self.expected_returns.to_numpy()))] = 1.0
+        else:
+            w = _constrained_max_return(self.expected_returns, resolved)
+        return Portfolio(self, w, label="Max return")
+
     def frontier(self, risk_free_rate: float = 0.02,
-                 n_points: int = N_FRONTIER_POINTS) -> "Frontier":
-        return Frontier(self, risk_free_rate=risk_free_rate, n_points=n_points)
+                 n_points: int = N_FRONTIER_POINTS,
+                 constraints=None) -> "Frontier":
+        return Frontier(self, risk_free_rate=risk_free_rate, n_points=n_points,
+                        constraints=constraints)
 
     # -- composition: portfolios as members ------------------------------
     @classmethod
@@ -425,6 +589,22 @@ class AssetSet:
                    timeframe=timeframe, samp_int=samp_int, basis=basis,
                    rf_history=rf_history, rf_level=rf_level)
 
+    def analysis_under(self, assumptions, weights=None,
+                       risk_free_rate: float = 0.02,
+                       n_points: int = N_FRONTIER_POINTS,
+                       reference_prices: pd.Series | None = None) -> dict:
+        """The `analysis()` payload computed under `assumptions`
+        (an `Assumptions`): its prior and limits, plus `name` and an echo
+        of the assumptions.  Raises ValueError when they can't be applied
+        (infeasible limits, no premium mode, a missing market proxy)."""
+        under = self.with_options(prior=assumptions.prior,
+                                  reference_prices=reference_prices)
+        out = under.analysis(weights, risk_free_rate, n_points,
+                             constraints=assumptions.constraints)
+        out["name"] = assumptions.name
+        out["assumptions"] = assumptions.to_dict()
+        return out
+
     def meta(self, risk_free_rate: float) -> dict:
         """What this analysis was run on: window, method, whether expected
         returns are premium-based, the rate and the window's T-bill mean."""
@@ -442,7 +622,8 @@ class AssetSet:
                  risk_free_rate: float = 0.02,
                  n_points: int = N_FRONTIER_POINTS, *,
                  metric: str | None = None, timeframe: str | None = None,
-                 samp_int=_UNSET, basis: str | None = None) -> dict:
+                 samp_int=_UNSET, basis: str | None = None,
+                 constraints=None) -> dict:
         """Everything the Explorer UI needs, as one plain dict.
 
         Lenient at the boundary: unknown tickers in `weights` are ignored,
@@ -457,11 +638,13 @@ class AssetSet:
             # keep μ and the Sharpe rate the same number
             return self.with_options(rf_level=risk_free_rate).analysis(
                 weights, risk_free_rate, n_points, metric=metric,
-                timeframe=timeframe, samp_int=samp_int, basis=basis)
+                timeframe=timeframe, samp_int=samp_int, basis=basis,
+                constraints=constraints)
         override = self.with_options(metric=metric, timeframe=timeframe,
                                      samp_int=samp_int, basis=basis)
         if override is not self:
-            return override.analysis(weights, risk_free_rate, n_points)
+            return override.analysis(weights, risk_free_rate, n_points,
+                                     constraints=constraints)
 
         if weights:
             clean = {t: max(0.0, float(weights.get(t, 0.0))) for t in self.tickers}
@@ -482,7 +665,18 @@ class AssetSet:
             "portfolio": mine.to_dict(risk_free_rate),
             "meta": self.meta(risk_free_rate),
         }
-        result.update(self.frontier(risk_free_rate, n_points).to_dict())
+        fr = self.frontier(risk_free_rate, n_points, constraints=constraints)
+        result.update(fr.to_dict())
+        if "constraints" in result and self.ignored_views():
+            result["constraints"]["ignored"] += self.ignored_views()
+        if constraints is not None:
+            result["gaps"] = fr.gaps(mine)
+        if self._prior is not None:
+            result["prior_note"] = self.prior_note()
+            result["premiums"] = {
+                "sample": _series_dict(self.sample_premiums),
+                "prior": _series_dict(self.prior_premiums),
+                "posterior": _series_dict(self.premiums)}
         return result
 
 
@@ -908,10 +1102,12 @@ class Frontier:
     """
 
     def __init__(self, asset_set: AssetSet, risk_free_rate: float = 0.02,
-                 n_points: int = N_FRONTIER_POINTS):
+                 n_points: int = N_FRONTIER_POINTS, constraints=None):
         self.asset_set = asset_set
         self.risk_free_rate = float(risk_free_rate)
         self.n_points = int(n_points)
+        self.constraints = constraints
+        self.resolved = asset_set._resolved(constraints)
         self.points: list[Portfolio] = []
         self.min_vol: Portfolio | None = None
         self.tangency: Portfolio | None = None
@@ -919,13 +1115,17 @@ class Frontier:
             self._compute()
 
     def _compute(self) -> None:
-        aset, rf = self.asset_set, self.risk_free_rate
-        self.min_vol = aset.min_vol()
-        self.tangency = aset.tangency(rf)
-        lo, hi = self.min_vol.expected_return, float(aset.expected_returns.max())
-        for i, target in enumerate(np.linspace(lo, hi, self.n_points)):
+        aset, rf, con = self.asset_set, self.risk_free_rate, self.resolved
+        self.min_vol = aset.min_vol(con)
+        self.tangency = aset.tangency(rf, con)
+        lo = self.min_vol.expected_return
+        top = aset.max_return(con).expected_return if con is not None \
+            else float(aset.expected_returns.max())
+        for i, target in enumerate(np.linspace(lo, top, self.n_points)):
+            if con is not None and i == self.n_points - 1:
+                target = target - 1e-9  # the LP's own top end is borderline
             try:
-                p = aset.efficient_return(float(target))
+                p = aset.efficient_return(float(target), con)
             except Exception:
                 continue  # infeasible edge targets are fine to skip
             p.label = f"Frontier point {i}"
@@ -948,11 +1148,11 @@ class Frontier:
     # -- pick any point on the curve ------------------------------------
     def at_return(self, target_return: float) -> Portfolio:
         """Exact frontier portfolio at a target expected return."""
-        return self.asset_set.efficient_return(target_return)
+        return self.asset_set.efficient_return(target_return, self.resolved)
 
     def at_dispersion(self, target_dispersion: float) -> Portfolio:
         """Exact frontier portfolio at a target dispersion."""
-        return self.asset_set.efficient_risk(target_dispersion)
+        return self.asset_set.efficient_risk(target_dispersion, self.resolved)
 
     def nearest(self, expected_return: float | None = None,
                 dispersion: float | None = None) -> Portfolio:
@@ -1020,11 +1220,82 @@ class Frontier:
                 "points": [self.cal_mix(float(k))
                            for k in np.linspace(0.0, k_max, N_CAL_POINTS)]}
 
+    def violations(self, portfolio: "Portfolio") -> list[str]:
+        """Limits `portfolio` breaks, in words ([] when unconstrained)."""
+        if not isinstance(self.constraints, Constraints):
+            return []
+        return self.constraints.violations(portfolio.weights.to_dict())
+
+    def gaps(self, portfolio: "Portfolio") -> dict:
+        """How far `portfolio` is from the best this frontier allows.
+
+        sharpe_gap: tangency Sharpe minus the plan's.
+        return_gap: return you could add at the plan's own dispersion.
+        risk_gap:   dispersion you could shed at the plan's own return.
+        A gap is None (not 0) when that comparison is infeasible under the
+        limits, or there is no tangency.  `at_risk` / `at_return` are the
+        comparison portfolios as payload dicts (or None).
+        """
+        rf, aset, con = self.risk_free_rate, self.asset_set, self.resolved
+        out = {"sharpe_gap": None, "return_gap": None, "risk_gap": None,
+               "at_risk": None, "at_return": None,
+               "sharpe_gap_reason": None, "return_gap_reason": None,
+               "risk_gap_reason": None,
+               "violations": self.violations(portfolio)}
+        if len(aset) < 2:
+            return out
+        # reasons: "no_tangency", "below_range" (the plan is steadier / earns
+        # less than any allowed mix), "above_range" (earns more than any
+        # allowed mix), "solver" (the optimizer couldn't finish this one)
+        if self.tangency is not None:
+            out["sharpe_gap"] = float(self.tangency.sharpe(rf)
+                                      - portfolio.sharpe(rf))
+        else:
+            out["sharpe_gap_reason"] = "no_tangency"
+        vol, ret = portfolio.dispersion, portfolio.expected_return
+        tol = 1e-7
+        # same dispersion: needs an allowed mix at least that steady
+        floor = self.min_vol.dispersion
+        if vol < floor - tol:
+            out["return_gap_reason"] = "below_range"
+        else:
+            try:
+                p = aset.efficient_risk(max(vol, floor * (1 + 1e-6)), con)
+                out["at_risk"] = p.to_dict(rf)
+                out["return_gap"] = float(p.expected_return - ret)
+            except _SOLVE_ERRORS:
+                out["return_gap_reason"] = "solver"
+        # same return: needs an allowed mix with exactly that return
+        lo, hi = _return_range(aset.expected_returns, con)
+        if ret < lo - tol:
+            out["risk_gap_reason"] = "below_range"
+        elif ret > hi + tol:
+            out["risk_gap_reason"] = "above_range"
+        else:
+            try:
+                p = aset.efficient_return(min(max(ret, lo), hi), con, exact=True)
+                out["at_return"] = p.to_dict(rf)
+                out["risk_gap"] = float(vol - p.dispersion)
+            except _SOLVE_ERRORS:
+                out["risk_gap_reason"] = "solver"
+        return out
+
     def to_dict(self) -> dict:
         rf = self.risk_free_rate
-        return {
+        out = {
             "min_vol": self.min_vol.to_dict(rf) if self.min_vol else None,
             "tangency": self.tangency.to_dict(rf) if self.tangency else None,
             "frontier": [p.to_dict(rf) for p in self.points],
             "cal": self.cal,
         }
+        if self.resolved is not None:
+            t = self.asset_set.tickers
+            out["constraints"] = {
+                "bounds": {t[i]: {"min": lo, "max": hi}
+                           for i, (lo, hi) in enumerate(self.resolved.bounds)
+                           if (lo, hi) != (0.0, 1.0)},
+                "groups": [{"tickers": [t[i] for i in idx],
+                            "min": lo, "max": hi}
+                           for idx, lo, hi in self.resolved.groups],
+                "ignored": list(self.resolved.ignored)}
+        return out

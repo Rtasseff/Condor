@@ -23,6 +23,18 @@ from .rates import risk_free_history, risk_free_rate  # noqa: F401
 DEFAULT_YEARS = 10
 
 
+def resolve_proxy(prior, tickers, years: int = DEFAULT_YEARS,
+                  source: str | None = None, fetch=None):
+    """Prices of the prior's market proxy, or None when none are needed
+    (history-only prior, or the proxy is one of `tickers`).  Fetched
+    separately so it can't shorten the analysis window.  `fetch` defaults to
+    `fetch_prices`; callers pass their own (patchable) reference to it."""
+    proxy = prior.reference
+    if prior.kind != "equilibrium" or proxy in tickers:
+        return None
+    return (fetch or fetch_prices)([proxy], years=years, source=source)[proxy]
+
+
 def fetch_prices(tickers: list[str], years: int = DEFAULT_YEARS,
                  source: str | None = None,
                  store: PriceStore | None = None) -> pd.DataFrame:

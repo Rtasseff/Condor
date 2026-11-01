@@ -62,6 +62,14 @@ const CHART_CONFIG = {
   showAxisDragHandles: false, showAxisRangeEntryBoxes: false,
 };
 
+// The "Under my assumptions" card (assumptions.js) plugs in here, so this
+// file works unchanged if that script is absent.
+const asmHooks = {
+  request: () => null,    // -> assumptions object to send, or null
+  render: (assumed) => {},  // the response's `assumed` block (or undefined)
+  assetsChanged: () => {},
+};
+
 const pct = (x, d = 1) => (100 * x).toFixed(d) + "%";
 
 function csrftoken() {
@@ -132,6 +140,7 @@ function renderAssets() {
     li.append(tick, name, w, p, rm);
     ul.appendChild(li);
   }
+  asmHooks.assetsChanged();
 }
 
 function addAsset(raw) {
@@ -214,6 +223,8 @@ async function analyze() {
       method: $("method").value,
       weights: Object.keys(state.weights).length ? state.weights : null,
     };
+    const asked = asmHooks.request();
+    if (asked) body.assumptions = asked;
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken() },
@@ -231,6 +242,7 @@ async function analyze() {
     }
     renderAssets();
     renderAll();
+    asmHooks.render(data.assumed);
     clearForecast();
   } catch (err) {
     showError(err.message);
@@ -283,7 +295,30 @@ function renderChart() {
   if (!r) return;
   $("chart-empty").style.display = "none";
   $("clickcue").hidden = !!state.selected;   // cue retires after first click
+  drawFrontier("chart", r, { selected: state.selected, clickable: true });
+}
 
+// The y-axis follows the frontier and the assets, not the capital line: with
+// a very dispersed asset the line runs off to a huge return and would squash
+// everything else into the bottom of the plot. The line just leaves the top.
+function yRange(r) {
+  const ys = [...r.frontier.map((p) => p.ret), ...r.assets.map((a) => a.ret)];
+  if (r.min_vol) ys.push(r.min_vol.ret);
+  if (r.tangency) ys.push(r.tangency.ret);
+  if (!ys.length) return undefined;
+  const hi = Math.max(...ys);
+  const top = Math.max(hi + 0.15 * Math.abs(hi), r.risk_free_rate + 0.01);
+  const lo = Math.min(...ys, r.risk_free_rate);
+  const bottom = lo - 0.08 * (top - lo);
+  return top > bottom ? [bottom, top] : undefined;
+}
+
+// One frontier chart, into the element `divId`. Used for the history chart
+// and for the "under my assumptions" chart, so both look and behave alike.
+// `clickable` is false where nothing opens on click (no hover hint then).
+function drawFrontier(divId, r, { selected = null, clickable = false } = {}) {
+  const hint = clickable ? "<br><i>click to inspect this mix</i>" : "";
+  const hintShort = clickable ? "<br><i>click to inspect</i>" : "";
   const traces = [];
   // Identity lives in the key (legend) — no annotations chasing markers
   // around the plane. Selection is the "Considering" ring.
@@ -306,7 +341,7 @@ function renderChart() {
         marker: { size: 4, color: C.cal, opacity: 0.55 },
         hovertemplate:
           "%{text} · reward %{y:.1%} · risk %{x:.1%}" +
-          "<br><i>click to inspect this mix</i><extra></extra>",
+          hint + "<extra></extra>",
       });
     }
   }
@@ -322,7 +357,7 @@ function renderChart() {
       marker: { size: 7, color: C.frontier, opacity: 0.85 },
       hovertemplate:
         "Reward %{y:.1%} · Risk %{x:.1%} · Sharpe %{customdata:.2f}" +
-        "<br><i>click to inspect this mix</i><extra></extra>",
+        hint + "<extra></extra>",
     });
   }
 
@@ -352,7 +387,7 @@ function renderChart() {
       },
       hovertemplate:
         "Minimum dispersion · reward %{y:.1%} · risk %{x:.1%}" +
-        "<br><i>click to inspect</i><extra></extra>",
+        hintShort + "<extra></extra>",
     });
   }
 
@@ -368,7 +403,7 @@ function renderChart() {
       },
       hovertemplate:
         "Tangent portfolio · reward %{y:.1%} · risk %{x:.1%}" +
-        " · Sharpe %{customdata[0]:.2f}<br><i>click to inspect</i><extra></extra>",
+        " · Sharpe %{customdata[0]:.2f}" + hintShort + "<extra></extra>",
     });
   }
 
@@ -399,9 +434,9 @@ function renderChart() {
   });
 
   // the point being considered (selection ring)
-  if (state.selected) {
+  if (selected) {
     traces.push({
-      x: [state.selected.vol], y: [state.selected.ret],
+      x: [selected.vol], y: [selected.ret],
       mode: "markers", name: "Considering",
       marker: {
         size: 22, symbol: "circle-open", color: C.select,
@@ -424,7 +459,7 @@ function renderChart() {
     yaxis: {
       title: { text: "Reward — expected annual return", font: { color: C.muted } },
       tickformat: ".0%", gridcolor: C.grid, zerolinecolor: C.axis,
-      fixedrange: true,
+      fixedrange: true, range: yRange(r),
     },
     hoverdistance: 30,
     legend: {
@@ -436,7 +471,7 @@ function renderChart() {
     hoverlabel: hoverStyle(),
   };
 
-  Plotly.react("chart", traces, layout, CHART_CONFIG);
+  Plotly.react(divId, traces, layout, CHART_CONFIG);
 }
 
 // ---------- click-anywhere selection ----------

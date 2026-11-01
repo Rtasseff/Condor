@@ -225,6 +225,119 @@
     </aside>
   </div>
 
+  <section class="card asmcard" id="asmcard" aria-label="Under my assumptions">
+    <details class="advanced" id="asmdetails">
+      <summary><b>Under my assumptions</b><span class="priorchip"
+        id="asmchip" hidden></span></summary>
+      <div class="advbody">
+        <p class="sub">History alone mostly picks whatever won lately. State
+           your limits and a long-run view to see the best mix under them,
+           next to history.</p>
+
+        <div class="asmsaved">
+          {% if user.is_authenticated %}
+          <label>Saved sets
+            <select id="asmsaved"><option value="">New (not saved)</option></select>
+          </label>
+          <label class="grow">Name
+            <input id="asmname" maxlength="80" placeholder="e.g. My limits"
+                   autocomplete="off">
+          </label>
+          <button id="asmsave" class="ghost small" type="button">Save</button>
+          <button id="asmsavenew" class="ghost small" type="button" hidden>Save as new</button>
+          <button id="asmdelete" class="ghost small" type="button" hidden>Delete</button>
+          {% else %}
+          <label class="grow">Name
+            <input id="asmname" maxlength="80" placeholder="e.g. My limits"
+                   autocomplete="off">
+          </label>
+          <span class="sub"><a href="{% url 'login' %}?next={{ request.get_full_path|urlencode }}">Sign in</a>
+            to save your sets and use them again.</span>
+          {% endif %}
+          <span id="asmstatus" class="status" role="status"></span>
+        </div>
+
+        <h3>Your limits</h3>
+        <p class="sub">The smallest and largest share each asset may have, as
+           a percent of the portfolio. Leave a box empty for no limit.</p>
+        <div class="tablewrap">
+          <table class="asmlimits" id="asmlimits">
+            <thead><tr><th scope="col">Asset</th>
+              <th scope="col" class="num">At least %</th>
+              <th scope="col" class="num">At most %</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="sub">Groups: a limit on several assets taken together.</p>
+        <div id="asmgroups" class="asmrows"></div>
+        <button id="asmaddgroup" class="ghost small" type="button">+ Add a group limit</button>
+
+        <h3>Long-run view</h3>
+        <label class="asmswitch"><input type="checkbox" id="asmhistonly">
+          Use history only (no long-run view)</label>
+        <div class="fcontrols" id="asmprior">
+          <label>Market premium
+            <span class="pctwrap"><input id="asmmp" type="number" step="0.1"
+              min="0" max="100" placeholder="default"> %/yr</span>
+          </label>
+          <label>Weight of the long-run view, in years of data
+            <input id="asmt0" type="number" step="1" min="0" max="200" value="20">
+          </label>
+          <label>Market proxy
+            <input id="asmref" value="VT" maxlength="10" spellcheck="false">
+          </label>
+        </div>
+        <p class="controlgloss" id="asmpriorgloss">The market premium is what
+           the market is assumed to pay above T-bills each year. Left empty it
+           is the long-run market anchor ({{ market_anchor_pct }}%/yr) less
+           today's T-bill rate. Every asset's premium follows from how
+           closely it moves with the market proxy.</p>
+
+        <h3>Your views <small class="sub">(optional)</small></h3>
+        <p class="sub">Your own expected total return for an asset, and how
+           many points either way you could be off.</p>
+        <div id="asmviews" class="asmrows"></div>
+        <button id="asmaddview" class="ghost small" type="button">+ Add a view</button>
+
+        <div class="asmactions">
+          <button id="asmrun" class="primary" type="button">Show the best mix under these</button>
+          <button id="asmoff" class="ghost small" type="button" hidden>Remove the comparison</button>
+        </div>
+      </div>
+    </details>
+    <div id="asmerror" class="error" hidden></div>
+
+    <div id="asmresult" hidden>
+      <h3 id="asmtitle">Under: </h3>
+      <p class="sub" id="asmnote"></p>
+      <div class="asmgrid">
+        <div>
+          <div id="chart-assumed" role="img" aria-label="Efficient frontier under your assumptions"></div>
+        </div>
+        <div>
+          <div class="tablewrap">
+            <table id="asmcompare">
+              <thead><tr><th scope="col"></th>
+                <th scope="col" class="num">History</th>
+                <th scope="col" class="num" id="asmcolunder">Under</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p class="sub" id="asmcashnote">Limits count against the whole
+            portfolio, so when they bind, low-risk funds can fill the rest.
+            Read that share as cash, not a call on those funds.</p>
+          <h3>How far is your portfolio from the best mix?</h3>
+          <dl class="asmgaps" id="asmgaps"></dl>
+          <div id="asmviolations" hidden>
+            <h3>Your portfolio breaks these limits</h3>
+            <ul></ul>
+          </div>
+          <p class="sub" id="asmignored" hidden></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="tiles" id="tiles" hidden>
     <div class="tile"><span class="label">Expected return <small>(annual)</small></span><span class="value" id="t-ret">–</span><span class="gloss">what a typical year averages — an estimate, not a promise</span></div>
     <div class="tile"><span class="label">Dispersion <small>(annual σ)</small></span><span class="value" id="t-vol">–</span><span class="gloss">how bumpy the ride tends to be</span></div>
@@ -343,6 +456,7 @@
 {% if preset %}{{ preset|json_script:"preset" }}{% endif %}
 {{ sources|json_script:"sources" }}
 <script src="{% static 'explorer/app.js' %}"></script>
+<script src="{% static 'explorer/assumptions.js' %}"></script>
 {% else %}
 {# Signed in with nothing to optimize — except, maybe, a mix this browser #}
 {# is still carrying from before they had an account. #}

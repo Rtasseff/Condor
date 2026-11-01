@@ -14,9 +14,11 @@ condor/frontier.py         compute_analysis(...)  — procedural facade, one dic
         │
 condor/model.py            DOMAIN MODEL: Asset → AssetSet → Portfolio, Frontier
         │
-condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns, excess returns / premium
+condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns, excess returns / premium,
+                           equilibrium prior / blend / Black-Litterman views (ADR 0008)
 condor/frontier.py         OPTIMIZATION ENGINE: _perf, _solve, _weights_dict
 condor/history.py          HISTORY ENGINE: max drawdown, calendar-year returns, CAGR of a value series
+condor/assumptions.py      ASSUMPTIONS: validated limits + long-run view (pure dataclasses, ADR 0008)
 condor/forecast.py         FORECAST ENGINE: fan-chart bands (closed form, bootstrap, μ anchors)
 condor/accounting.py       ACCOUNT ENGINE: ledger replay, valuation/TWR/XIRR, rebalance plans
 condor/payin.py            PAY-IN ENGINE: tranche plans, whole-share catch-up buy lists (ADR 0007)
@@ -47,6 +49,7 @@ that gather the object's state and hand it to an engine function.
 | You are adding… | Put it in | Shape |
 |---|---|---|
 | A new estimator (e.g. Black-Litterman, shrinkage variant, geometric mean option) | `stats.py` | a function; register it in `METHODS` / as an option; `AssetSet` picks it up via `method=` or a new constructor arg |
+| A new limit on weights, or a new kind of prior | `assumptions.py` (the validated shape; `from_dict` is the one validator) + `frontier.py` / `stats.py` for the numerics | `Constraints.resolve(tickers)` feeds `_solve(..., constraints=)` / `_constrained_tangency`; the prior feeds `AssetSet(prior=)` |
 | A new optimization (constraints, cardinality, efficient_risk variants) | `frontier.py` (`_solve` or a sibling) | a function returning a weight array; expose it as an `AssetSet` method returning a `Portfolio` |
 | A new capability **of a portfolio** (forecast, rebalance, DCA schedule, drawdown, scenario replay) | `model.py` → method on `Portfolio` (numerics in a new engine module, e.g. `forecast.py`) | `portfolio.forecast(horizon, ...)` returns a small result object or DataFrame; `to_dict()` for the UI |
 | A new capability **of a set of assets** (screening, correlation view, "suggest an addition") | `AssetSet` method (+ engine function) | same pattern |

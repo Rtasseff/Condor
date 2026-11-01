@@ -15,6 +15,7 @@ import re
 import smtplib
 
 from django.conf import settings
+from pypfopt.exceptions import OptimizationError
 from django.contrib import messages
 from django.contrib.auth import login as auth_login
 from django.contrib.auth import views as auth_views
@@ -39,16 +40,18 @@ from condor import (AssetSet, DataFetchError, Forecast, PriceStore,
                     risk_free_rate)
 from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
+from condor.assumptions import Assumptions
+from condor.data import resolve_proxy
+from condor.symbols import TICKER_RE
 from condor.stats import METHODS
 
 from .forms import ALREADY_REGISTERED, SignupForm
 from .learn import learn_context
-from .models import DraftPortfolio, SavedPortfolio
+from .models import AssumptionSet, DraftPortfolio, SavedPortfolio
 from .throttle import client_ip, json_rate_limit, rate_for
 
 log = logging.getLogger(__name__)
 
-TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,10}$")
 MAX_ASSETS = 15
 MAX_NAME = 80
 
@@ -546,7 +549,41 @@ def api_analyze(request):
         log.exception("analysis failed for %s", tickers)
         return _bad("Analysis failed unexpectedly; see server log.", status=500)
 
+    if body.get("assumptions") is not None:
+        result["assumed"] = _assumed(body["assumptions"], tickers, prices,
+                                     settings, history, weights)
+
     return JsonResponse(result)
+
+
+def _assumed(raw, tickers, prices, settings, history, weights):
+    """The analysis under the caller's assumptions (a copy, never an id).
+    Never raises: any failure is `{"error": ...}` and the history result
+    still renders."""
+    try:
+        assumptions = Assumptions.from_dict(raw)
+        if history is None:
+            return {"error": "Assumptions need the T-bill history, which is "
+                             "off or unavailable right now."}
+        try:
+            ref = resolve_proxy(assumptions.prior, tickers,
+                                years=settings["years"], fetch=fetch_prices)
+        except DataFetchError as e:
+            return {"error": f"Couldn't load the market proxy "
+                             f"{assumptions.prior.reference}: {e}"}
+        aset = AssetSet(prices, method=settings["method"], rf_history=history,
+                        rf_level=settings["risk_free_rate"])
+        return aset.analysis_under(
+            assumptions, weights, settings["risk_free_rate"],
+            reference_prices=ref)
+    except ValueError as e:
+        return {"error": str(e)}
+    except OptimizationError as e:
+        return {"error": f"The optimizer couldn't solve this ({e})."}
+    except Exception:
+        log.exception("assumed analysis failed for %s", tickers)
+        return {"error": "The analysis under your assumptions failed "
+                         "unexpectedly; see server log."}
 
 
 @json_rate_limit("forecast", "15/m", method="POST")
@@ -907,3 +944,70 @@ def api_portfolio(request, pid):
         return JsonResponse({"deleted": str(pid)})
 
     return JsonResponse(_detail(request, portfolio))
+
+
+# ----------------------------------------------------- saved assumptions
+
+MAX_ASSUMPTION_SETS = 50
+
+
+def _get_assumption_set(user, pid):
+    """The user's own AssumptionSet, or None: someone else's is 'unknown'."""
+    try:
+        return AssumptionSet.objects.get(pk=pid, owner=user)
+    except (AssumptionSet.DoesNotExist, ValidationError, ValueError, TypeError):
+        return None
+
+
+def _assumption_detail(row):
+    return {"id": str(row.id), "name": row.name,
+            "updated_at": row.updated_at.isoformat(),
+            "assumptions": row.payload}
+
+
+@api_login_required
+@require_http_methods(["GET", "POST"])
+def api_assumptions(request):
+    if request.method == "GET":
+        rows = [{"id": str(r.id), "name": r.name,
+                 "updated_at": r.updated_at.isoformat()}
+                for r in AssumptionSet.objects.filter(owner=request.user)]
+        return JsonResponse(rows, safe=False)
+
+    body, err = _json_body(request)
+    if err:
+        return _bad(err)
+    try:
+        assumptions = Assumptions.from_dict(body)
+    except ValueError as e:
+        return _bad(str(e))
+    if AssumptionSet.objects.filter(owner=request.user).count() >= MAX_ASSUMPTION_SETS:
+        return _bad(f"You can save up to {MAX_ASSUMPTION_SETS} sets; "
+                    "delete one first.")
+    row = AssumptionSet.objects.create(
+        owner=request.user, name=assumptions.name,
+        payload=assumptions.to_dict())
+    return JsonResponse(_assumption_detail(row), status=201)
+
+
+@api_login_required
+@require_http_methods(["GET", "PUT", "DELETE"])
+def api_assumption(request, pid):
+    row = _get_assumption_set(request.user, pid)
+    if row is None:
+        return _bad("No saved assumptions with that id.", status=404)
+    if request.method == "DELETE":
+        row.delete()
+        return JsonResponse({"deleted": str(pid)})
+    if request.method == "PUT":
+        body, err = _json_body(request)
+        if err:
+            return _bad(err)
+        try:
+            assumptions = Assumptions.from_dict(body)
+        except ValueError as e:
+            return _bad(str(e))
+        row.name = assumptions.name
+        row.payload = assumptions.to_dict()
+        row.save()
+    return JsonResponse(_assumption_detail(row))

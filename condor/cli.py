@@ -19,6 +19,10 @@ import json
 import sys
 from datetime import date
 
+from pypfopt.exceptions import OptimizationError
+
+from .assumptions import Assumptions
+from .data import resolve_proxy
 from . import (AssetSet, DataFetchError, PriceStore, fetch_prices,
                risk_free_history, risk_free_rate)
 from .stats import METHODS
@@ -76,6 +80,50 @@ def _asset_set(args, rf: float) -> AssetSet:
     return AssetSet(prices, method=args.method, rf_history=history, rf_level=rf)
 
 
+def _load_assumptions(args) -> Assumptions | None:
+    """Read and validate `--assumptions FILE.json` (None when not given)."""
+    path = getattr(args, "assumptions", None)
+    if not path:
+        return None
+    if args.no_premium:
+        raise ValueError("--assumptions needs premium mode; drop --no-premium")
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+    except OSError as e:
+        raise ValueError(f"can't read {path}: {e.strerror or e}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{path} is not valid JSON: {e}")
+    return Assumptions.from_dict(raw)
+
+
+def _under(args, aset: AssetSet, assumptions: Assumptions) -> AssetSet:
+    """`aset` re-estimated under the assumptions, fetching the market proxy
+    separately when it isn't one of the analysed tickers (so it can't shorten
+    the analysis window)."""
+    ref = resolve_proxy(assumptions.prior, aset.tickers, years=args.years,
+                        source=getattr(args, "source", None),
+                        fetch=fetch_prices)
+    return aset.with_options(prior=assumptions.prior, reference_prices=ref)
+
+
+def _prior_line(under: AssetSet) -> str:
+    n = under.prior_note()
+    if n["kind"] == "history":
+        return "history only (no long-run view); your own views, if any, sit on top"
+    s = (f"long-run view counts as {n['t0']:g} years of data, your history as "
+         f"{n['t_effective']:.1f} years; market premium "
+         f"{_pct(n['market_premium'])} measured against {n['reference']}")
+    if n["t_effective"] < n["t_years"] - 1e-9:
+        s += " (robust method: history counts less)"
+    return s
+
+
+def _ignored_line(under: AssetSet, cons) -> str:
+    ign = list(cons.resolve(under.tickers).ignored) + under.ignored_views()
+    return ("not used here: " + "; ".join(ign)) if ign else ""
+
+
 def _header(aset: AssetSet, rf_note: str) -> str:
     if aset.premium_mode:
         basis = (f"T-bill {_pct(aset.rf_level)} + premium over T-bills "
@@ -96,11 +144,16 @@ def _meta(aset: AssetSet, rf: float, rf_note: str) -> dict:
 # commands
 # ----------------------------------------------------------------------
 def cmd_analyze(args) -> int:
+    assumptions = _load_assumptions(args)
     rf, rf_note = _resolve_rf(args.rf)
     aset = _asset_set(args, rf)
+    under = _under(args, aset, assumptions) if assumptions else None
     if args.json:
         payload = aset.analysis(risk_free_rate=rf)
         payload["meta"] = _meta(aset, rf, rf_note)
+        if assumptions:
+            payload["assumed"] = under.analysis_under(
+                assumptions, None, rf, reference_prices=under.reference_prices)
         print(json.dumps(payload, indent=1))
         return 0
     out = [_header(aset, rf_note)]
@@ -121,11 +174,39 @@ def cmd_analyze(args) -> int:
             out.append(_row("Tangency", tan.to_dict(rf)))
         else:
             out.append(f"{'Tangency':<16}   (no asset beats the risk-free rate)")
+    if assumptions:
+        out.append("")
+        out.extend(_analyze_under(under, assumptions, rf))
     print("\n".join(out))
     return 0
 
 
+def _analyze_under(under: AssetSet, assumptions: Assumptions, rf: float):
+    cons = assumptions.constraints
+    out = [f"Under: {assumptions.name}", f"  {_prior_line(under)}"]
+    eq = under.prior_premiums is not None
+    out.append(f"{'Asset':<8}{'Exp. return':>12}{'Sample prem.':>14}"
+               + (f"{'Prior prem.':>13}" if eq else ""))
+    for t, row in under.summary().iterrows():
+        out.append(f"{t:<8}{_pct(row['expected_return']):>12}"
+                   f"{_pct(row['sample_premium']):>14}"
+                   + (f"{_pct(row['prior_premium']):>13}" if eq else ""))
+    out.append("")
+    out.append(f"{'Portfolio':<16}{'Ret':>10}{'Disp':>12}{'Sharpe':>8}   Weights")
+    if len(under) >= 2:
+        out.append(_row("Min dispersion", under.min_vol(cons).to_dict(rf)))
+        tan = under.tangency(rf, cons)
+        out.append(_row("Tangency", tan.to_dict(rf)) if tan is not None else
+                   f"{'Tangency':<16}   (no allowed mix beats the risk-free rate)")
+        out.append(_row("Max return", under.max_return(cons).to_dict(rf)))
+        note = _ignored_line(under, cons)
+        if note:
+            out.append(f"  {note}")
+    return out
+
+
 def cmd_portfolio(args) -> int:
+    assumptions = _load_assumptions(args)
     weights = {}
     for pair in args.holdings:
         ticker, sep, w = pair.partition("=")
@@ -136,16 +217,65 @@ def cmd_portfolio(args) -> int:
     args.tickers = list(weights)
     aset = _asset_set(args, rf)
     port = aset.portfolio(weights, label="Portfolio")
+    under = _under(args, aset, assumptions) if assumptions else None
     if args.json:
-        print(json.dumps({**port.to_dict(rf), "meta": _meta(aset, rf, rf_note)},
-                         indent=1))
+        payload = {**port.to_dict(rf), "meta": _meta(aset, rf, rf_note)}
+        if assumptions:
+            payload["assumed"] = under.analysis_under(
+                assumptions, weights, rf, reference_prices=under.reference_prices)
+        print(json.dumps(payload, indent=1))
         return 0
     print(_header(aset, rf_note))
     print(f"{'Portfolio':<16}{'Ret':>10}{'Disp':>12}{'Sharpe':>8}   Weights")
     print(_row("Given mix", port.to_dict(rf)))
     print()
     print(_history_lines(port.history()))
+    if assumptions:
+        print()
+        print("\n".join(_portfolio_under(under, assumptions, weights, rf)))
     return 0
+
+
+def _portfolio_under(under: AssetSet, assumptions: Assumptions, weights, rf):
+    cons = assumptions.constraints
+    mine = under.portfolio(weights, label="Portfolio")
+    fr = under.frontier(rf, constraints=cons)
+    out = [f"Under: {assumptions.name}", f"  {_prior_line(under)}",
+           f"{'Portfolio':<16}{'Ret':>10}{'Disp':>12}{'Sharpe':>8}   Weights",
+           _row("Given mix", mine.to_dict(rf))]
+    if fr.tangency is not None:
+        out.append(_row("Best mix", fr.tangency.to_dict(rf)))
+    else:
+        out.append(f"{'Best mix':<16}   (no allowed mix beats the risk-free rate)")
+    g = fr.gaps(mine)
+    why = {
+        "no_tangency": "no allowed mix beats the risk-free rate",
+        "solver": "the optimizer couldn't finish this comparison",
+    }
+    steady = "your portfolio is steadier than any mix your limits allow"
+    below = "your portfolio earns less than any mix your limits allow"
+    above = "your portfolio earns more than any mix your limits allow"
+
+    def line(label, val, fmt, reason):
+        text = fmt(val) if val is not None else f"n/a: {reason}"
+        out.append(f"  {label:<40}{text}")
+    points = lambda x: f"{100 * x:.2f} points"  # noqa: E731
+    out.append("How far is your portfolio from the best mix?")
+    line("Risk-adjusted return (Sharpe) gap", g["sharpe_gap"],
+         lambda x: f"{x:.2f}", why.get(g["sharpe_gap_reason"]))
+    line("Return you could add at the same risk", g["return_gap"], points,
+         steady if g["return_gap_reason"] == "below_range"
+         else why.get(g["return_gap_reason"]))
+    line("Risk you could shed at the same return", g["risk_gap"], points,
+         {"below_range": below, "above_range": above}.get(
+             g["risk_gap_reason"], why.get(g["risk_gap_reason"])))
+    if g["violations"]:
+        out.append("Your portfolio breaks these limits:")
+        out.extend(f"  - {v}" for v in g["violations"])
+    note = _ignored_line(under, cons)
+    if note:
+        out.append(f"  {note}")
+    return out
 
 
 def _history_lines(h) -> str:
@@ -279,6 +409,12 @@ def _add_common(sub, tickers=True):
     sub.add_argument("--json", action="store_true", help="raw JSON payload")
 
 
+def _add_assumptions(sub):
+    sub.add_argument("--assumptions", metavar="FILE.json",
+                     help="also show the result under these assumptions "
+                          "(limits + long-run view; see docs/CLI.md)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="condor", description="Condor Funds portfolio analytics")
@@ -286,12 +422,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     a = cmds.add_parser("analyze", help="per-asset stats + anchor portfolios")
     _add_common(a)
+    _add_assumptions(a)
     a.set_defaults(fn=cmd_analyze)
 
     p = cmds.add_parser("portfolio", help="performance of a given mix")
     p.add_argument("holdings", nargs="+", metavar="TICKER=WEIGHT",
                    help="e.g. MSFT=30 NEE=40 CVX=30 (any scale; normalized)")
     _add_common(p, tickers=False)
+    _add_assumptions(p)
     p.set_defaults(fn=cmd_portfolio)
 
     f = cmds.add_parser("frontier", help="the efficient frontier point by point")
@@ -317,6 +455,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except (ValueError, KeyError) as e:
         print(f"error: {e}", file=sys.stderr)
+        return 2
+    except OptimizationError as e:
+        print(f"error: the optimizer couldn't solve this ({e})", file=sys.stderr)
         return 2
 
 

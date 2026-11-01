@@ -55,6 +55,9 @@ urlpatterns = [
          name="api_account_contribution_confirm"),
     path("api/account/forecast", account.api_account_forecast,
          name="api_account_forecast"),
+    path("api/assumptions", views.api_assumptions, name="api_assumptions"),
+    path("api/assumptions/<uuid:pid>", views.api_assumption,
+         name="api_assumption"),
     path("api/portfolios", views.api_portfolios, name="api_portfolios"),
     path("api/portfolios/<uuid:pid>", views.api_portfolio, name="api_portfolio"),
 ]

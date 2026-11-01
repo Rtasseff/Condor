@@ -173,3 +173,126 @@ class TestPremiumAndMeta:
         code, out = run(capsys, "portfolio", "AAA=1", "BBB=1")
         assert "worst fall" in out and "worst year" in out and "growth/year" in out
         assert "fixed weights" in out
+
+
+class TestAssumptions:
+    SET = {"name": "Cautious",
+           "prior": {"kind": "equilibrium", "reference": "VT", "t0": 20},
+           "constraints": {"bounds": {"AAA": {"max": 0.3}, "ZZZ": {"max": 0.1}},
+                           "groups": [{"tickers": ["BBB", "CCC"], "max": 0.8}]}}
+
+    @pytest.fixture(autouse=True)
+    def with_proxy(self, monkeypatch, prices):
+        rng = np.random.default_rng(5)
+        vt = pd.Series(100 * np.cumprod(1 + 0.0004 + 0.008 *
+                       rng.standard_normal(len(prices))), index=prices.index,
+                       name="VT")
+        self.fetched = []
+
+        def fetch(tickers, years=10, source=None):
+            self.fetched.append(list(tickers))
+            both = prices.join(vt)
+            return both[[t.upper() for t in tickers]]
+        monkeypatch.setattr(cli, "fetch_prices", fetch)
+
+    def file(self, tmp_path, d=None):
+        f = tmp_path / "a.json"
+        f.write_text(json.dumps(d or self.SET))
+        return str(f)
+
+    def test_analyze_text_adds_an_under_section(self, capsys, tmp_path):
+        code, out = run(capsys, "analyze", "AAA", "BBB", "CCC",
+                        "--assumptions", self.file(tmp_path))
+        assert code == 0
+        assert "Under: Cautious" in out and "Sample prem." in out
+        assert "Prior prem." in out and "Max return" in out
+        assert "not used here: ZZZ" in out
+        assert "view on" not in out
+        assert out.index("Tangency") < out.index("Under: Cautious")
+        assert self.fetched == [["AAA", "BBB", "CCC"], ["VT"]]
+
+    def test_analyze_json_has_assumed(self, capsys, tmp_path):
+        code, out = run(capsys, "analyze", "AAA", "BBB", "CCC", "--json",
+                        "--assumptions", self.file(tmp_path))
+        d = json.loads(out)
+        assert d["assumed"]["name"] == "Cautious"
+        assert d["assumed"]["tangency"]["weights"]["AAA"] <= 0.3 + 1e-6
+        plain = json.loads(run(capsys, "analyze", "AAA", "BBB", "CCC",
+                               "--json")[1])
+        assert "assumed" not in plain
+        d.pop("assumed")
+        assert d == plain
+
+    def test_portfolio_gaps_and_violations(self, capsys, tmp_path):
+        code, out = run(capsys, "portfolio", "AAA=60", "BBB=20", "CCC=20",
+                        "--assumptions", self.file(tmp_path))
+        assert code == 0
+        assert "Under: Cautious" in out
+        assert "Risk-adjusted return (Sharpe) gap" in out
+        assert "Return you could add at the same risk" in out
+        assert "AAA 60.0% is above its 30.0% limit" in out
+
+    def test_portfolio_json(self, capsys, tmp_path):
+        code, out = run(capsys, "portfolio", "AAA=60", "BBB=40", "--json",
+                        "--assumptions", self.file(tmp_path))
+        assert set(json.loads(out)["assumed"]["gaps"]) >= {"sharpe_gap",
+                                                           "violations"}
+
+    def test_errors(self, capsys, tmp_path):
+        f = self.file(tmp_path)
+        assert cli.main(["analyze", "AAA", "BBB", "--no-premium",
+                         "--assumptions", f]) == 2
+        assert "needs premium mode" in capsys.readouterr().err
+        assert cli.main(["analyze", "AAA", "BBB", "--assumptions",
+                         str(tmp_path / "missing.json")]) == 2
+        assert "can't read" in capsys.readouterr().err
+        bad = self.file(tmp_path, {**self.SET, "prior": {"t0": -1}})
+        assert cli.main(["analyze", "AAA", "BBB", "--assumptions", bad]) == 2
+        assert "prior.t0" in capsys.readouterr().err
+        infeasible = self.file(tmp_path, {"name": "x", "constraints": {"bounds": {
+            "AAA": {"min": 0.7}, "BBB": {"min": 0.7}}}})
+        assert cli.main(["analyze", "AAA", "BBB", "--assumptions",
+                         infeasible]) == 2
+        assert "can't all hold" in capsys.readouterr().err
+
+    def test_unused_view_and_partial_group_min_are_listed(self, capsys, tmp_path):
+        d = {"name": "x", "prior": {"views": [{"ticker": "QQQ", "ret": .1, "sd": .05}]},
+             "constraints": {"groups": [{"tickers": ["AAA", "QQQ"], "min": 0.1}]}}
+        code, out = run(capsys, "analyze", "AAA", "BBB",
+                        "--assumptions", self.file(tmp_path, d))
+        assert code == 0
+        assert "minimum not used: QQQ isn't in this mix" in out
+        assert "view on QQQ" in out
+
+    def test_optimizer_error_is_a_clean_exit(self, capsys, tmp_path, monkeypatch):
+        from pypfopt.exceptions import OptimizationError
+
+        def boom(*a, **k):
+            raise OptimizationError("nope")
+        monkeypatch.setattr("condor.model._constrained_tangency", boom)
+        code = cli.main(["analyze", "AAA", "BBB", "--assumptions",
+                         self.file(tmp_path)])
+        assert code == 2 and "optimizer couldn't solve" in capsys.readouterr().err
+
+    def test_proxy_resolution_is_shared(self):
+        from condor.assumptions import Prior
+        from condor.data import resolve_proxy
+        seen = []
+
+        def fetch(t, years=10, source=None):
+            seen.append((t, years, source))
+            return pd.DataFrame({"VT": [1.0]})
+        assert resolve_proxy(Prior("history"), ["A"], fetch=fetch) is None
+        assert resolve_proxy(Prior("equilibrium", "A"), ["A"], fetch=fetch) is None
+        assert list(resolve_proxy(Prior("equilibrium"), ["A"], 7, "tiingo",
+                                  fetch)) == [1.0]
+        assert seen == [(["VT"], 7, "tiingo")]
+
+    def test_gap_wording_follows_the_reason(self, capsys, tmp_path):
+        d = {"name": "x", "constraints": {"bounds": {"AAA": {"min": 0.9}}}}
+        code, out = run(capsys, "portfolio", "AAA=0", "BBB=100", "CCC=0",
+                        "--assumptions", self.file(tmp_path, d))
+        assert code == 0
+        assert ("n/a: your portfolio is steadier than any mix your limits allow" in out
+                or "n/a: your portfolio earns less than any mix your limits allow" in out
+                or "n/a: your portfolio earns more than any mix your limits allow" in out)

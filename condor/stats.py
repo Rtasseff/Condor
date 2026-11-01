@@ -35,6 +35,10 @@ minus the T-bill's return per period): `excess_returns`, `premium_annual`.
 This removes the period mismatch that made a T-bill fund look like a
 winner (ADR 0006).  Sigma always stays on raw returns.
 
+Assumptions mode (ADR 0008) adds a prior on premiums: `equilibrium_premiums`
+(`Pi = delta * Sigma w_ref`), `blend_premiums` (the prior counts as T0 years
+of data) and `apply_views` (Black-Litterman absolute views).
+
 Everything is annualized at the engine boundary (252 for "D", 12 for "M").
 """
 
@@ -280,3 +284,76 @@ def asset_points(mu: pd.Series, sigma: pd.DataFrame) -> list[dict]:
         {"ticker": t, "ret": float(mu[t]), "vol": float(v)}
         for t, v in zip(mu.index, vols)
     ]
+
+
+# ----------------------------------------------------------------------
+# assumptions mode: a prior on premiums (ADR 0008)
+# ----------------------------------------------------------------------
+def equilibrium_premiums(sigma: pd.DataFrame, reference,
+                         market_premium: float) -> pd.Series:
+    """Equilibrium premiums ``Pi = delta * Sigma w`` for a reference mix.
+
+    `reference` is a ticker in `sigma` or a ``{ticker: weight}`` dict
+    (normalized).  ``delta = market_premium / (w' Sigma w)``, so the
+    reference's own premium is exactly `market_premium` and every asset's
+    premium is ``market_premium * beta_i`` (its covariance with the
+    reference over the reference's variance).
+    """
+    if isinstance(reference, str):
+        reference = {reference: 1.0}
+    missing = [t for t in reference if t not in sigma.index]
+    if missing:
+        raise ValueError(f"reference {missing[0]} is not in the risk matrix")
+    w = pd.Series(0.0, index=sigma.index)
+    for t, x in reference.items():
+        w[t] = float(x)
+    if (w < 0).any() or w.sum() <= 0:
+        raise ValueError("reference weights must be non-negative and sum above 0")
+    w = w / w.sum()
+    s = sigma.to_numpy(dtype=float)
+    var = float(w.to_numpy() @ s @ w.to_numpy())
+    if var <= 0:
+        raise ValueError("the reference has no dispersion")
+    pi = (float(market_premium) / var) * (s @ w.to_numpy())
+    return pd.Series(pi, index=sigma.index, name="prior_premium")
+
+
+def effective_years(t_years: float, method: str = "normal") -> float:
+    """Years of data the history counts as: the robust (median) estimator is
+    less efficient than the mean by 2/pi, so its window counts for less."""
+    _check_method(method)
+    return float(t_years) * (2.0 / np.pi if method == "robust" else 1.0)
+
+
+def blend_premiums(prior: pd.Series, sample: pd.Series, t0: float,
+                   t_years: float, method: str = "normal") -> pd.Series:
+    """``(T0 * prior + T * sample) / (T0 + T)``: the prior counts as `t0`
+    years of data.  For ``method="robust"`` T is scaled by 2/pi."""
+    t_eff = effective_years(t_years, method)
+    total = float(t0) + t_eff
+    if total <= 0:
+        return sample.copy()
+    return (float(t0) * prior + t_eff * sample) / total
+
+
+def apply_views(mu: pd.Series, sigma: pd.DataFrame, tau: float,
+                views) -> pd.Series:
+    """Black-Litterman absolute views on top of `mu`.
+
+    `views` is a sequence of ``(ticker, q, sd)``: the view's value in the same
+    units as `mu`, and its standard deviation (``omega = diag(sd^2)``).  With
+    no views `mu` comes back unchanged.
+    """
+    views = list(views)
+    if not views:
+        return mu
+    from pypfopt.black_litterman import BlackLittermanModel
+
+    absolute = {t: float(q) for t, q, _ in views}
+    omega = np.diag([float(sd) ** 2 for _, _, sd in views])
+    # The posterior uses only tau * Sigma, and pypfopt rejects tau > 1 (short
+    # windows, T0 = 0), so hand it tau * Sigma with tau = 1: same numbers.
+    bl = BlackLittermanModel(sigma * float(tau), pi=mu, absolute_views=absolute,
+                             omega=omega, tau=1.0)
+    post = bl.bl_returns()
+    return post.reindex(mu.index).astype(float)

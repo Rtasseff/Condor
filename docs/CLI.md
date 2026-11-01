@@ -78,6 +78,10 @@ python -m condor portfolio MSFT=30 NEE=40 CVX=30
 # recovered or not yet), worst calendar year, growth per year. It is a
 # fixed-weights backtest, rebalanced every period.
 
+# ...and under your own limits and a long-run view (see section 4b):
+python -m condor portfolio MSFT=30 NEE=40 CVX=30 --assumptions mine.json
+python -m condor analyze MSFT NEE CVX --assumptions mine.json
+
 # The whole efficient frontier, point by point:
 python -m condor frontier MSFT NEE CVX
 
@@ -109,6 +113,43 @@ python -m condor data purge AAPL
 `history`.
 
 `python -m condor <command> --help` shows the full list per command.
+
+## 4b. Under your assumptions
+
+History alone mostly picks whatever won lately. `analyze` and `portfolio`
+take `--assumptions FILE.json`: your limits on how much of each asset to
+hold, plus a long-run view of what assets should earn. The normal output is
+unchanged; an `Under: <name>` section is added after it. (`--json` gains an
+`assumed` key with the same shape as the web app's.) It needs premium mode,
+so it can't be combined with `--no-premium`.
+
+```json
+{"name": "My limits",
+ "prior": {"kind": "equilibrium", "reference": "VT", "market_premium": null,
+           "t0": 20, "views": [{"ticker": "MSFT", "ret": 0.10, "sd": 0.05}]},
+ "constraints": {"bounds": {"MSFT": {"min": 0.05, "max": 0.30}},
+                 "groups": [{"tickers": ["MSFT", "NEE"], "max": 0.40}]}}
+```
+
+- **bounds / groups** — the smallest and largest share (0 to 1) of a single
+  asset, or of several taken together. `min` defaults to 0, `max` to 1.
+  Limits on assets that aren't in this run are listed as not used.
+- **prior.kind** — `equilibrium` (default) blends your history with a
+  long-run view; `history` keeps history only.
+- **reference** — the market proxy (default `VT`), fetched separately if it
+  isn't one of your tickers. **market_premium** — what the market is assumed
+  to pay above T-bills each year; `null` means the long-run anchor (8%) less
+  today's T-bill rate. **t0** — how many years of data the long-run view
+  counts as (the robust method counts your history as fewer years).
+- **views** — your own expected annual return for an asset, and how many
+  points (`sd`, 0.05 = 5 points) either way you could be off.
+
+`portfolio` then shows the best mix under your limits and three gaps:
+risk-adjusted return (Sharpe), the return you could add at the same risk,
+and the risk you could shed at the same return. A gap is `n/a` when no mix
+within your limits can be compared with yours, and any limit your portfolio
+breaks is listed by name. The error `These limits can't all hold` means the
+limits contradict each other (for example, minimums adding up to over 100%).
 
 ## 5. When something goes wrong
 
