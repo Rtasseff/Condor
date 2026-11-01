@@ -194,5 +194,4 @@ Mark the registry row merged (or remove it) in the same commit.
 
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
-| `account-plans` | `feature/account-plans` | 8001 | 2026-10-24 | Brief committed (ADR 0007, format v1.1), rebased on e44d3e3; awaiting a branch session |
 

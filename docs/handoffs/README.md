@@ -26,3 +26,6 @@ Merged (kept as records):
 - `stats-honesty.md` — `feature/stats-honesty`, merged 2026-11-01:
   expected return = T-bill + premium, constant-correlation shrinkage,
   portfolio history, CLI meta (ADR 0006).
+- `account-plans.md` — `feature/account-plans`, merged 2026-11-01:
+  pay-in tracker, rule alerts, XIRR, combined total; format v1.1
+  (ADR 0007).

@@ -38,7 +38,7 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     dividend/interest/fee kinds, R4 CSV import/export into read-only
     mirror accounts, R5 one currency per account, R6 accreting bills,
     account selector.
-  - **B `account-plans`** — *built, see Done* (ADR 0007, format v1.1): R7 rule alerts (index >10% below
+  - **B `account-plans`** — *merged 2026-11-01* (ADR 0007, format v1.1): R7 rule alerts (index >10% below
     52-wk high, position >X% below avg cost, drift >N pp), R8 pay-in
     tracker (N tranches, bought-vs-plan, reservoir asset, drift alerts
     muted until done; **whole-share catch-up**: each tranche line
@@ -136,7 +136,9 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   ADR 0005); ~~dividends~~ (done: dividend/interest/fee kinds) — splits
   still open; benchmark overlay on the value chart (SPY / your setpoint
   held passively); ~~CSV export of the ledger~~ (done:
-  `export_ledger`).
+  `export_ledger`). Broker-cent cash: E*Trade rounds each buy's cash
+  debit to the cent (cost stays at the fill price), so a half-cent fill
+  leaves Condor half a cent off the broker's cash (seen 2026-11-01).
 - [ ] **Scenario simulators** — "what if 2008 / 2020 / rates +3%" replay on
   the current portfolio; Monte Carlo on the estimated μ/Σ.
 - [ ] **Optimization constraints:** per-asset max weight, min position,

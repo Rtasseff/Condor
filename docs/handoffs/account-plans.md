@@ -1,5 +1,7 @@
 # Handoff — `feature/account-plans`
 
+**Merged 2026-11-01**; branch and worktree removed.
+
 <!-- Copy of docs/handoffs/_template.md, seeded by scripts/new-worktree.sh.
      Lives at docs/handoffs/account-plans.md on the branch. Keep "Status" current. -->
 
