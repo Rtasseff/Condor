@@ -32,10 +32,11 @@ let fmt2, fmt0, fmtP, SYM = "$";
 function setCurrency(code) {
   CCY = code || "USD";
   const f = (digits) => new Intl.NumberFormat(undefined, {
-    style: "currency", currency: CCY,
+    style: "currency", currency: CCY, currencyDisplay: "narrowSymbol",
     minimumFractionDigits: digits, maximumFractionDigits: digits });
   fmt2 = f(2);
   fmtP = new Intl.NumberFormat(undefined, { style: "currency", currency: CCY,
+    currencyDisplay: "narrowSymbol",
     minimumFractionDigits: 2, maximumFractionDigits: 4 });
   fmt0 = f(0);
   SYM = fmt2.formatToParts(0).find((p) => p.type === "currency").value;
@@ -45,7 +46,9 @@ setCurrency("USD");
 const money = (x) => fmt2.format(+x);
 const moneyP = (x) => fmtP.format(+x);   // per-unit prices: up to 4 dp
 const money0 = (x) => fmt0.format(Math.round(+x));
-const signed = (x) => (x < 0 ? "−" : "+") + money(Math.abs(x));
+const signed = (x) => (x < 0 ? "−" : x > 0 ? "+" : "") + money(Math.abs(x));
+// line keys come from the source ledger as slugs: real_yield -> real yield
+const lineName = (key) => String(key).replace(/_/g, " ");
 const pct = (x, d = 1) => (100 * x).toFixed(d) + "%";
 
 // The cash sleeve of a hypothetical forecast earns this (server-rendered
@@ -188,7 +191,8 @@ function renderTiles() {
   g.textContent = (d.gain >= 0 ? "+" : "−") + money(Math.abs(d.gain)).slice(0);
   g.classList.toggle("neg", d.gain < 0);
   const r = $("a-twr");
-  r.textContent = (d.twr >= 0 ? "+" : "") + pct(d.twr);
+  r.textContent = (d.twr >= 0 ? "+" : "")
+    + pct(d.twr, Math.abs(d.twr) < 0.01 ? 2 : 1);
   r.classList.toggle("neg", d.twr < 0);
   const x = $("a-xirr");
   if (d.xirr == null) {
@@ -202,7 +206,7 @@ function renderTiles() {
   gb.hidden = !d.events.length;
   gb.textContent = `Realized ${signed(d.realized_total)} · `
     + `Unrealized ${signed(d.unrealized_total)} · `
-    + `Income ${money(d.income_total)} · Fees −${money(d.charges_total)}`;
+    + `Income ${money(d.income_total)} · Fees ${d.charges_total > 0 ? "−" : ""}${money(d.charges_total)}`;
   // the empty-account copy folded into the starter card above (bridge 1)
   $("a-asof").textContent = d.events.length
     ? `Valued at the ${d.as_of} close. Money you put in counts as ` +
@@ -235,6 +239,11 @@ function clearTranche() {
 function renderPayin() {
   const p = state.data.payin;
   $("payin").hidden = !p;
+  // during a pay-in the buy list IS the plan; a rebalance or a DCA plan
+  // would tell you to do something else with the same money
+  const paying = Boolean(p && !p.complete);
+  $("planbtn").hidden = paying;
+  $("schedule").hidden = paying;
   if (!p) return;
   $("payin-title").textContent = p.complete
     ? `Pay-in: complete (${p.n} of ${p.n} tranches)`
@@ -249,7 +258,7 @@ function renderPayin() {
   for (const r of p.rows) {
     const tr = document.createElement("tr");
     const label = r.tickers.length === 1 && r.tickers[0].toLowerCase() === r.line
-      ? r.tickers[0] : `${r.line} (${r.tickers.join(", ")})`;
+      ? r.tickers[0] : `${lineName(r.line)} (${r.tickers.join(", ")})`;
     tr.append(td(label), td(r.timing || "—"), td(money(r.plan), "num"),
               td(money(r.bought), "num"),
               // the reservoir is a standing balance, not something bought toward a plan
@@ -299,7 +308,8 @@ function renderTranche() {
   $("payin-buytitle").textContent = `Buy list for tranche ${t.through}`;
   const tb = $("payin-orders").querySelector("tbody");
   tb.replaceChildren();
-  for (const o of t.orders) {
+  const rows = t.orders.filter((o) => o.qty > 0 || o.note);
+  for (const o of rows) {
     const tr = document.createElement("tr");
     tr.append(td(o.timing === "lump" ? `${o.ticker} (lump)` : o.ticker),
               td(money(o.due), "num"), td(String(o.qty), "num"),
@@ -307,9 +317,9 @@ function renderTranche() {
               td(o.note || ""));
     tb.appendChild(tr);
   }
-  if (!t.orders.length) {
+  if (!rows.length) {
     const tr = document.createElement("tr");
-    const c = td("Nothing to buy.");
+    const c = td("Nothing to buy through this tranche.");
     c.colSpan = 6;
     tr.appendChild(c);
     tb.appendChild(tr);
@@ -345,7 +355,7 @@ function renderRules() {
     if (r.rule === "drift" && r.breaches.length) {
       const small = document.createElement("small");
       small.textContent = " — " + r.breaches.map(
-        (b) => `${b.line} ${b.weight.toFixed(1)}% vs ${b.target.toFixed(1)}%`
+        (b) => `${lineName(b.line)} ${b.weight.toFixed(1)}% vs ${b.target.toFixed(1)}%`
       ).join(", ");
       first.appendChild(small);
     }
@@ -367,7 +377,9 @@ function renderRules() {
       status.textContent = "Not fired";
     }
     tr.append(first,
-              td(r.measured == null ? "—" : r.measured.toFixed(1) + unit, "num"),
+              td(r.measured == null ? "—"
+                : r.measured < 0 ? `${(-r.measured).toFixed(1)}${unit} above`
+                : r.measured.toFixed(1) + unit, "num"),
               td(r.threshold + unit, "num"), status);
     tb.appendChild(tr);
   }
@@ -446,6 +458,8 @@ function renderChart() {
   const has = s.dates.length > 1;
   $("chartcard2").hidden = !has;
   if (!has) return;
+  // daily data: never tick hours, however short the history
+  const young = s.dates.length <= 14 ? { dtick: 86400000 } : {};
   Plotly.react("achart", [
     {
       x: s.dates, y: s.value, mode: "lines", name: "Account value",
@@ -465,6 +479,7 @@ function renderChart() {
       type: "date", gridcolor: C.grid, zerolinecolor: C.axis,
       fixedrange: true, showspikes: true, spikethickness: 1,
       spikedash: "dot", spikecolor: C.axis,
+      tickformat: "%b %-d", ...young,
       // the consumer way to "zoom": preset ranges, not drag gestures
       rangeselector: {
         bgcolor: C.surface, activecolor: C.axis, bordercolor: C.grid,
@@ -481,7 +496,7 @@ function renderChart() {
     yaxis: { tickprefix: SYM, tickformat: ",.0f",
              gridcolor: C.grid, zerolinecolor: C.axis, fixedrange: true },
     hovermode: "x unified", hoverdistance: 30,
-    legend: { orientation: "h", x: 0, y: 1.12, itemclick: false,
+    legend: { orientation: "h", x: 1, xanchor: "right", y: 1.12, itemclick: false,
       itemdoubleclick: false, font: { color: C.ink2, size: 12 } },
     dragmode: false,
     hoverlabel: { bgcolor: "#182238", font: { color: C.ink, size: 13 } },
