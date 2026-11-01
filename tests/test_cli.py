@@ -180,7 +180,7 @@ class TestScenariosAndStability:
         code, out = run(capsys, "portfolio", "AAA=1", "BBB=1")
         assert code == 0
         assert "Stress periods" in out and "2020 Covid crash" in out
-        assert "not in this mix's shared history" in out   # 2008: data is 2022+
+        assert "before this analysis starts (2022-01-03)" in out   # 2008: data is 2022+
 
     def test_portfolio_json_carries_scenarios(self, capsys):
         code, out = run(capsys, "portfolio", "AAA=1", "BBB=1", "--json")
@@ -200,6 +200,19 @@ class TestScenariosAndStability:
         assert d["stability"]["n"] == 6 and "scenarios" in d
         plain = json.loads(run(capsys, "analyze", "AAA", "BBB", "CCC", "--json")[1])
         assert "stability" not in plain
+
+    def test_stability_json_with_one_ticker_is_null_not_a_crash(self, capsys):
+        code, out = run(capsys, "analyze", "AAA", "--json", "--stability", "5")
+        assert code == 0 and json.loads(out)["stability"] is None
+
+    def test_infeasible_limits_are_a_clean_error(self, capsys, tmp_path):
+        f = tmp_path / "a.json"
+        f.write_text(json.dumps({"name": "x", "prior": {"kind": "history"},
+            "constraints": {"bounds": {"AAA": {"min": 0.7}, "BBB": {"min": 0.7}}}}))
+        code = cli.main(["analyze", "AAA", "BBB", "--stability", "3",
+                         "--assumptions", str(f)])
+        assert code == 2
+        assert "beat the risk-free" not in capsys.readouterr().out
 
     def test_bare_stability_flag_means_100(self):
         args = cli.build_parser().parse_args(["analyze", "AAA", "BBB", "--stability"])

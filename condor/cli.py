@@ -156,10 +156,13 @@ def cmd_analyze(args) -> int:
             payload["assumed"] = under.analysis_under(
                 assumptions, None, rf, reference_prices=under.reference_prices)
         if args.stability is not None:
-            payload["stability"] = aset.stability(rf, n=args.stability)
+            ok = len(aset) >= 2     # one asset has nothing to optimize
+            payload["stability"] = (aset.stability(rf, n=args.stability)
+                                    if ok else None)
             if assumptions:
-                payload["assumed"]["stability"] = under.stability(
-                    rf, assumptions.constraints, n=args.stability)
+                payload["assumed"]["stability"] = (
+                    under.stability(rf, assumptions.constraints,
+                                    n=args.stability) if ok else None)
         print(json.dumps(payload, indent=1))
         return 0
     out = [_header(aset, rf_note)]
@@ -323,8 +326,11 @@ def _scenario_lines(rows: list[dict]) -> str:
             out.append(f"  {w['name']:<24}{_pct(w['ret']):>9}"
                        f"{_pct(w['max_drawdown']):>12}")
         else:
-            out.append(f"  {w['name']:<24}not in this mix's shared history "
-                       f"(starts {w['first']})")
+            out.append(f"  {w['name']:<24}" + {
+                "before_start": f"before this analysis starts ({w['first']})",
+                "after_end": "after this analysis ends",
+                "no_trading_days": "no trading days in this period",
+            }[w["reason"]])
     return "\n".join(out)
 
 

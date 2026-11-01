@@ -6,7 +6,9 @@ re-runs its *own* estimators and solver; nothing here estimates or
 optimizes.
 
     block_indices(n, block, rng)       row indices of one resample
+    split_block_indices(...)           the same, with a younger proxy's rows kept apart
     resample_prices(prices, idx)       prices rebuilt from resampled returns
+    align_reference / resample_reference  an outside market proxy on the same rows
     resample_series(values, dates, idx) a daily series (T-bill) on the same rows
     summarize(weights, tickers, ...)   p10 / p50 / p90 and held share per asset
 
@@ -41,6 +43,51 @@ def block_indices(n: int, block: int, rng: np.random.Generator) -> np.ndarray:
     starts = rng.integers(0, n - block + 1, n_blocks)
     idx = (starts[:, None] + np.arange(block)[None, :]).ravel()
     return idx[:n]
+
+
+def split_block_indices(n: int, block: int, rng: np.random.Generator,
+                        first_valid: int = 0) -> np.ndarray:
+    """`block_indices`, drawn separately before and from `first_valid` on.
+
+    A market proxy that starts after the set only exists from row
+    `first_valid`; keeping the later rows' draws among the later rows
+    means every resampled row there has a proxy return, as in the original
+    run.  `first_valid=0` is plain `block_indices`.
+    """
+    if first_valid <= 0 or first_valid >= n:
+        return block_indices(n, block, rng)
+    return np.concatenate([
+        block_indices(first_valid, block, rng),
+        first_valid + block_indices(n - first_valid, block, rng)])
+
+
+def align_reference(ref: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
+    """The proxy's prices on `index`: forward-filled, missing before it starts."""
+    r = ref.dropna().sort_index()
+    return r.reindex(r.index.union(index)).ffill().reindex(index)
+
+
+def resample_reference(aligned: pd.Series, idx: np.ndarray) -> pd.Series:
+    """The proxy rebuilt from the same rows as the assets.
+
+    `aligned` is `align_reference(...)` on the prices' index and `idx` the
+    resample of its `len(aligned) - 1` daily rows, drawn with
+    `split_block_indices(..., first_valid)`.  The result starts at the
+    proxy's first date and covers only the dates from there on, each return
+    coming from the row the assets drew, so a join with the resampled
+    prices sees the same rows the original run does.
+    """
+    idx = np.asarray(idx)
+    first = aligned.first_valid_index()
+    if first is None:
+        raise ValueError("the market proxy has no prices in this window")
+    f = aligned.index.get_loc(first)
+    rr = aligned.pct_change().iloc[1:].to_numpy(dtype=float)
+    if idx.shape != (len(rr),):
+        raise ValueError(f"expected {len(rr)} indices, got {idx.shape}")
+    grown = 100.0 * np.cumprod(1.0 + rr[idx[f:]])
+    return pd.Series(np.concatenate([[100.0], grown]),
+                     index=aligned.index[f:], name=aligned.name)
 
 
 def resample_prices(prices: pd.DataFrame, idx: np.ndarray) -> pd.DataFrame:

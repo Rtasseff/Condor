@@ -609,6 +609,10 @@ class AssetSet:
         return out
 
     # -- stability of the best mix ------------------------------------------
+    def _aligned_reference(self) -> pd.Series:
+        return _stability.align_reference(self._reference_prices,
+                                          self.prices.index)
+
     def _resampled(self, idx) -> "AssetSet":
         """This set rebuilt on resampled history: the daily return rows
         `idx` picked for every asset, the T-bill and an outside market
@@ -620,17 +624,7 @@ class AssetSet:
               _stability.resample_series(self._rf_history, dates, idx))
         ref = None
         if self._reference_prices is not None:
-            # the proxy's own daily returns on this set's dates; rows before
-            # it starts stay missing and are dropped after the reshuffle
-            r = self._reference_prices.dropna().sort_index()
-            r = r.reindex(r.index.union(self.prices.index)).ffill()
-            r = r.reindex(self.prices.index).pct_change().iloc[1:]
-            ok = r.to_numpy(dtype=float)[np.asarray(idx)]
-            grown = 100.0 * np.cumprod(np.where(np.isnan(ok), 0.0, ok) + 1.0)
-            grown[np.isnan(ok)] = np.nan
-            ref = pd.Series(np.concatenate([[100.0], grown]),
-                            index=self.prices.index,
-                            name=self._reference_prices.name).dropna()
+            ref = _stability.resample_reference(self._aligned_reference(), idx)
         return AssetSet(prices, method=self.method,
                         names={a.ticker: a.name for a in self.assets if a.name},
                         rf_history=rf, rf_level=self._rf_level,
@@ -659,15 +653,25 @@ class AssetSet:
             return self.with_options(rf_level=risk_free_rate).stability(
                 risk_free_rate, constraints, n, block, seed)
         resolved = self._resolved(constraints)
+        # Once, on the set itself: infeasible limits, a proxy that overlaps
+        # too little, a missing market proxy.  These are the caller's to fix
+        # and raise ValueError; they must not read as "nothing beat the rate".
+        self.tangency(risk_free_rate, resolved)
+        first_valid = 0
+        if self._reference_prices is not None:
+            aligned = self._aligned_reference()
+            first_valid = int(aligned.index.get_loc(aligned.first_valid_index()))
         rng = np.random.default_rng(seed)
         n_rows = len(self.prices) - 1
         ok, failed = [], 0
         for _ in range(int(n)):
-            idx = _stability.block_indices(n_rows, block, rng)
+            idx = _stability.split_block_indices(n_rows, block, rng, first_valid)
             try:
                 p = self._resampled(idx).tangency(risk_free_rate, resolved)
             except (ValueError, OptimizationError, cp.error.SolverError,
                     np.linalg.LinAlgError, FloatingPointError):
+                # the set itself solved, so what is left is the optimizer
+                # failing on this resample (it raises ValueError for that)
                 p = None
             if p is None:
                 failed += 1
@@ -745,7 +749,7 @@ class AssetSet:
         if constraints is not None:
             result["gaps"] = fr.gaps(mine)
         result["scenarios"] = {
-            "basis": "value_index",
+            "basis": "fixed_weights_daily",
             "portfolio": mine.scenarios(scenario_windows),
             "tangency": (fr.tangency.scenarios(scenario_windows)
                          if fr.tangency is not None else None)}
@@ -864,13 +868,20 @@ class Portfolio:
         `windows` is a list of `{name, start, end}` (dates, ISO strings);
         default `history.SCENARIOS`.  Each result carries the window plus
         `ret`, `max_drawdown`, `covered`, `first` from `history.window_stats`
-        on the fixed-weight `value_index`.  A window the shared history
+        on a fixed-weight series rebalanced every *day* from the set's
+        prices, whatever the set's `timeframe` (a monthly grid would land
+        weeks away from the stated dates).  A window the shared history
         doesn't cover has `covered: False` and null numbers.  Raises
         ValueError for a window whose start is not before its end.
         """
+        prices = self.asset_set.prices
+        daily = prices.pct_change().iloc[1:].to_numpy(dtype=float) @ self._w
+        values = pd.Series(
+            100.0 * np.concatenate([[1.0], np.cumprod(1.0 + daily)]),
+            index=prices.index)
         out = []
         for w in (_history.SCENARIOS if windows is None else windows):
-            st = _history.window_stats(self.value_index, w["start"], w["end"])
+            st = _history.window_stats(values, w["start"], w["end"])
             out.append({"name": w["name"], "start": str(w["start"]),
                         "end": str(w["end"]), **st})
         return out

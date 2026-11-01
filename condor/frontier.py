@@ -229,7 +229,6 @@ def compute_analysis(
     basis: str = "arithmetic",
     rf_history: pd.Series | None = None,
     rf_level: float | None = None,
-    scenario_windows=None,
 ) -> dict:
     """Full analysis payload for a set of assets (procedural facade).
 
@@ -250,6 +249,5 @@ def compute_analysis(
     return AssetSet(prices, method=method, metric=metric, timeframe=timeframe,
                     samp_int=samp_int, basis=basis, rf_history=rf_history,
                     rf_level=rf_level).analysis(
-        weights=weights, risk_free_rate=risk_free_rate, n_points=n_points,
-        scenario_windows=scenario_windows
+        weights=weights, risk_free_rate=risk_free_rate, n_points=n_points
     )

@@ -47,6 +47,9 @@ const state = {
   builtinWindows: null, // the server's default scenario windows, echoed back
   customWindow: null,   // {name, start, end} the visitor added; never saved
   stabBusy: false,
+  stabSeq: 0,           // bumps when a newer analyze (or stability run) supersedes
+  stabKind: null,       // "history" | "set": what the bands on screen came from
+  analyzeSeq: 0,
 };
 
 // What the server says this user actually has to optimize (fix 1/2). The
@@ -72,6 +75,8 @@ const asmHooks = {
   request: () => null,    // -> assumptions object to send, or null
   render: (assumed) => {},  // the response's `assumed` block (or undefined)
   assetsChanged: () => {},
+  showing: () => false,   // is the comparison switched on?
+  changed: () => {},      // the comparison was switched off
 };
 
 const pct = (x, d = 1) => (100 * x).toFixed(d) + "%";
@@ -194,6 +199,10 @@ async function analyze() {
   }
   if (state.busy) return;        // double-submit guard (the real one)
   state.busy = true;
+  state.stabSeq++;               // bands from the old analysis must not land
+  $("stabresult").hidden = true;
+  $("stabstatus").textContent = "";
+  let retryWithoutCustom = false;
   const btn = $("analyze");
   btn.setAttribute("aria-disabled", "true");   // keeps keyboard focus
   btn.textContent = "Analyzing…";
@@ -237,7 +246,17 @@ async function analyze() {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+    if (!res.ok) {
+      // a custom period the server rejected must not stay and break every
+      // later Analyze: drop it, say why, and run again without it
+      if (body.scenario_windows && state.customWindow) {
+        state.customWindow = null;
+        retryWithoutCustom = true;
+        $("scenstatus").textContent =
+          `Your period wasn\u2019t used: ${data.error || res.status}`;
+      }
+      throw new Error(data.error || `Server error (${res.status})`);
+    }
     state.result = data;
     state.lastBody = { tickers: body.tickers, years: body.years,
       risk_free_rate: body.risk_free_rate, method: body.method,
@@ -257,7 +276,7 @@ async function analyze() {
     asmHooks.render(data.assumed);
     clearForecast();
   } catch (err) {
-    showError(err.message);
+    if (!retryWithoutCustom) showError(err.message);
   } finally {
     clearInterval(stageTimer);
     state.busy = false;
@@ -267,6 +286,7 @@ async function analyze() {
     $("status").textContent = "";
     $("chart-loading").hidden = true;
   }
+  if (retryWithoutCustom) return analyze();
 }
 
 // ---------- scenarios ("How it would have done") ----------
@@ -274,10 +294,35 @@ const signedPct = (x) => (x > 0 ? "+" : x < 0 ? "\u2212" : "") +
   (100 * Math.abs(x)).toFixed(1) + "%";
 
 function scenarioGap(w, resultEnd) {
-  // why a window isn't covered, in words: before the data starts, or after it ends
-  return w.start < w.first
-    ? `Not in this mix\u2019s shared history (starts ${w.first})`
-    : `Not in this mix\u2019s shared history (ends ${resultEnd})`;
+  // why a window has no number, in words that are true whichever the cause
+  if (w.reason === "no_trading_days") return "No trading days in this period.";
+  return w.reason === "after_end"
+    ? `After this analysis ends (${resultEnd}).`
+    : `Before this analysis starts (${w.first}). A longer lookback may ` +
+      "reach it, if your assets have the history.";
+}
+
+function scenarioHead(underName) {
+  const head = $("scentable").querySelector("thead");
+  head.replaceChildren();
+  const th = (txt, props = {}) => {
+    const c = document.createElement("th");
+    c.textContent = txt;
+    Object.assign(c, props);
+    return c;
+  };
+  const groups = ["Your portfolio", "Best mix"];
+  if (underName) groups.push(`Best mix under \u201c${underName}\u201d`);
+  const r1 = document.createElement("tr");
+  r1.append(th("Period", { scope: "col", rowSpan: 2 }));
+  for (const g of groups)
+    r1.append(th(g, { scope: "colgroup", colSpan: 2, className: "num grp" }));
+  const r2 = document.createElement("tr");
+  for (let i = 0; i < groups.length; i++)
+    r2.append(th("Return", { scope: "col", className: "num" }),
+              th("Worst fall", { scope: "col", className: "num" }));
+  head.append(r1, r2);
+  return groups.length;
 }
 
 function renderScenarios() {
@@ -285,6 +330,9 @@ function renderScenarios() {
   const sc = r && r.scenarios;
   $("scencard").hidden = !sc;
   if (!sc) return;
+  const under = asmHooks.showing() && r.assumed && !r.assumed.error &&
+    r.assumed.scenarios ? r.assumed : null;
+  const nGroups = scenarioHead(under ? under.name : null);
   const tb = $("scentable").querySelector("tbody");
   tb.replaceChildren();
   const td = (txt, cls) => {
@@ -293,38 +341,45 @@ function renderScenarios() {
     if (cls) c.className = cls;
     return c;
   };
+  const best = (list, i, none) => {
+    const t = list && list[i];
+    if (t && t.covered)
+      return [td(signedPct(t.ret), "num"), td(signedPct(t.max_drawdown), "num")];
+    const c = td(none, "na");
+    c.colSpan = 2;
+    return [c];
+  };
   sc.portfolio.forEach((w, i) => {
     const tr = document.createElement("tr");
     const th = document.createElement("th");
     th.scope = "row";
-    th.textContent = w.name;
-    const dates = document.createElement("small");
-    dates.className = "sub";
-    dates.textContent = ` ${w.start} to ${w.end}`;
-    th.append(dates);
+    const name = document.createElement("span");
+    name.className = "pname";
+    name.textContent = w.name;
+    const dates = document.createElement("span");
+    dates.className = "pdates";
+    dates.textContent = `${w.start} to ${w.end}`;
+    th.append(name, dates);
     tr.append(th);
     if (!w.covered) {
       const c = td(scenarioGap(w, r.end), "na");
-      c.colSpan = 4;
+      c.colSpan = 2 * nGroups;
       tr.append(c);
     } else {
-      const t = sc.tangency && sc.tangency[i];
-      tr.append(td(signedPct(w.ret), "num"), td(signedPct(w.max_drawdown), "num"));
-      if (t && t.covered)
-        tr.append(td(signedPct(t.ret), "num"), td(signedPct(t.max_drawdown), "num"));
-      else {
-        const c = td("No mix beats the risk-free rate", "na");
-        c.colSpan = 2;
-        tr.append(c);
-      }
+      tr.append(td(signedPct(w.ret), "num"), td(signedPct(w.max_drawdown), "num"),
+        ...best(sc.tangency, i, "No mix beats the risk-free rate"));
+      if (under)
+        tr.append(...best(under.scenarios.tangency, i,
+          "No allowed mix beats the risk-free rate"));
     }
     tb.append(tr);
   });
   $("scenclear").hidden = !state.customWindow;
   const note = $("scennote");
   note.hidden = !sc.portfolio.some((w) => !w.covered);
-  note.textContent = "A period counts only when your mix\u2019s shared history " +
-    "covers both its first and last day; otherwise no number is shown.";
+  note.textContent = "A period gets a number only when this analysis\u2019s " +
+    "price history covers both its first and last day. A longer lookback " +
+    "(under Settings) reaches further back, if your assets have the history.";
 }
 
 function wireScenarios() {
@@ -332,7 +387,8 @@ function wireScenarios() {
     e.preventDefault();
     const start = $("scenstart").value, end = $("scenend").value;
     const name = $("scenname").value.trim() || `${start} to ${end}`;
-    if (!start || !end || start >= end) {
+    if (!start || !end || start >= end || start < "1900-01-01" ||
+        end > "2100-12-31") {
       $("scenstatus").textContent = "Pick a start date before the end date.";
       return;
     }
@@ -351,18 +407,27 @@ function wireScenarios() {
 function renderStabilityControls() {
   const r = state.result;
   $("stabcard").hidden = !r || !state.lastBody || state.lastBody.tickers.length < 2;
-  const a = r && r.assumed && !r.assumed.error && state.lastBody &&
-    state.lastBody.assumptions;
+  const a = asmHooks.showing() && r && r.assumed && !r.assumed.error &&
+    state.lastBody && state.lastBody.assumptions;
   $("stabasm").hidden = !a;
   if (a) $("stabasm").textContent = `Check it under \u201c${r.assumed.name}\u201d`;
-  // a new analysis makes the old bands a different question
-  $("stabresult").hidden = true;
-  $("stabstatus").textContent = "";
 }
+
+// The comparison was switched off: the set's column, button and bands go.
+asmHooks.changed = () => {
+  renderScenarios();
+  renderStabilityControls();
+  if (state.stabKind === "set") {
+    state.stabSeq++;
+    $("stabresult").hidden = true;
+    $("stabstatus").textContent = "";
+  }
+};
 
 async function runStability(underSet) {
   if (state.stabBusy || !state.lastBody) return;
   state.stabBusy = true;
+  const seq = ++state.stabSeq;
   const buttons = [$("stabhist"), $("stabasm")];
   buttons.forEach((b) => b.setAttribute("aria-disabled", "true"));
   $("stabresult").hidden = true;
@@ -389,11 +454,14 @@ async function runStability(underSet) {
       body: JSON.stringify(body),
     });
     const data = await res.json();
+    if (seq !== state.stabSeq) return;   // a newer analysis made this stale
     if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+    state.stabKind = underSet ? "set" : "history";
     renderStability(data, underSet ? data.name : null);
     $("stabstatus").textContent = "";
   } catch (err) {
-    $("stabstatus").textContent = `Couldn\u2019t run the check: ${err.message}`;
+    if (seq === state.stabSeq)
+      $("stabstatus").textContent = `Couldn\u2019t run the check: ${err.message}`;
   } finally {
     clearInterval(timer);
     state.stabBusy = false;

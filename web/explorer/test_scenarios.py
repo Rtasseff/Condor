@@ -32,7 +32,7 @@ class ScenariosApiTests(TestCase):
     def test_scenarios_added_and_existing_keys_unchanged(self):
         got = self.analyze().json()
         sc = got.pop("scenarios")
-        self.assertEqual(sc["basis"], "value_index")
+        self.assertEqual(sc["basis"], "fixed_weights_daily")
         names = [w["name"] for w in sc["portfolio"]]
         self.assertEqual(names, ["2008 financial crisis", "2018 Q4 selloff",
                                  "2020 Covid crash", "2022 inflation shock"])
@@ -55,6 +55,12 @@ class ScenariosApiTests(TestCase):
         got = self.analyze({"scenario_windows": w, "assumptions": SET}).json()
         self.assertEqual([x["name"] for x in got["assumed"]["scenarios"]["portfolio"]],
                          ["Spring"])
+
+    def test_window_with_no_trading_days_is_flagged(self):
+        w = [{"name": "Weekend", "start": "2020-03-07", "end": "2020-03-08"}]
+        row = self.analyze({"scenario_windows": w}).json()["scenarios"]["portfolio"][0]
+        self.assertFalse(row["covered"])
+        self.assertEqual(row["reason"], "no_trading_days")
 
     def test_bad_windows_are_400(self):
         ok = {"name": "x", "start": "2020-03-02", "end": "2020-06-30"}
@@ -105,6 +111,25 @@ class StabilityApiTests(TestCase):
             self.assertEqual(st.call_args.kwargs["n"], 100)
             call(self.client, "/api/stability", {**BODY, "n": 300})
             self.assertEqual(st.call_args.kwargs["n"], 300)
+
+    def test_non_finite_n_is_400_not_a_crash(self):
+        for raw in ("NaN", "Infinity", "-Infinity", "1e999"):
+            with patch("explorer.views.fetch_prices",
+                       side_effect=ForecastApiTests.fake_prices), \
+                 patch("explorer.views.risk_free_history",
+                       side_effect=fake_history):
+                body = json.dumps({**BODY}).rstrip("}") + f', "n": {raw}}}'
+                res = self.client.post("/api/stability", data=body,
+                                       content_type="application/json")
+            self.assertEqual(res.status_code, 400, (raw, res.content))
+            self.assertIn("error", res.json())
+
+    def test_infeasible_limits_say_so(self):
+        bad = {**SET, "constraints": {"bounds": {
+            "AAA": {"min": 0.7}, "BBB": {"min": 0.7}}, "groups": []}}
+        res = self.stab({"assumptions": bad})
+        self.assertEqual(res.status_code, 400, res.content)
+        self.assertNotIn("risk-free", res.json()["error"])
 
     def test_bad_input(self):
         for patch_ in ({"tickers": []}, {"tickers": ["AAA"]},

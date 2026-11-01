@@ -1,7 +1,7 @@
 """Explorer views: the page, the JSON analysis endpoint, and saved portfolios.
 
 This is the HTTP boundary only: validate input, build the domain objects
-(via the `compute_analysis` facade today), return `to_dict()` payloads as
+(via `AssetSet.analysis`), return `to_dict()` payloads as
 JSON. No numerics here — see ARCHITECTURE.md. Persistence is the same deal
 in reverse: `explorer.models` stores the inputs, `condor` does the maths.
 """
@@ -36,7 +36,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from django_ratelimit.decorators import ratelimit
 
 from condor import (AssetSet, DataFetchError, Forecast, PriceStore,
-                    compute_analysis, fetch_prices, risk_free_history,
+                    fetch_prices, risk_free_history,
                     risk_free_rate)
 from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
@@ -580,15 +580,11 @@ def api_analyze(request):
 
     try:
         prices = fetch_prices(tickers, years=settings["years"])
-        result = compute_analysis(
-            prices,
-            weights=weights,
-            risk_free_rate=settings["risk_free_rate"],
-            method=settings["method"],
-            rf_history=history,
+        result = AssetSet(
+            prices, method=settings["method"], rf_history=history,
             rf_level=settings["risk_free_rate"],
-            scenario_windows=windows,
-        )
+        ).analysis(weights=weights, risk_free_rate=settings["risk_free_rate"],
+                   scenario_windows=windows)
     except DataFetchError as e:
         return _bad(str(e))
     except Exception:
@@ -657,7 +653,8 @@ def api_stability(request):
         return _bad(err)
     raw_n = body.get("n", DEFAULT_STABILITY_N)
     if isinstance(raw_n, bool) or not isinstance(raw_n, (int, float)) \
-            or raw_n != int(raw_n) or not 1 <= raw_n <= MAX_STABILITY_N:
+            or not math.isfinite(raw_n) or raw_n != int(raw_n) \
+            or not 1 <= raw_n <= MAX_STABILITY_N:
         return _bad(f"n must be a whole number from 1 to {MAX_STABILITY_N}.")
     n = int(raw_n)
     assumptions = None

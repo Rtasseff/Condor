@@ -897,3 +897,6 @@ details.transcript > summary:hover { color: var(--ink); }
   display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .stablist .tk { font-weight: 600; margin-right: 6px; }
 .stablist .range { font-variant-numeric: tabular-nums; }
+#scentable th[scope="row"] { font-weight: 400; }
+#scentable .pname { display: block; font-weight: 600; color: var(--ink); font-size: 14px; }
+#scentable .pdates { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }

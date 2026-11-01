@@ -88,14 +88,16 @@ SCENARIOS = (
 def window_stats(values: pd.Series, start, end) -> dict:
     """Return and worst fall of a value series between two dates.
 
-    -> {'ret', 'max_drawdown', 'covered', 'first'}.  The window starts at the
+    -> {'ret', 'max_drawdown', 'covered', 'first', 'reason'}.  The window starts at the
     last value on or before `start` and ends at the last value on or before
     `end`; `max_drawdown` is the worst fall from a running peak along that
     path (negative, 0.0 if it never falls).  A window counts only if the
     series covers *both* ends -- `start` no earlier than its first date and
     `end` no later than its last; otherwise `covered` is False and `ret` /
     `max_drawdown` are None (never a partial number).  `first` is the
-    series' first date (ISO string).  Raises ValueError if start >= end.
+    series' first date (ISO string).  `reason` is None when covered, else
+    'before_start', 'after_end' or 'no_trading_days' (the window holds no
+    value after its opening one).  Raises ValueError if start >= end.
     """
     v = _clean(values).sort_index()
     start, end = pd.Timestamp(start), pd.Timestamp(end)
@@ -104,10 +106,15 @@ def window_stats(values: pd.Series, start, end) -> dict:
     first = str(v.index[0].date())
     if start < v.index[0] or end > v.index[-1]:
         return {"ret": None, "max_drawdown": None, "covered": False,
-                "first": first}
+                "first": first,
+                "reason": "before_start" if start < v.index[0] else "after_end"}
     path = v.loc[:end]
     i0 = path.index.searchsorted(start, side="right") - 1
     path = path.iloc[i0:]
+    if len(path) < 2:
+        return {"ret": None, "max_drawdown": None, "covered": False,
+                "first": first, "reason": "no_trading_days"}
     ret = float(path.iloc[-1] / path.iloc[0] - 1.0)
     dd = float((path / path.cummax() - 1.0).min())
-    return {"ret": ret, "max_drawdown": dd, "covered": True, "first": first}
+    return {"ret": ret, "max_drawdown": dd, "covered": True, "first": first,
+            "reason": None}

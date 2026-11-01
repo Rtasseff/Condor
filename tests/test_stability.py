@@ -169,3 +169,58 @@ def test_no_asset_beats_the_rate_is_all_failed_not_an_error():
 def test_needs_two_assets():
     with pytest.raises(ValueError):
         AssetSet(make_prices([0.1], [0.2], 100)).stability(0.02, n=2)
+
+
+# ----------------------------------------------------- feasibility and proxies
+def test_infeasible_limits_raise_instead_of_counting_as_failed():
+    aset = AssetSet(make_prices([0.1, 0.05, 0.08], [0.2, 0.1, 0.15], 300, seed=2))
+    con = Constraints.from_dict({"bounds": {"A0": {"min": 0.7}, "A1": {"min": 0.7}}})
+    with pytest.raises(ValueError):
+        aset.stability(0.02, constraints=con, n=3)
+
+
+def test_proxy_with_too_little_overlap_raises():
+    prices = make_prices([0.1, 0.05], [0.2, 0.1], 400, seed=5)
+    ref = make_prices([0.07], [0.15], 400, seed=9)["A0"]
+    ref.index = prices.index
+    ref = ref.iloc[-30:].rename("MKT")        # 30 days: too few to price assets
+    rf = pd.Series(0.02, index=prices.index)
+    aset = AssetSet(prices, rf_history=rf, rf_level=0.02, reference_prices=ref,
+                    prior=Prior(kind="equilibrium", reference="MKT", t0=10.0))
+    with pytest.raises(ValueError):
+        aset.stability(0.02, n=3)
+
+
+def younger_proxy_set(rows=400, start=150):
+    prices = make_prices([0.1, 0.05], [0.2, 0.1], rows, seed=5)
+    ref = make_prices([0.07], [0.15], rows, seed=9)["A0"].rename("MKT")
+    ref.index = prices.index
+    ref = ref.iloc[start:]
+    rf = pd.Series(0.02, index=prices.index)
+    aset = AssetSet(prices, rf_history=rf, rf_level=0.02, reference_prices=ref,
+                    prior=Prior(kind="equilibrium", reference="MKT", t0=10.0))
+    return aset, start
+
+
+def test_younger_proxy_identity_and_same_rows():
+    aset, start = younger_proxy_set()
+    got = aset._resampled(np.arange(400)).premiums.to_numpy()
+    np.testing.assert_allclose(got, aset.premiums.to_numpy(), atol=1e-8)
+    # a real resample: the proxy covers exactly the dates from its start on,
+    # every one of its returns taken from a row that has a proxy return
+    rng = np.random.default_rng(0)
+    idx = stability.split_block_indices(400, 21, rng, start)
+    assert len(idx) == 400 and (idx[start:] >= start).all()
+    assert (idx[:start] < start).all()
+    ref2 = stability.resample_reference(aset._aligned_reference(), idx)
+    assert ref2.index.equals(aset.prices.index[start:])
+    assert not ref2.isna().any()
+    r_orig = aset._aligned_reference().pct_change().iloc[1:].to_numpy()
+    np.testing.assert_allclose(ref2.pct_change().to_numpy()[1:],
+                               r_orig[idx[start:]], atol=1e-12)
+
+
+def test_younger_proxy_stability_runs_and_is_reproducible():
+    aset, _ = younger_proxy_set()
+    a = aset.stability(0.02, n=5, seed=1)
+    assert a["n_failed"] == 0 and a == aset.stability(0.02, n=5, seed=1)

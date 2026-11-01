@@ -140,6 +140,22 @@ Hand-checked; pin each in a test.
 Built 2026-11-01. Suites: pytest 474 passed / 4 skipped; `manage.py test explorer` 243 OK; check and
 makemigrations clean. Not exercised: a real browser (JS checked with `node --check` and a stub-DOM run).
 
+### Review round (handoff session ran /code-review and a real-browser pass; fixes in the follow-up commit)
+
+1. Rejected custom window: cleared, reason shown under the form, analyze re-runs without it. Done (JS; browser untested).
+2. Stability sequence guard; bands hidden when a new analyze starts. Done (JS; browser untested).
+3. `AssetSet.stability` checks the set once first (infeasible limits, proxy overlap raise ValueError -> 400 / CLI exit 2); per-resample catch only covers solver failures. Done, tested.
+4. Younger proxy: `stability.split_block_indices`, `align_reference`, `resample_reference` (pure); resample drawn separately before/after the proxy's first row. Done, tested (identity, same rows, midway start).
+5. `n` NaN / Infinity / 1e999 -> 400. Done, tested.
+6. Under-set button and its bands hidden when the comparison is switched off (`asmHooks.changed`). Done (JS; browser untested).
+7. `window_stats` returns `covered: false`, `reason: "no_trading_days"` (also `before_start`, `after_end`). Done, tested.
+8. Scenarios always come from a daily fixed-weight series built from prices, whatever the timeframe; `basis` is now `"fixed_weights_daily"` (was `"value_index"`). Done, tested.
+9. `analyze --json --stability` on one ticker gives `stability: null`. Done, tested.
+10. `scenario_windows` removed from `compute_analysis`; the view builds the `AssetSet`. Done.
+11. Coverage wording by reason; note under the table updated. Done.
+12. Period label: name prominent, dates muted. Done (CSS; browser untested).
+13. Third column group "Best mix under {name}" when the comparison is on; gone when off. Done (stub-DOM checked; browser untested).
+
 ## Questions for the handoff session
 
 - Own-dates row holds one custom window at a time (4 built-ins + 1 = the API's cap of 5). Say if you want

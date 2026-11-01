@@ -110,6 +110,8 @@ function asmSyncButtons() {
     ? "Update the comparison" : "Show the best mix under these";
 }
 
+asmHooks.showing = () => asm.on;
+
 asmHooks.render = (assumed) => {
   const box = $("asmresult");
   $("asmchip").hidden = true;
@@ -426,6 +428,7 @@ function asmWire() {
     asmSyncButtons();
     $("asmresult").hidden = true;
     $("asmchip").hidden = true;
+    asmHooks.changed();
   });
   if (asmAuth()) {
     $("asmsave").addEventListener("click", () => asmSave(false));

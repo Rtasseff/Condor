@@ -96,7 +96,7 @@ def test_custom_windows_and_rejects_bad(aset):
 def test_analysis_adds_scenarios_only(aset):
     out = aset.analysis({"AAA": 1.0}, 0.02)
     sc = out["scenarios"]
-    assert sc["basis"] == "value_index"
+    assert sc["basis"] == "fixed_weights_daily"
     assert len(sc["portfolio"]) == 4
     assert sc["portfolio"][2]["ret"] == aset.portfolio({"AAA": 1.0}).scenarios()[2]["ret"]
     assert out["tangency"] is None or sc["tangency"] is not None
@@ -104,3 +104,24 @@ def test_analysis_adds_scenarios_only(aset):
         {"name": "c", "start": "2020-01-02", "end": "2020-02-03"}])
     assert [w["name"] for w in custom["scenarios"]["portfolio"]] == ["c"]
     assert "scenarios" not in out["frontier"][0]
+
+
+def test_window_with_no_trading_day_is_not_covered():
+    # D[1] .. D[1]+12h holds only the opening value: nothing happened in it
+    s = history.window_stats(V, D[1], D[1] + pd.Timedelta(hours=12))
+    assert s["covered"] is False and s["ret"] is None
+    assert s["reason"] == "no_trading_days"
+    assert history.window_stats(V, D[0] - pd.Timedelta(days=3), D[2])["reason"] == "before_start"
+    assert history.window_stats(V, D[1], D[3] + pd.Timedelta(days=3))["reason"] == "after_end"
+    assert history.window_stats(V, D[0], D[3])["reason"] is None
+
+
+def test_monthly_timeframe_scenarios_use_the_daily_series(aset):
+    w = {"AAA": 0.6, "BBB": 0.4}
+    daily = aset.portfolio(w).scenarios()
+    monthly = aset.with_options(timeframe="M").portfolio(w).scenarios()
+    for a, b in zip(daily, monthly):
+        assert a["covered"] == b["covered"]
+        if a["covered"]:
+            assert b["ret"] == pytest.approx(a["ret"], abs=1e-12)
+            assert b["max_drawdown"] == pytest.approx(a["max_drawdown"], abs=1e-12)
