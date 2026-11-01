@@ -130,6 +130,52 @@
   </section>
 
 
+  <section class="card" id="reconcile" hidden>
+    <h2>Check against your broker</h2>
+    <p class="sub">If your ledger is complete, your broker should show these.
+       Cash is the number to trust; value moves with prices.</p>
+    <dl class="reconexp">
+      <div><dt>Cash</dt><dd id="rc-cash">–</dd></div>
+      <div><dt>Securities value</dt><dd id="rc-securities">–</dd></div>
+      <div><dt>Account value</dt><dd id="rc-value">–</dd></div>
+    </dl>
+    <p class="sub" id="rc-asof"></p>
+    <div class="fcontrols">
+      <label>Cash your broker shows
+        <span class="pctwrap"><span class="ccy">$</span> <input id="rc-in-cash" type="number"
+          step="any" inputmode="decimal" autocomplete="off"></span>
+      </label>
+      <label>Securities value your broker shows
+        <span class="pctwrap"><span class="ccy">$</span> <input id="rc-in-securities" type="number"
+          step="any" inputmode="decimal" autocomplete="off"></span>
+      </label>
+      <label>Account value your broker shows
+        <span class="pctwrap"><span class="ccy">$</span> <input id="rc-in-value" type="number"
+          step="any" inputmode="decimal" autocomplete="off"></span>
+      </label>
+      <button id="rc-check" class="primary small" type="button">Check</button>
+      <span id="rc-status" class="status" role="status"></span>
+    </div>
+    <div id="rc-result" class="reconresult" role="status" hidden></div>
+    <p class="sub" id="rc-roundnote" hidden>Your total above uses exact fill prices;
+       your broker rounds each fill to the cent.</p>
+    <details class="explain" id="rc-positions">
+      <summary>Positions to compare</summary>
+      <div class="tablewrap">
+        <table id="rc-table">
+          <thead><tr>
+            <th scope="col">Ticker</th>
+            <th scope="col" class="num">Quantity</th>
+            <th scope="col" class="num">Close</th>
+            <th scope="col" class="num">Value</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+    <p class="sub">Nothing you type here is saved.</p>
+  </section>
+
   <section class="card" id="chartcard2" hidden>
     <h2>Value over time</h2>
     <p class="sub">Solid line: what the account is worth. Dashed line: money you

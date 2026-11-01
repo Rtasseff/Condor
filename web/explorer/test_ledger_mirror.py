@@ -561,3 +561,13 @@ class ReconcileEndpointTests(WebTestBase):
         self.call("post", f"/api/account/reconcile?account={theirs.id}", {},
                   expect=404)
         self.assertEqual(self.client.get(self.url).status_code, 405)
+
+
+class ReconcilePageTests(WebTestBase):
+    def test_card_is_in_the_page_with_its_strings(self):
+        html = self.client.get("/account").content.decode()
+        for s in ("Check against your broker", "Cash your broker shows",
+                  "Securities value your broker shows",
+                  "Account value your broker shows", "Positions to compare",
+                  "Your total above uses exact fill prices;"):
+            self.assertIn(s, html)

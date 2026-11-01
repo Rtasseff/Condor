@@ -876,3 +876,13 @@ details.transcript > summary:hover { color: var(--ink); }
 .asmgaps dd.na { color: var(--muted); text-align: right; }
 #asmviolations ul { margin: 0; padding-left: 18px; color: #ffd9d9; font-size: 13px; }
 #asmcompare th.sec { text-align: left; color: var(--muted); font-weight: 600; padding-top: 12px; }
+
+/* Check against your broker: the verdict is words first; the border is a hint. */
+.reconexp { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 6px 0; }
+.reconexp div { display: flex; flex-direction: column; }
+.reconexp dt { color: var(--muted); font-size: 13px; }
+.reconexp dd { margin: 0; font-size: 20px; font-variant-numeric: tabular-nums; }
+.reconresult { margin: 12px 0 6px; padding: 8px 12px; border-left: 4px solid var(--ring); border-radius: 6px; }
+.reconresult p { margin: 4px 0 0; }
+.reconresult.ok { border-left-color: var(--accent-hi); }
+.reconresult.off { border-left-color: var(--danger); }

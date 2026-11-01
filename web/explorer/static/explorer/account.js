@@ -110,6 +110,7 @@ function render(data) {
   renderCombined();
   renderPayin();
   renderRules();
+  renderReconcile();
   renderChart();
   renderPositions();
   renderEvents();
@@ -382,6 +383,122 @@ function renderRules() {
                 : r.measured.toFixed(1) + unit, "num"),
               td(r.threshold + unit, "num"), status);
     tb.appendChild(tr);
+  }
+}
+
+// ---------- check against your broker (mirror accounts) ----------
+// The server does all the arithmetic (POST /api/account/reconcile). What is
+// typed stays in these inputs: never saved, never in the URL.
+const RC_INPUTS = { cash: "rc-in-cash", securities: "rc-in-securities",
+                    value: "rc-in-value" };
+let reconSeq = 0;
+let reconAccountKey = null;
+
+function renderReconcile() {
+  const m = isMirror();
+  $("reconcile").hidden = !m;
+  if (!m) { reconAccountKey = null; return; }
+  const key = state.data.account.id || state.data.account.label;
+  if (key === reconAccountKey) return;   // same account: keep what was typed
+  reconAccountKey = key;
+  for (const id of Object.values(RC_INPUTS)) $(id).value = "";
+  $("rc-result").hidden = true;
+  $("rc-roundnote").hidden = true;
+  runReconcile(false);
+}
+
+async function runReconcile(typed) {
+  const seq = ++reconSeq;
+  const body = {};
+  if (typed) {
+    for (const [k, id] of Object.entries(RC_INPUTS)) {
+      const v = $(id).value.trim();
+      if (v !== "") body[k] = v;
+    }
+  }
+  const btn = $("rc-check");
+  btn.disabled = true;
+  $("rc-status").textContent = "Checking…";
+  try {
+    const r = await api("/api/account/reconcile",
+                        { method: "POST", body: JSON.stringify(body) });
+    if (seq !== reconSeq) return;
+    showError("");
+    paintReconcile(r, typed && Object.keys(body).length > 0);
+  } catch (err) {
+    if (seq === reconSeq && typed) showError(err.message);
+  } finally {
+    if (seq === reconSeq) {
+      btn.disabled = false;
+      $("rc-status").textContent = "";
+    }
+  }
+}
+
+function reconLine(label, c, r, isCash) {
+  if (c.match) {
+    return isCash ? `${label}: matches to the cent.`
+      : `${label}: matches, allowing for each position's rounding.`;
+  }
+  const off = money(Math.abs(c.difference));
+  const sign = c.difference < 0 ? "−" : "+";
+  const more = c.difference > 0 ? "more" : "less";
+  if (isCash) {
+    const when = r.imported_at ? new Date(r.imported_at).toLocaleString() : "never";
+    return `${label}: off by ${sign}${off}: your broker shows ${more} cash than `
+      + `your ledger expects. Your ledger's last event is ${r.last_event || "none"}, `
+      + `imported ${when}. Look for events not yet recorded, such as a dividend, `
+      + `interest, a fee or a fill.`;
+  }
+  return `${label}: off by ${sign}${off}: your broker shows ${more} than your ledger expects.`;
+}
+
+function paintReconcile(r, showResult) {
+  $("rc-cash").textContent = money(r.cash);
+  $("rc-securities").textContent = money(r.securities);
+  $("rc-value").textContent = money(r.value);
+  $("rc-asof").textContent = `Securities and value are at the ${r.as_of} close.`;
+  const tb = $("rc-table").querySelector("tbody");
+  tb.replaceChildren();
+  for (const p of r.positions) {
+    const tr = document.createElement("tr");
+    tr.append(td(p.ticker), td(String(p.qty), "num"),
+              td(moneyP(p.price), "num"), td(money(p.value), "num"));
+    tb.appendChild(tr);
+  }
+  if (!r.positions.length) {
+    const tr = document.createElement("tr");
+    tr.append(td("No open positions."), td(""), td(""), td(""));
+    tb.appendChild(tr);
+  }
+  // tile vs panel: exact fills vs a broker rounding each fill
+  $("rc-roundnote").hidden = Math.abs(r.value - r.exact_value) < 0.005;
+
+  const box = $("rc-result");
+  box.replaceChildren();
+  box.hidden = !showResult;
+  if (!showResult) return;
+  const lines = [];
+  if (r.cash_check) lines.push(reconLine("Cash", r.cash_check, r, true));
+  if (r.securities_check) lines.push(reconLine("Securities value", r.securities_check, r, false));
+  if (r.value_check) lines.push(reconLine("Account value", r.value_check, r, false));
+  const valueOff = (r.securities_check && !r.securities_check.match)
+    || (r.value_check && !r.value_check.match);
+  if (valueOff) {
+    lines.push(`Value also depends on the price date: compare after the close of `
+      + `${r.as_of}, or check cash first.`);
+  }
+  const allMatch = [r.cash_check, r.securities_check, r.value_check]
+    .filter(Boolean).every((c) => c.match);
+  box.classList.toggle("ok", allMatch);
+  box.classList.toggle("off", !allMatch);
+  const head = document.createElement("strong");
+  head.textContent = allMatch ? "Match" : "Mismatch";
+  box.appendChild(head);
+  for (const t of lines) {
+    const p = document.createElement("p");
+    p.textContent = t;
+    box.appendChild(p);
   }
 }
 
@@ -1211,6 +1328,10 @@ for (const id of ["af-anchor", "af-anchorvalue"]) {
 $("acct-select").addEventListener("change", (e) => switchAccount(e.target.value));
 $("payin-through").addEventListener("change", (e) => loadTranche(e.target.value));
 $("payin-rules").addEventListener("change", () => loadTranche($("payin-through").value));
+$("rc-check").addEventListener("click", () => runReconcile(true));
+for (const id of Object.values(RC_INPUTS)) {
+  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") runReconcile(true); });
+}
 $("plancancel").addEventListener("click", () => { $("planpanel").hidden = true; });
 $("planconfirm").addEventListener("click", confirmPlan);
 
