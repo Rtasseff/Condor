@@ -50,7 +50,7 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     base-currency total via daily FX. *R3 fractional plans dropped
     2026-10-24: RT never buys fractional shares; fractional
     recording stays.*
-  - **Next after B and C: `assumptions-1`** — "under my assumptions and
+  - **In a worktree: `assumptions-1`** (ADR 0008) — "under my assumptions and
     rules, where is the best point and how far is my plan from it?"
     Agreed design + RT's decisions (2026-10-24, all defaults; "Condor
     is for fun — go with the defaults and see where it takes us"):
@@ -66,8 +66,7 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     set to validate: USFR ≥ 5%, STIP ≥ 15%, VST and DNN ≤ 10% each with
     DNN ≤ 3.4%, {VST, URNM, DNN} ≤ 20%, GLDM ≤ 15%. Headline check,
     reported not asserted: does the constrained tangency land near RT's
-    plan, and how big are the three gaps? Brief it after C merges (it
-    builds on premium-mode μ). Later: A3 narrowed (T-bill vs TIPS as
+    plan, and how big are the three gaps? Later: A3 narrowed (T-bill vs TIPS as
     the risk-free, real display, inflation beta, real-dollar fan), A5
     named-window scenarios on C's `history.py`, tangency stability bands.
 
