@@ -119,7 +119,8 @@ class AnalyzeAssumedTests(TestCase):
                              0.4 + 1e-6)
         self.assertEqual(set(assumed["gaps"]),
                          {"sharpe_gap", "return_gap", "risk_gap", "at_risk",
-                          "at_return", "violations"})
+                          "at_return", "violations", "sharpe_gap_reason",
+                          "return_gap_reason", "risk_gap_reason"})
         self.assertEqual(assumed["constraints"]["bounds"],
                          {"AAA": {"min": 0.0, "max": 0.4}})
 
@@ -164,6 +165,22 @@ class AnalyzeAssumedTests(TestCase):
             raise OSError("FRED down")
         res = self.analyze({**BODY, "assumptions": SET}, history=down)
         self.assertIn("T-bill", res.json()["assumed"]["error"])
+
+    def test_optimizer_error_becomes_assumed_error(self):
+        from pypfopt.exceptions import OptimizationError
+        with patch("condor.model._constrained_tangency",
+                   side_effect=OptimizationError("nope")):
+            res = self.analyze({**BODY, "assumptions": SET})
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("optimizer couldn't solve", res.json()["assumed"]["error"])
+        self.assertIn("tangency", res.json())
+
+    def test_short_window_with_a_view_works(self):
+        s = copy.deepcopy(SET)
+        s["prior"]["views"] = [{"ticker": "AAA", "ret": 0.09, "sd": 0.04}]
+        s["prior"]["t0"] = 0
+        res = self.analyze({**BODY, "assumptions": s})
+        self.assertNotIn("error", res.json()["assumed"])
 
     def test_proxy_fetch_failure(self):
         from condor import DataFetchError

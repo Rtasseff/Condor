@@ -206,7 +206,8 @@ class TestAssumptions:
         assert code == 0
         assert "Under: Cautious" in out and "Sample prem." in out
         assert "Prior prem." in out and "Max return" in out
-        assert "not used (not in this analysis): ZZZ" in out
+        assert "not used here: ZZZ" in out
+        assert "view on" not in out
         assert out.index("Tangency") < out.index("Under: Cautious")
         assert self.fetched == [["AAA", "BBB", "CCC"], ["VT"]]
 
@@ -253,3 +254,45 @@ class TestAssumptions:
         assert cli.main(["analyze", "AAA", "BBB", "--assumptions",
                          infeasible]) == 2
         assert "can't all hold" in capsys.readouterr().err
+
+    def test_unused_view_and_partial_group_min_are_listed(self, capsys, tmp_path):
+        d = {"name": "x", "prior": {"views": [{"ticker": "QQQ", "ret": .1, "sd": .05}]},
+             "constraints": {"groups": [{"tickers": ["AAA", "QQQ"], "min": 0.1}]}}
+        code, out = run(capsys, "analyze", "AAA", "BBB",
+                        "--assumptions", self.file(tmp_path, d))
+        assert code == 0
+        assert "minimum not used: QQQ isn't in this mix" in out
+        assert "view on QQQ" in out
+
+    def test_optimizer_error_is_a_clean_exit(self, capsys, tmp_path, monkeypatch):
+        from pypfopt.exceptions import OptimizationError
+
+        def boom(*a, **k):
+            raise OptimizationError("nope")
+        monkeypatch.setattr("condor.model._constrained_tangency", boom)
+        code = cli.main(["analyze", "AAA", "BBB", "--assumptions",
+                         self.file(tmp_path)])
+        assert code == 2 and "optimizer couldn't solve" in capsys.readouterr().err
+
+    def test_proxy_resolution_is_shared(self):
+        from condor.assumptions import Prior
+        from condor.data import resolve_proxy
+        seen = []
+
+        def fetch(t, years=10, source=None):
+            seen.append((t, years, source))
+            return pd.DataFrame({"VT": [1.0]})
+        assert resolve_proxy(Prior("history"), ["A"], fetch=fetch) is None
+        assert resolve_proxy(Prior("equilibrium", "A"), ["A"], fetch=fetch) is None
+        assert list(resolve_proxy(Prior("equilibrium"), ["A"], 7, "tiingo",
+                                  fetch)) == [1.0]
+        assert seen == [(["VT"], 7, "tiingo")]
+
+    def test_gap_wording_follows_the_reason(self, capsys, tmp_path):
+        d = {"name": "x", "constraints": {"bounds": {"AAA": {"min": 0.9}}}}
+        code, out = run(capsys, "portfolio", "AAA=0", "BBB=100", "CCC=0",
+                        "--assumptions", self.file(tmp_path, d))
+        assert code == 0
+        assert ("n/a: your portfolio is steadier than any mix your limits allow" in out
+                or "n/a: your portfolio earns less than any mix your limits allow" in out
+                or "n/a: your portfolio earns more than any mix your limits allow" in out)

@@ -351,7 +351,9 @@ def apply_views(mu: pd.Series, sigma: pd.DataFrame, tau: float,
 
     absolute = {t: float(q) for t, q, _ in views}
     omega = np.diag([float(sd) ** 2 for _, _, sd in views])
-    bl = BlackLittermanModel(sigma, pi=mu, absolute_views=absolute,
-                             omega=omega, tau=float(tau))
+    # The posterior uses only tau * Sigma, and pypfopt rejects tau > 1 (short
+    # windows, T0 = 0), so hand it tau * Sigma with tau = 1: same numbers.
+    bl = BlackLittermanModel(sigma * float(tau), pi=mu, absolute_views=absolute,
+                             omega=omega, tau=1.0)
     post = bl.bl_returns()
     return post.reindex(mu.index).astype(float)

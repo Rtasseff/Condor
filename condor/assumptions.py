@@ -18,15 +18,17 @@ for a maximum, is omitted).  See docs/decisions/0008-assumptions-mode.md.
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass
+
+from .symbols import TICKER_RE
 
 MAX_GROUPS = 20
 MAX_VIEWS = 15
 MAX_NAME = 80
 MAX_BOUNDS = 50
+MAX_T0 = 200.0
+MAX_MARKET_PREMIUM = 1.0
 MAX_GROUP_TICKERS = 50
-_TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,10}$")
 KINDS = ("history", "equilibrium")
 DEFAULT_REFERENCE = "VT"
 DEFAULT_T0 = 20.0
@@ -53,7 +55,7 @@ def _ticker(value, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} must be a ticker")
     t = value.strip().upper()
-    if not _TICKER_RE.match(t):
+    if not TICKER_RE.match(t):
         raise ValueError(f"{field}: '{value.strip()[:12]}' does not look like "
                          "a ticker symbol")
     return t
@@ -120,12 +122,6 @@ class ResolvedConstraints:
     groups: tuple[tuple[tuple[int, ...], float, float], ...]
     ignored: tuple[str, ...]
 
-    @property
-    def binding_possible(self) -> bool:
-        """False when every limit is the trivial 0..1 (nothing to enforce)."""
-        return (any(b != (0.0, 1.0) for b in self.bounds)
-                or any(lo > 0.0 or hi < 1.0 for _, lo, hi in self.groups))
-
 
 @dataclass(frozen=True)
 class Constraints:
@@ -175,7 +171,17 @@ class Constraints:
         for g in self.groups:
             idx = tuple(pos[t] for t in g.tickers if t in pos)
             if idx:
-                groups.append((idx, g.lo, g.hi))
+                missing = [t for t in g.tickers if t not in pos]
+                lo = g.lo
+                if missing and lo > 0.0:
+                    # a minimum on part of a group would force the present
+                    # funds up; the maximum stays true for the subset
+                    lo = 0.0
+                    ignored.append(
+                        "group " + " + ".join(g.tickers) + " minimum not "
+                        f"used: {', '.join(missing)} "
+                        f"{'isn' if len(missing) == 1 else 'aren'}'t in this mix")
+                groups.append((idx, lo, g.hi))
             else:
                 ignored.append("group " + " + ".join(g.tickers))
         return ResolvedConstraints(tuple(bounds), tuple(groups), tuple(ignored))
@@ -195,12 +201,13 @@ class Constraints:
             present = [t for t in g.tickers if t in weights]
             if not present:
                 continue
+            partial = len(present) < len(g.tickers)
             w = sum(float(weights[t]) for t in present)
             label = " + ".join(present)
             if w > g.hi + _TOL:
                 out.append(f"{label} together {_pct(w)} is above their "
                            f"{_pct(g.hi)} limit")
-            elif w < g.lo - _TOL:
+            elif w < g.lo - _TOL and not partial:
                 out.append(f"{label} together {_pct(w)} is below their "
                            f"{_pct(g.lo)} minimum")
         return out
@@ -250,11 +257,12 @@ class Prior:
         mp = d.get("market_premium")
         if mp is not None:
             mp = _num(mp, f"{field}.market_premium")
-            if mp < 0:
-                raise ValueError(f"{field}.market_premium must be 0 or more")
+            if not 0 <= mp <= MAX_MARKET_PREMIUM:
+                raise ValueError(f"{field}.market_premium must be between 0 "
+                                 f"and {MAX_MARKET_PREMIUM:g} (100%)")
         t0 = _num(d.get("t0", DEFAULT_T0), f"{field}.t0")
-        if t0 < 0:
-            raise ValueError(f"{field}.t0 must be 0 or more")
+        if not 0 <= t0 <= MAX_T0:
+            raise ValueError(f"{field}.t0 must be between 0 and {MAX_T0:g}")
         raw = d.get("views", [])
         if not isinstance(raw, (list, tuple)):
             raise ValueError(f"{field}.views must be a list")

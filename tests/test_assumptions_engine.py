@@ -357,3 +357,82 @@ def test_infeasible_limits_through_model():
     con = Constraints.from_dict({"bounds": {"A": {"min": 0.7}, "B": {"min": 0.7}}})
     with pytest.raises(ValueError, match="These limits can't all hold"):
         a.frontier(0.02, constraints=con)
+
+
+def test_views_with_tau_above_one_match_the_closed_form():
+    """Short window + history-only prior: tau = 1 / T_eff > 1.  pypfopt
+    rejects that, but the posterior only uses tau * Sigma."""
+    p = _prices().iloc[:243]            # about 0.96 years
+    assert (p.index[-1] - p.index[0]).days / 365.25 < 1
+    a = AssetSet(p, rf_history=_rf(p), rf_level=0.03,
+                 prior=Prior("history", views=(View("B", 0.09, 0.04),)))
+    sigma = a.risk_matrix
+    T = a.t_years
+    tau = 1 / T
+    assert tau > 1
+    sample = a.sample_premiums
+    omega = 0.04 ** 2
+    t_sig = tau * sigma
+    gain = t_sig["B"] / (t_sig.loc["B", "B"] + omega)     # P = e_B
+    want = sample + gain * ((0.09 - 0.03) - sample["B"])
+    np.testing.assert_allclose(a.premiums.to_numpy(), want.to_numpy(), atol=1e-10)
+
+
+def test_gap_at_top_of_range_is_zero_not_null():
+    a = _t2_set()
+    fr = a.frontier(0.02)
+    g = fr.gaps(a.portfolio({"A": 1.0}))       # all in the top-return asset
+    assert g["risk_gap"] == pytest.approx(0, abs=1e-6)
+    assert g["risk_gap_reason"] is None
+
+
+def test_gap_reasons():
+    a = _t2_set()
+    con = Constraints.from_dict({"bounds": {"B": {"max": 0.6}}})
+    g = a.frontier(0.02, constraints=con).gaps(a.portfolio({"B": 1.0}))
+    assert g["return_gap_reason"] == "below_range"
+    assert g["risk_gap_reason"] == "below_range"
+    assert g["sharpe_gap_reason"] is None
+    # a plan that earns more than the limits allow
+    con = Constraints.from_dict({"bounds": {"A": {"max": 0.5}}})
+    g = a.frontier(0.02, constraints=con).gaps(a.portfolio({"A": 1.0}))
+    assert g["risk_gap_reason"] == "above_range"
+    g = a.frontier(0.5, constraints=Constraints.from_dict({})).gaps(
+        a.portfolio({"B": 1.0}))
+    assert g["sharpe_gap_reason"] == "no_tangency"
+
+
+def test_one_failing_comparison_nulls_only_that_gap(monkeypatch):
+    a = _t2_set()
+    fr = a.frontier(0.02, constraints=Constraints.from_dict({}))
+
+    def boom(*args, **kw):
+        raise ValueError("borderline")
+    monkeypatch.setattr(type(a), "efficient_return", boom)
+    g = fr.gaps(a.portfolio({"B": 0.9, "A": 0.1}))
+    assert g["risk_gap"] is None and g["risk_gap_reason"] == "solver"
+    assert g["return_gap"] is not None and g["sharpe_gap"] is not None
+
+
+def test_solver_failure_is_not_called_infeasible(monkeypatch):
+    import cvxpy as cp
+    mu, sig = _ab()
+    res = _res(["A", "B"], {"B": {"max": 0.6}})
+    real = cp.Problem.solve
+
+    def solve(self, *a, **k):
+        if isinstance(self.objective, cp.Minimize):   # the QP, not the LPs
+            raise cp.error.SolverError("numerical trouble")
+        return real(self, *a, **k)
+    monkeypatch.setattr(cp.Problem, "solve", solve)
+    with pytest.raises(ValueError, match="optimizer couldn't solve"):
+        _constrained_tangency(mu, sig, 0.02, res)
+
+
+def test_ignored_views_listed_in_payload():
+    p = _prices()
+    prior = Prior("equilibrium", "A", None, 20.0, (View("ZZZ", 0.1, 0.05),))
+    a = AssetSet(p, rf_history=_rf(p), rf_level=0.03, prior=prior)
+    assert a.ignored_views() == ["view on ZZZ"]
+    out = a.analysis(risk_free_rate=0.03, constraints=Constraints.from_dict({}))
+    assert "view on ZZZ" in out["constraints"]["ignored"]

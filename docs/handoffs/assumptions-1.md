@@ -359,6 +359,52 @@ name, so an arbitrary string must not reach the data layer), caps of 50
 bounds and 50 tickers per group, an unused variable removed. The account.js
 findings are for whoever owns `main`'s account work, not this branch.
 
+**Coordinator follow-up (2026-11-01).** The coordinator rebased this branch
+onto current main (f4b0260), ran the code review himself (the findings below
+come from it, reproduced on synthetic data) and did a real-browser pass of
+the editor and result (no console errors; best mix matches the CLI). Fixes,
+each with a test:
+1. `apply_views` passes `tau x Sigma` with `tau = 1` to pypfopt (same
+   posterior; T4 still exact); test with a history-only prior, one view, a
+   0.96-year window, against the closed form.
+2. `Frontier.gaps` range tolerance 1e-7 and the target is clamped into
+   [lo, hi]: a plan fully in the top asset gets `risk_gap` 0, not null.
+3. Reason keys added (`sharpe_gap_reason`, `return_gap_reason`,
+   `risk_gap_reason`: `no_tangency`, `below_range`, `above_range`, `solver`);
+   `assumptions.js` and `cli.py` word each cause accurately.
+4. QP bad status / `SolverError` now read "The optimizer couldn't solve
+   this", not "limits can't all hold"; constrained `_solve` failures that
+   aren't infeasible limits are likewise converted; `OptimizationError` is
+   caught in the CLI (clean exit 2) and in the web (`assumed.error`);
+   `t0` <= 200 and `market_premium` <= 1 validated in `from_dict`; each gap in
+   `gaps()` is computed on its own, so one borderline failure nulls only that
+   gap (reason `solver`).
+5. **Deviation from the brief:** a partial group (some members not in the
+   analysis) keeps its MAX and drops its MIN, listed in `ignored` ("group A +
+   B minimum not used: B isn't in this mix"); `violations` also skips that
+   minimum.
+6. Views on tickers outside the analysis appear in `constraints.ignored`
+   ("view on XYZ") and in the CLI's "not used here" line; the page note now
+   reads "Not used here: ...".
+7. `yRange` top includes the risk-free rate (+1 point), so the T-bills marker
+   is never clipped.
+8. CLI uses `cons.resolve(...).ignored` instead of solving a frontier.
+9. Removed `ResolvedConstraints.binding_possible` and the unused constrained
+   `max_sharpe` branch of `_solve`; `_constrained_tangency` imported at the
+   top of `model.py`.
+10. One copy each: `assumptions.js` uses app.js's `pct` and `$`;
+    `condor/symbols.py` holds the one `TICKER_RE` (used by `assumptions.py`,
+    `ledger_io.py`, `views.py`; `account.py` still imports it from views);
+    `condor.data.resolve_proxy(prior, tickers, years, source, fetch)` is used
+    by both `cli.py` and `views.py`.
+11. Permanent muted line under the compare table: "Limits count against the
+    whole portfolio, so when they bind, low-risk funds can fill the rest.
+    Read that share as cash, not a call on those funds."
+
+Counts after this round: `pytest tests/` 445 passed, 4 skipped; `manage.py
+test explorer` 232 OK; `check` and `makemigrations --check --dry-run` clean.
+Re-checked with the stub-DOM harness and Plotly stub (not real browser).
+
 **Pre-existing, not fixed:** none noticed.
 
 ## Questions for the handoff session

@@ -37,8 +37,10 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Iterable, Iterator, Mapping
 
+import cvxpy as cp
 import numpy as np
 import pandas as pd
+from pypfopt.exceptions import OptimizationError
 
 from . import stats
 from . import forecast as _forecast_engine
@@ -46,7 +48,7 @@ from . import history as _history
 from .stats import annual_factor
 from .assumptions import Constraints, Prior, ResolvedConstraints
 from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix,
-                       _constrained_max_return, _perf, _return_range, _solve,
+                       _constrained_max_return, _constrained_tangency, _perf, _return_range, _solve,
                        _weights_dict)
 
 __all__ = ["Asset", "AssetSet", "Portfolio", "PortfolioHistory", "Frontier"]
@@ -54,6 +56,8 @@ __all__ = ["Asset", "AssetSet", "Portfolio", "PortfolioHistory", "Frontier"]
 def _series_dict(s) -> dict | None:
     return None if s is None else {str(t): float(v) for t, v in s.items()}
 
+
+_SOLVE_ERRORS = (ValueError, OptimizationError, cp.error.SolverError)
 
 _UNSET = object()  # "argument not given", where None is a meaningful value
 
@@ -255,6 +259,13 @@ class AssetSet:
                  for v in self._prior.views if v.ticker in self.prices.columns]
         tau = 1.0 / (t0 + stats.effective_years(self.t_years, self.method))
         return stats.apply_views(post, self.risk_matrix, tau, views)
+
+    def ignored_views(self) -> list[str]:
+        """The prior's views on assets that aren't in this set."""
+        if self._prior is None:
+            return []
+        return [f"view on {v.ticker}" for v in self._prior.views
+                if v.ticker not in self.prices.columns]
 
     def prior_note(self) -> dict | None:
         """How much the prior counts, for display; None without a prior."""
@@ -497,7 +508,6 @@ class AssetSet:
         risk-free rate."""
         self._require_pair()
         if constraints is not None:
-            from .frontier import _constrained_tangency
             w = _constrained_tangency(self.expected_returns, self.risk_matrix,
                                       risk_free_rate,
                                       self._resolved(constraints))
@@ -657,6 +667,8 @@ class AssetSet:
         }
         fr = self.frontier(risk_free_rate, n_points, constraints=constraints)
         result.update(fr.to_dict())
+        if "constraints" in result and self.ignored_views():
+            result["constraints"]["ignored"] += self.ignored_views()
         if constraints is not None:
             result["gaps"] = fr.gaps(mine)
         if self._prior is not None:
@@ -1227,26 +1239,45 @@ class Frontier:
         rf, aset, con = self.risk_free_rate, self.asset_set, self.resolved
         out = {"sharpe_gap": None, "return_gap": None, "risk_gap": None,
                "at_risk": None, "at_return": None,
+               "sharpe_gap_reason": None, "return_gap_reason": None,
+               "risk_gap_reason": None,
                "violations": self.violations(portfolio)}
         if len(aset) < 2:
             return out
+        # reasons: "no_tangency", "below_range" (the plan is steadier / earns
+        # less than any allowed mix), "above_range" (earns more than any
+        # allowed mix), "solver" (the optimizer couldn't finish this one)
         if self.tangency is not None:
             out["sharpe_gap"] = float(self.tangency.sharpe(rf)
                                       - portfolio.sharpe(rf))
+        else:
+            out["sharpe_gap_reason"] = "no_tangency"
         vol, ret = portfolio.dispersion, portfolio.expected_return
-        mu = aset.expected_returns
+        tol = 1e-7
         # same dispersion: needs an allowed mix at least that steady
         floor = self.min_vol.dispersion
-        if vol >= floor - 1e-9:
-            p = aset.efficient_risk(max(vol, floor * (1 + 1e-6)), con)
-            out["at_risk"] = p.to_dict(rf)
-            out["return_gap"] = float(p.expected_return - ret)
+        if vol < floor - tol:
+            out["return_gap_reason"] = "below_range"
+        else:
+            try:
+                p = aset.efficient_risk(max(vol, floor * (1 + 1e-6)), con)
+                out["at_risk"] = p.to_dict(rf)
+                out["return_gap"] = float(p.expected_return - ret)
+            except _SOLVE_ERRORS:
+                out["return_gap_reason"] = "solver"
         # same return: needs an allowed mix with exactly that return
-        lo, hi = _return_range(mu, con)
-        if lo - 1e-9 <= ret <= hi + 1e-9:
-            p = aset.efficient_return(min(max(ret, lo), hi), con, exact=True)
-            out["at_return"] = p.to_dict(rf)
-            out["risk_gap"] = float(vol - p.dispersion)
+        lo, hi = _return_range(aset.expected_returns, con)
+        if ret < lo - tol:
+            out["risk_gap_reason"] = "below_range"
+        elif ret > hi + tol:
+            out["risk_gap_reason"] = "above_range"
+        else:
+            try:
+                p = aset.efficient_return(min(max(ret, lo), hi), con, exact=True)
+                out["at_return"] = p.to_dict(rf)
+                out["risk_gap"] = float(vol - p.dispersion)
+            except _SOLVE_ERRORS:
+                out["risk_gap_reason"] = "solver"
         return out
 
     def to_dict(self) -> dict:

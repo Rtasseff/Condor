@@ -19,7 +19,10 @@ import json
 import sys
 from datetime import date
 
+from pypfopt.exceptions import OptimizationError
+
 from .assumptions import Assumptions
+from .data import resolve_proxy
 from . import (AssetSet, DataFetchError, PriceStore, fetch_prices,
                risk_free_history, risk_free_rate)
 from .stats import METHODS
@@ -98,11 +101,9 @@ def _under(args, aset: AssetSet, assumptions: Assumptions) -> AssetSet:
     """`aset` re-estimated under the assumptions, fetching the market proxy
     separately when it isn't one of the analysed tickers (so it can't shorten
     the analysis window)."""
-    ref = None
-    proxy = assumptions.prior.reference
-    if assumptions.prior.kind == "equilibrium" and proxy not in aset.tickers:
-        ref = fetch_prices([proxy], years=args.years,
-                           source=getattr(args, "source", None))[proxy]
+    ref = resolve_proxy(assumptions.prior, aset.tickers, years=args.years,
+                        source=getattr(args, "source", None),
+                        fetch=fetch_prices)
     return aset.with_options(prior=assumptions.prior, reference_prices=ref)
 
 
@@ -118,9 +119,9 @@ def _prior_line(under: AssetSet) -> str:
     return s
 
 
-def _ignored_line(fr) -> str:
-    ign = fr.to_dict().get("constraints", {}).get("ignored", [])
-    return ("not used (not in this analysis): " + ", ".join(ign)) if ign else ""
+def _ignored_line(under: AssetSet, cons) -> str:
+    ign = list(cons.resolve(under.tickers).ignored) + under.ignored_views()
+    return ("not used here: " + "; ".join(ign)) if ign else ""
 
 
 def _header(aset: AssetSet, rf_note: str) -> str:
@@ -198,7 +199,7 @@ def _analyze_under(under: AssetSet, assumptions: Assumptions, rf: float):
         out.append(_row("Tangency", tan.to_dict(rf)) if tan is not None else
                    f"{'Tangency':<16}   (no allowed mix beats the risk-free rate)")
         out.append(_row("Max return", under.max_return(cons).to_dict(rf)))
-        note = _ignored_line(under.frontier(rf, n_points=2, constraints=cons))
+        note = _ignored_line(under, cons)
         if note:
             out.append(f"  {note}")
     return out
@@ -247,21 +248,31 @@ def _portfolio_under(under: AssetSet, assumptions: Assumptions, weights, rf):
     else:
         out.append(f"{'Best mix':<16}   (no allowed mix beats the risk-free rate)")
     g = fr.gaps(mine)
-    na = lambda why: f"n/a: {why}"  # noqa: E731
+    why = {
+        "no_tangency": "no allowed mix beats the risk-free rate",
+        "solver": "the optimizer couldn't finish this comparison",
+    }
+    steady = "your portfolio is steadier than any mix your limits allow"
+    below = "your portfolio earns less than any mix your limits allow"
+    above = "your portfolio earns more than any mix your limits allow"
+
+    def line(label, val, fmt, reason):
+        text = fmt(val) if val is not None else f"n/a: {reason}"
+        out.append(f"  {label:<40}{text}")
+    points = lambda x: f"{100 * x:.2f} points"  # noqa: E731
     out.append("How far is your portfolio from the best mix?")
-    out.append("  Risk-adjusted return (Sharpe) gap       "
-               + (f"{g['sharpe_gap']:.2f}" if g["sharpe_gap"] is not None else
-                  na("no allowed mix beats the risk-free rate")))
-    out.append("  Return you could add at the same risk   "
-               + (f"{100 * g['return_gap']:.2f} points" if g["return_gap"] is not None
-                  else na("no allowed mix is as steady as yours")))
-    out.append("  Risk you could shed at the same return  "
-               + (f"{100 * g['risk_gap']:.2f} points" if g["risk_gap"] is not None
-                  else na("no allowed mix earns as little as yours")))
+    line("Risk-adjusted return (Sharpe) gap", g["sharpe_gap"],
+         lambda x: f"{x:.2f}", why.get(g["sharpe_gap_reason"]))
+    line("Return you could add at the same risk", g["return_gap"], points,
+         steady if g["return_gap_reason"] == "below_range"
+         else why.get(g["return_gap_reason"]))
+    line("Risk you could shed at the same return", g["risk_gap"], points,
+         {"below_range": below, "above_range": above}.get(
+             g["risk_gap_reason"], why.get(g["risk_gap_reason"])))
     if g["violations"]:
         out.append("Your portfolio breaks these limits:")
         out.extend(f"  - {v}" for v in g["violations"])
-    note = _ignored_line(fr)
+    note = _ignored_line(under, cons)
     if note:
         out.append(f"  {note}")
     return out
@@ -444,6 +455,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except (ValueError, KeyError) as e:
         print(f"error: {e}", file=sys.stderr)
+        return 2
+    except OptimizationError as e:
+        print(f"error: the optimizer couldn't solve this ({e})", file=sys.stderr)
         return 2
 
 

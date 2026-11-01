@@ -3,7 +3,7 @@
  * Presentation only: the editor builds an assumptions object (percent in the
  * boxes, fractions on the wire), /api/analyze returns `assumed`, and this file
  * draws it. All numbers come from the server. Loaded after app.js, whose
- * `asmHooks` it fills in. */
+ * `asmHooks`, `$` and `pct` it uses. */
 "use strict";
 
 const asm = {
@@ -18,8 +18,6 @@ const asm = {
   built: false,
 };
 
-const asmEl = (id) => document.getElementById(id);
-const asmPct = (x, d = 1) => (100 * x).toFixed(d) + "%";
 const asmFrac = (txt, field) => {
   const t = String(txt).trim();
   if (t === "") return null;
@@ -43,7 +41,7 @@ function asmMk(tag, props = {}, ...kids) {
 
 // ---------- editor state -> request ----------
 function asmBuild() {
-  const name = (asmEl("asmname").value || "").trim() || "My assumptions";
+  const name = ($("asmname").value || "").trim() || "My assumptions";
   const bounds = {};
   for (const [t, b] of Object.entries(asm.bounds)) {
     const lo = asmFrac(b.min, `${t} minimum`), hi = asmFrac(b.max, `${t} maximum`);
@@ -101,20 +99,20 @@ asmHooks.request = () => {
 };
 
 function asmShowError(msg) {
-  const e = asmEl("asmerror");
+  const e = $("asmerror");
   e.textContent = msg;
   e.hidden = !msg;
 }
 
 function asmSyncButtons() {
-  asmEl("asmoff").hidden = !asm.on;
-  asmEl("asmrun").textContent = asm.on
+  $("asmoff").hidden = !asm.on;
+  $("asmrun").textContent = asm.on
     ? "Update the comparison" : "Show the best mix under these";
 }
 
 asmHooks.render = (assumed) => {
-  const box = asmEl("asmresult");
-  asmEl("asmchip").hidden = true;
+  const box = $("asmresult");
+  $("asmchip").hidden = true;
   if (!asm.on || !assumed) { box.hidden = true; return; }
   if (assumed.error) {
     box.hidden = true;
@@ -123,13 +121,13 @@ asmHooks.render = (assumed) => {
   }
   asmShowError("");
   box.hidden = false;
-  asmEl("asmtitle").textContent = `Under: ${assumed.name}`;
-  asmEl("asmcolunder").textContent = `Under: ${assumed.name}`;
-  asmEl("asmchip").textContent = assumed.name;
-  asmEl("asmchip").hidden = false;
+  $("asmtitle").textContent = `Under: ${assumed.name}`;
+  $("asmcolunder").textContent = `Under: ${assumed.name}`;
+  $("asmchip").textContent = assumed.name;
+  $("asmchip").hidden = false;
   if (assumed.prior_note && assumed.prior_note.market_premium != null)
-    asmEl("asmmp").placeholder = `${(100 * assumed.prior_note.market_premium).toFixed(1)} (default)`;
-  asmEl("asmnote").textContent = asmNote(assumed.prior_note, state.result.method);
+    $("asmmp").placeholder = `${(100 * assumed.prior_note.market_premium).toFixed(1)} (default)`;
+  $("asmnote").textContent = asmNote(assumed.prior_note, state.result.method);
   drawFrontier("chart-assumed", assumed, { clickable: false });
   asmCompare(state.result, assumed);
   asmGaps(assumed);
@@ -144,13 +142,13 @@ function asmNote(n, method) {
           `your history as ${yrs(n.t_effective)} years.`;
   if (n.t_effective < n.t_years - 1e-9)
     s += " (Robust method: history counts less.)";
-  s += ` Market premium ${asmPct(n.market_premium)} a year, measured against ${n.reference}.`;
+  s += ` Market premium ${pct(n.market_premium)} a year, measured against ${n.reference}.`;
   return s;
 }
 
 // ---------- compare table ----------
 function asmCompare(hist, under) {
-  const tb = asmEl("asmcompare").querySelector("tbody");
+  const tb = $("asmcompare").querySelector("tbody");
   tb.replaceChildren();
   const cell = (txt) => asmMk("td", { class: "num", text: txt });
   const sec = (txt) => tb.append(asmMk("tr", {}, asmMk("th", {
@@ -163,7 +161,7 @@ function asmCompare(hist, under) {
     ((hw && hw[t]) || 0) > 0.0005 || ((uw && uw[t]) || 0) > 0.0005);
   for (const t of tick) {
     tb.append(asmMk("tr", {}, asmMk("th", { scope: "row", text: t }),
-      cell(hw ? asmPct(hw[t] || 0) : none), cell(uw ? asmPct(uw[t] || 0) : none)));
+      cell(hw ? pct(hw[t] || 0) : none), cell(uw ? pct(uw[t] || 0) : none)));
   }
   if (!hw || !uw) {
     tb.append(asmMk("tr", {}, asmMk("td", { colSpan: 3, class: "sub",
@@ -174,46 +172,57 @@ function asmCompare(hist, under) {
   sec("Your portfolio");
   const row = (label, a, b) => tb.append(asmMk("tr", {},
     asmMk("th", { scope: "row", text: label }), cell(a), cell(b)));
-  row("Expected return", asmPct(hist.portfolio.ret), asmPct(under.portfolio.ret));
-  row("Dispersion", asmPct(hist.portfolio.vol), asmPct(under.portfolio.vol));
+  row("Expected return", pct(hist.portfolio.ret), pct(under.portfolio.ret));
+  row("Dispersion", pct(hist.portfolio.vol), pct(under.portfolio.vol));
   row("Sharpe ratio", hist.portfolio.sharpe.toFixed(2), under.portfolio.sharpe.toFixed(2));
 }
 
 // ---------- the three gaps ----------
 function asmGaps(under) {
   const g = under.gaps || {};
-  const dl = asmEl("asmgaps");
+  const dl = $("asmgaps");
   dl.replaceChildren();
   const pts = (x) => `${(100 * x).toFixed(2)} points`;
+  // why a gap is n/a, in words that match the real cause
+  const why = {
+    no_tangency: "no mix within your limits beats the risk-free rate",
+    solver: "the optimizer couldn't finish this comparison",
+  };
   const rows = [
     ["Risk-adjusted return (Sharpe) gap", g.sharpe_gap, (x) => x.toFixed(2),
-     "no mix within your limits beats the risk-free rate"],
+     why[g.sharpe_gap_reason]],
     ["Return you could add at the same risk", g.return_gap, pts,
-     "no mix within your limits is as steady as your portfolio"],
+     g.return_gap_reason === "below_range"
+       ? "your portfolio is steadier than any mix your limits allow"
+       : why[g.return_gap_reason]],
     ["Risk you could shed at the same return", g.risk_gap, pts,
-     "no mix within your limits earns as little as your portfolio"],
+     g.risk_gap_reason === "below_range"
+       ? "your portfolio earns less than any mix your limits allow"
+       : g.risk_gap_reason === "above_range"
+       ? "your portfolio earns more than any mix your limits allow"
+       : why[g.risk_gap_reason]],
   ];
-  for (const [label, val, fmt, why] of rows) {
+  for (const [label, val, fmt, reason] of rows) {
     dl.append(asmMk("dt", { text: label }));
     dl.append(val == null
-      ? asmMk("dd", { class: "na", text: `n/a: ${why}` })
+      ? asmMk("dd", { class: "na", text: `n/a: ${reason || "no comparison available"}` })
       : asmMk("dd", { text: fmt(val) }));
   }
-  const vio = asmEl("asmviolations");
+  const vio = $("asmviolations");
   const list = g.violations || [];
   vio.hidden = !list.length;
   vio.querySelector("ul").replaceChildren(
     ...list.map((v) => asmMk("li", { text: v })));
   const ign = (under.constraints && under.constraints.ignored) || [];
-  const note = asmEl("asmignored");
+  const note = $("asmignored");
   note.hidden = !ign.length;
   note.textContent = ign.length
-    ? `Not used here, since they aren't in this analysis: ${ign.join(", ")}.` : "";
+    ? `Not used here: ${ign.join("; ")}.` : "";
 }
 
 // ---------- editor rendering ----------
 function asmRenderLimits() {
-  const tb = asmEl("asmlimits").querySelector("tbody");
+  const tb = $("asmlimits").querySelector("tbody");
   tb.replaceChildren();
   for (const t of state.assets) {
     const b = asm.bounds[t] || (asm.bounds[t] = { min: "", max: "" });
@@ -232,7 +241,7 @@ function asmRenderLimits() {
 }
 
 function asmRenderGroups() {
-  const box = asmEl("asmgroups");
+  const box = $("asmgroups");
   box.replaceChildren();
   asm.groups.forEach((g, i) => {
     const row = asmMk("div");
@@ -259,7 +268,7 @@ function asmRenderGroups() {
 }
 
 function asmRenderViews() {
-  const box = asmEl("asmviews");
+  const box = $("asmviews");
   box.replaceChildren();
   asm.views.forEach((v, i) => {
     const sel = asmMk("select");
@@ -287,21 +296,21 @@ function asmRenderViews() {
 }
 
 function asmRenderPrior() {
-  asmEl("asmhistonly").checked = asm.histOnly;
-  asmEl("asmmp").value = asm.mp;
-  asmEl("asmt0").value = asm.t0;
-  asmEl("asmref").value = asm.ref;
-  for (const id of ["asmmp", "asmt0", "asmref"]) asmEl(id).disabled = asm.histOnly;
+  $("asmhistonly").checked = asm.histOnly;
+  $("asmmp").value = asm.mp;
+  $("asmt0").value = asm.t0;
+  $("asmref").value = asm.ref;
+  for (const id of ["asmmp", "asmt0", "asmref"]) $(id).disabled = asm.histOnly;
 }
 
-asmHooks.assetsChanged = () => { if (asmEl("asmlimits")) asmRenderLimits(); };
+asmHooks.assetsChanged = () => { if ($("asmlimits")) asmRenderLimits(); };
 
 // ---------- saved sets ----------
-const asmAuth = () => !!asmEl("asmsaved");
+const asmAuth = () => !!$("asmsaved");
 const asmHeaders = () => ({ "Content-Type": "application/json", "X-CSRFToken": csrftoken() });
 
 function asmSay(msg) {
-  const el = asmEl("asmstatus");
+  const el = $("asmstatus");
   el.textContent = msg;
   if (msg) setTimeout(() => { if (el.textContent === msg) el.textContent = ""; }, 3000);
 }
@@ -318,7 +327,7 @@ async function asmRefreshSets(selectId) {
   try {
     asm.sets = await asmApi("/api/assumptions");
   } catch (err) { asmShowError(err.message); return; }
-  const sel = asmEl("asmsaved");
+  const sel = $("asmsaved");
   sel.replaceChildren(asmMk("option", { value: "", text: "New (not saved)" }),
     ...asm.sets.map((r) => asmMk("option", { value: r.id, text: r.name })));
   sel.value = selectId || asm.id || "";
@@ -327,9 +336,9 @@ async function asmRefreshSets(selectId) {
 
 function asmSyncSaveButtons() {
   if (!asmAuth()) return;
-  asmEl("asmsavenew").hidden = !asm.id;
-  asmEl("asmdelete").hidden = !asm.id;
-  const d = asmEl("asmdelete");
+  $("asmsavenew").hidden = !asm.id;
+  $("asmdelete").hidden = !asm.id;
+  const d = $("asmdelete");
   d.textContent = "Delete";
   delete d.dataset.armed;
 }
@@ -338,7 +347,7 @@ function asmSyncSaveButtons() {
 // until Save; analysis sends this editor's contents as a copy.
 function asmLoad(id, a) {
   asm.id = id;
-  asmEl("asmname").value = a.name;
+  $("asmname").value = a.name;
   asm.histOnly = a.prior.kind === "history";
   asm.mp = asmTxt(a.prior.market_premium);
   asm.t0 = String(a.prior.t0);
@@ -373,7 +382,7 @@ async function asmSave(asNew) {
 }
 
 async function asmDelete() {
-  const d = asmEl("asmdelete");
+  const d = $("asmdelete");
   if (!d.dataset.armed) {      // two steps, no confirm() dialog
     d.dataset.armed = "1";
     d.textContent = "Delete? Click again";
@@ -391,38 +400,38 @@ async function asmDelete() {
 function asmWire() {
   if (asm.built) return;
   asm.built = true;
-  asmEl("asmhistonly").addEventListener("change", (e) => {
+  $("asmhistonly").addEventListener("change", (e) => {
     asm.histOnly = e.target.checked;
     asmRenderPrior();
   });
   for (const [id, key] of [["asmmp", "mp"], ["asmt0", "t0"], ["asmref", "ref"]]) {
-    asmEl(id).addEventListener("input", (e) => { asm[key] = e.target.value; });
+    $(id).addEventListener("input", (e) => { asm[key] = e.target.value; });
   }
-  asmEl("asmaddgroup").addEventListener("click", () => {
+  $("asmaddgroup").addEventListener("click", () => {
     asm.groups.push({ tickers: [], min: "", max: "" });
     asmRenderGroups();
   });
-  asmEl("asmaddview").addEventListener("click", () => {
+  $("asmaddview").addEventListener("click", () => {
     asm.views.push({ ticker: state.assets[0] || "", ret: "", sd: "" });
     asmRenderViews();
   });
-  asmEl("asmrun").addEventListener("click", () => {
+  $("asmrun").addEventListener("click", () => {
     asm.on = true;
     asmSyncButtons();
     analyze();
   });
-  asmEl("asmoff").addEventListener("click", () => {
+  $("asmoff").addEventListener("click", () => {
     asm.on = false;
     asmShowError("");
     asmSyncButtons();
-    asmEl("asmresult").hidden = true;
-    asmEl("asmchip").hidden = true;
+    $("asmresult").hidden = true;
+    $("asmchip").hidden = true;
   });
   if (asmAuth()) {
-    asmEl("asmsave").addEventListener("click", () => asmSave(false));
-    asmEl("asmsavenew").addEventListener("click", () => asmSave(true));
-    asmEl("asmdelete").addEventListener("click", asmDelete);
-    asmEl("asmsaved").addEventListener("change", async (e) => {
+    $("asmsave").addEventListener("click", () => asmSave(false));
+    $("asmsavenew").addEventListener("click", () => asmSave(true));
+    $("asmdelete").addEventListener("click", asmDelete);
+    $("asmsaved").addEventListener("change", async (e) => {
       asmShowError("");
       if (!e.target.value) { asm.id = null; asmSyncSaveButtons(); return; }
       try {
@@ -436,4 +445,4 @@ function asmWire() {
   asmSyncButtons();
 }
 
-if (asmEl("asmcard")) asmWire();
+if ($("asmcard")) asmWire();

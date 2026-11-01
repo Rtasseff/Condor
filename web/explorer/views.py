@@ -15,6 +15,7 @@ import re
 import smtplib
 
 from django.conf import settings
+from pypfopt.exceptions import OptimizationError
 from django.contrib import messages
 from django.contrib.auth import login as auth_login
 from django.contrib.auth import views as auth_views
@@ -40,6 +41,8 @@ from condor import (AssetSet, DataFetchError, Forecast, PriceStore,
 from condor.forecast import (ANCHOR_MAX, ANCHOR_MIN, ANCHOR_PRIOR_SD,
                              MARKET_ANCHOR)
 from condor.assumptions import Assumptions
+from condor.data import resolve_proxy
+from condor.symbols import TICKER_RE
 from condor.stats import METHODS
 
 from .forms import ALREADY_REGISTERED, SignupForm
@@ -49,7 +52,6 @@ from .throttle import client_ip, json_rate_limit, rate_for
 
 log = logging.getLogger(__name__)
 
-TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,10}$")
 MAX_ASSETS = 15
 MAX_NAME = 80
 
@@ -563,13 +565,12 @@ def _assumed(raw, tickers, prices, settings, history, weights):
         if history is None:
             return {"error": "Assumptions need the T-bill history, which is "
                              "off or unavailable right now."}
-        ref = None
-        proxy = assumptions.prior.reference
-        if assumptions.prior.kind == "equilibrium" and proxy not in tickers:
-            try:
-                ref = fetch_prices([proxy], years=settings["years"])[proxy]
-            except DataFetchError as e:
-                return {"error": f"Couldn't load the market proxy {proxy}: {e}"}
+        try:
+            ref = resolve_proxy(assumptions.prior, tickers,
+                                years=settings["years"], fetch=fetch_prices)
+        except DataFetchError as e:
+            return {"error": f"Couldn't load the market proxy "
+                             f"{assumptions.prior.reference}: {e}"}
         aset = AssetSet(prices, method=settings["method"], rf_history=history,
                         rf_level=settings["risk_free_rate"])
         return aset.analysis_under(
@@ -577,6 +578,8 @@ def _assumed(raw, tickers, prices, settings, history, weights):
             reference_prices=ref)
     except ValueError as e:
         return {"error": str(e)}
+    except OptimizationError as e:
+        return {"error": f"The optimizer couldn't solve this ({e})."}
     except Exception:
         log.exception("assumed analysis failed for %s", tickers)
         return {"error": "The analysis under your assumptions failed "

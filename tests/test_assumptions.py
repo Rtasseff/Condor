@@ -90,7 +90,7 @@ def test_resolve_ignores_absent_tickers():
     assert r.groups == (((1, 0), 0.0, 0.40),)
     assert r.ignored == ()
     r = c.resolve(["BBB", "CCC"])           # AAA missing: bound ignored,
-    assert r.groups == (((0,), 0.0, 0.40),)  # group keeps BBB
+    assert r.groups == (((0,), 0.0, 0.40),)  # group keeps BBB (max only)
     assert r.ignored == ("AAA",)
     r = c.resolve(["CCC"])                  # group has no members left
     assert r.groups == () and r.ignored == ("AAA", "group AAA + BBB")
@@ -108,3 +108,32 @@ def test_violations_in_words():
     assert any("AAA + BBB together 55.0%" in s for s in v)
     assert c.violations({"GLDM": 0.15, "AAA": 0.1, "BBB": 0.3}) == []
     assert c.violations({"ZZZ": 1.0}) == []
+
+
+def test_partial_group_keeps_max_drops_min_and_says_so():
+    c = Constraints.from_dict({"groups": [
+        {"tickers": ["AAA", "XYZ"], "min": 0.2, "max": 0.5}]})
+    r = c.resolve(["AAA", "BBB"])
+    assert r.groups == (((0,), 0.0, 0.5),)
+    assert r.ignored == ("group AAA + XYZ minimum not used: XYZ isn't in this mix",)
+    # a partial group with no minimum needs no note
+    c = Constraints.from_dict({"groups": [{"tickers": ["AAA", "XYZ"], "max": 0.5}]})
+    assert c.resolve(["AAA", "BBB"]).ignored == ()
+    # and its minimum is not held against a plan either
+    c = Constraints.from_dict({"groups": [{"tickers": ["AAA", "XYZ"], "min": 0.2}]})
+    assert c.violations({"AAA": 0.05, "BBB": 0.95}) == []
+
+
+def test_t0_and_market_premium_upper_bounds():
+    _bad(lambda d: d["prior"].update(t0=201), "prior.t0")
+    _bad(lambda d: d["prior"].update(market_premium=1.5), "market_premium")
+    d = copy.deepcopy(FULL)
+    d["prior"].update(t0=200, market_premium=1.0)
+    Assumptions.from_dict(d)
+
+
+def test_one_ticker_regex():
+    from condor.assumptions import TICKER_RE as a
+    from condor.ledger_io import TICKER_RE as b
+    from condor.symbols import TICKER_RE as c
+    assert a is b is c

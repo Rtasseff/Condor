@@ -64,11 +64,6 @@ def _solve(mu: pd.Series, sigma: pd.DataFrame, kind: str, constraints=None,
         _run(ef, mu, kind, kw)
         w = ef.clean_weights()
         return np.array([w[t] for t in mu.index])
-    if kind == "max_sharpe":
-        w = _constrained_tangency(mu, sigma, kw["risk_free_rate"], constraints)
-        if w is None:
-            raise ValueError("no mix within these limits beats the risk-free rate")
-        return w
     _check_limits(constraints)
     ef = EfficientFrontier(mu, sigma, weight_bounds=list(constraints.bounds))
     for idx, lo, hi in constraints.groups:
@@ -79,9 +74,9 @@ def _solve(mu: pd.Series, sigma: pd.DataFrame, kind: str, constraints=None,
             ef.add_constraint(lambda w, ix=ix, hi=hi: cp.sum(w[ix]) <= hi)
     try:
         _run(ef, mu, kind, kw)
-    except Exception:
+    except Exception as e:
         _raise_if_infeasible(constraints)
-        raise
+        raise ValueError(f"The optimizer couldn't solve this ({e}).") from e
     w = ef.clean_weights()
     return np.array([w[t] for t in mu.index])
 
@@ -212,10 +207,12 @@ def _constrained_tangency(mu: pd.Series, sigma: pd.DataFrame, rf: float,
             cons.append(cp.sum(y[ix]) <= k * ghi)
     S = cp.psd_wrap(sigma.to_numpy(dtype=float))
     prob = cp.Problem(cp.Minimize(cp.quad_form(y, S)), cons)
-    prob.solve(solver=cp.CLARABEL)
+    try:
+        prob.solve(solver=cp.CLARABEL)
+    except cp.error.SolverError as e:
+        raise ValueError(f"The optimizer couldn't solve this ({e}).") from e
     if prob.status not in ("optimal", "optimal_inaccurate") or y.value is None:
-        raise ValueError(f"{_LIMITS_MSG}the solver found no mix "
-                         f"({prob.status}).")
+        raise ValueError(f"The optimizer couldn't solve this ({prob.status}).")
     return _clean(np.asarray(y.value, dtype=float) / float(k.value), resolved)
 
 

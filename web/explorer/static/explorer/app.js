@@ -307,7 +307,7 @@ function yRange(r) {
   if (r.tangency) ys.push(r.tangency.ret);
   if (!ys.length) return undefined;
   const hi = Math.max(...ys);
-  const top = hi + 0.15 * Math.abs(hi);
+  const top = Math.max(hi + 0.15 * Math.abs(hi), r.risk_free_rate + 0.01);
   const lo = Math.min(...ys, r.risk_free_rate);
   const bottom = lo - 0.08 * (top - lo);
   return top > bottom ? [bottom, top] : undefined;
