@@ -130,7 +130,6 @@ def _check_limits(resolved) -> None:
 
 def _feasible_set(resolved, w):
     """cvxpy constraints for `w` (fully invested) under the limits."""
-    n = len(resolved.bounds)
     lo = np.array([b[0] for b in resolved.bounds])
     hi = np.array([b[1] for b in resolved.bounds])
     cons = [cp.sum(w) == 1, w >= lo, w <= hi]

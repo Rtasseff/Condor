@@ -68,6 +68,10 @@ def test_validation_rules():
     _bad(lambda d: d["constraints"].update(
         groups=[{"tickers": ["A"]} for _ in range(21)]), "groups")
     _bad(lambda d: d["constraints"].update(bounds=[]), "bounds")
+    _bad(lambda d: d["prior"].update(reference="NOT A TICKER!"), "ticker symbol")
+    _bad(lambda d: d["constraints"]["bounds"].update({"A B": {}}), "ticker symbol")
+    _bad(lambda d: d["constraints"].update(
+        bounds={f"T{i}": {} for i in range(51)}), "bounds")
     with pytest.raises(ValueError, match="assumptions"):
         Assumptions.from_dict([])
 

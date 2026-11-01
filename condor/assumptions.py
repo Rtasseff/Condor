@@ -18,11 +18,15 @@ for a maximum, is omitted).  See docs/decisions/0008-assumptions-mode.md.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 MAX_GROUPS = 20
 MAX_VIEWS = 15
 MAX_NAME = 80
+MAX_BOUNDS = 50
+MAX_GROUP_TICKERS = 50
+_TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,10}$")
 KINDS = ("history", "equilibrium")
 DEFAULT_REFERENCE = "VT"
 DEFAULT_T0 = 20.0
@@ -48,7 +52,11 @@ def _weight(value, field: str) -> float:
 def _ticker(value, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} must be a ticker")
-    return value.strip().upper()
+    t = value.strip().upper()
+    if not _TICKER_RE.match(t):
+        raise ValueError(f"{field}: '{value.strip()[:12]}' does not look like "
+                         "a ticker symbol")
+    return t
 
 
 def _obj(value, field: str) -> dict:
@@ -83,8 +91,10 @@ class Group:
     def from_dict(cls, d, field: str = "group") -> "Group":
         d = _obj(d, field)
         raw = d.get("tickers")
-        if not isinstance(raw, (list, tuple)) or not raw:
-            raise ValueError(f"{field}.tickers must be a non-empty list")
+        if (not isinstance(raw, (list, tuple)) or not raw
+                or len(raw) > MAX_GROUP_TICKERS):
+            raise ValueError(f"{field}.tickers must be a list of 1 to "
+                             f"{MAX_GROUP_TICKERS} tickers")
         tickers = tuple(dict.fromkeys(
             _ticker(t, f"{field}.tickers") for t in raw))
         lo = _weight(d.get("min", 0.0), f"{field}.min")
@@ -128,6 +138,8 @@ class Constraints:
     def from_dict(cls, d, field: str = "constraints") -> "Constraints":
         d = _obj(d if d is not None else {}, field)
         raw = _obj(d.get("bounds", {}), f"{field}.bounds")
+        if len(raw) > MAX_BOUNDS:
+            raise ValueError(f"{field}.bounds: at most {MAX_BOUNDS} assets")
         bounds = {}
         for t, b in raw.items():
             name = _ticker(t, f"{field}.bounds")

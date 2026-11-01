@@ -271,14 +271,95 @@ long-only, fully invested. The first five come from the source repo’s
 
 ## Status
 
-- [ ] Baseline recorded (395 passed / 4 skipped; 215 OK)
-- [ ] Phase 1 `Assumptions`
-- [ ] Phase 2 engine
-- [ ] Phase 3 model
-- [ ] Phase 4 storage + API
-- [ ] Phase 5 UI
-- [ ] Phase 6 CLI
-- [ ] Phase 7 docs + `/code-review medium` + fixes
+- [x] Baseline recorded: 395 passed / 4 skipped; 215 OK (matched the brief)
+- [x] Phase 1 `Assumptions` (`condor/assumptions.py`, `tests/test_assumptions.py`)
+- [x] Phase 2 engine (`stats.py`, `frontier.py`; `tests/test_assumptions_engine.py`)
+- [x] Phase 3 model (`model.py`; same test file)
+- [x] Phase 4 storage + API (migration 0008, `/api/assumptions`, `assumed`;
+      `web/explorer/test_assumptions.py`)
+- [x] Phase 5 UI (`assumptions.js`, card in `optimize.html`, `drawFrontier`
+      in `app.js`)
+- [x] Phase 6 CLI (`--assumptions`; `tests/test_cli.py::TestAssumptions`)
+- [x] Phase 7 docs + `/code-review medium b7b6ff1..HEAD` (see below)
+
+**Final counts:** `pytest tests/` 432 passed, 4 skipped (baseline 395/4);
+`manage.py test explorer` 230 OK (baseline 215); `check` clean;
+`makemigrations --check --dry-run` clean. Legacy-pinned tests untouched.
+
+**Hand-checked numbers, all pinned and passing:** T1 (non-binding limits equal
+the unconstrained tangency, to 1e-4 only because pypfopt's `clean_weights`
+rounds the unconstrained side to 1e-5; the QP itself agrees to ~1e-10 on the
+T2 case), T2 ((0.2, 0.8) and (0.4, 0.6), Sharpe 0.5657 / 0.5150, plus a
+dense-grid cross-check on 4 assets with an asset cap and a group cap), T3, T4
+(0.08 / 0.01, sd to 0 and infinity), T5 (9.73% and 5.00%), equilibrium
+(5.0% / 1.5%, reference inside and outside the set), gaps (0.1657 / 0.7059
+points / 0 unconstrained; 0.1150 / null / null with B <= 0.60; ~0 at the
+tangency), infeasible limits, round trip and one test per validation rule,
+and the web items.
+
+**Deviations and interpretations (please check):**
+- *Result layout:* the brief says `#chart-assumed` sits "beside the main
+  chart". The history chart shares a row with the sidebar, so the assumed
+  chart sits in the new card directly under it (chart on the left, compare
+  table and gaps on the right on wide screens, stacked on phones).
+- *Gap definitions need "exactly":* `risk_gap` compares with the least
+  dispersion at exactly the plan's return (`efficient_return(..., exact=True)`,
+  an equality constraint), not pypfopt's `>=`. The brief's hand numbers
+  (risk gap 0 for plan (0, 1)) require it. A plan whose return is outside what
+  the limits allow gets null. `return_gap` uses `efficient_risk` at the plan's
+  dispersion, null when it is below the cheapest allowed dispersion.
+  A gap can be negative when the plan itself breaks a limit (it then beats the
+  constrained best); the violations list explains it.
+- *`kind: "history"` with views:* views still apply on top of the sample
+  premiums (tau = 1/T_eff). The brief only says "no blending, no reference".
+- *`to_dict` omits default limits* (min 0 / max 1) so the brief's example
+  round-trips exactly; `Constraints.resolve` returns a small
+  `ResolvedConstraints` dataclass (bounds, groups, ignored).
+- *Extra payload keys* (additive only, and only when assumptions are in play):
+  `gaps` and `constraints` when `AssetSet.analysis(constraints=...)` is used;
+  `prior_note` (also `kind`) and `premiums` {sample, prior, posterior} when the
+  set has a prior. `AssetSet.analysis_under`, `AssetSet.max_return`,
+  `AssetSet.prior_note`, and `with_options(prior=, reference_prices=)` were
+  added. `Frontier.violations` too.
+- *Malformed `assumptions` in `/api/analyze`* (fails `from_dict`) becomes
+  `assumed: {"error": ...}` with HTTP 200, like the other failures, not a 400.
+- *Constraint-path numerics:* frontier points with limits use pypfopt with
+  `weight_bounds` and `add_constraint`; the last point's target is lowered by
+  1e-9 so the LP's own top end isn't borderline infeasible.
+- *y-axis (coordinator request):* `renderChart` now goes through
+  `drawFrontier(divId, r, opts)`; the y range is set from the frontier, the
+  assets, min-dispersion and tangency points, and the risk-free rate (1.15 x
+  their max on top; 8% of the span below the lowest), so the capital line runs
+  off the top. Both charts use it. No payload or model change. Checked with a
+  stub: a capital line to 120% gives range top / max point = 1.15.
+- *touch-action:* `#chart-assumed` has `touch-action: pan-y`; `#chart` did not
+  have it and was left alone.
+
+**Renamed user-facing strings:** none (all new). The "Click to inspect" hover
+hint is now omitted on the assumed chart, where nothing opens on click.
+
+**What was and wasn't exercised (no real browser):** Django test client for all
+endpoints and the page render; `node --check` on `app.js` and
+`assumptions.js`; a stub-DOM harness (kept outside the repo) that ran the
+card's request building, opt-in, render of a real server payload (compare
+table, gaps, n/a rows, violations, ignored note, error), and saved-set
+list / load / update / save-as-new / two-step delete flows; a Plotly stub run
+of `drawFrontier` for the y range. NOT exercised: real Plotly rendering,
+layout/CSS at phone and desktop widths, focus and keyboard behaviour,
+`touch-action` in a touch browser.
+
+**Code review:** `/code-review medium b7b6ff1..HEAD` was run and was NOT
+usable: all six findings were about `account.js` / `account.html` (pay-in
+plan panel, buy-list filter, tickformat, a removed `warn` class), files this
+branch never touched (`git diff b7b6ff1..HEAD --stat` has no account file);
+it compared against the moved `main` (now 541ead4). Instead I reviewed the
+full diff by hand (engine, model, views, JS). Fixes landed from that: ticker
+shape validated in `Assumptions.from_dict` (the market proxy is fetched by
+name, so an arbitrary string must not reach the data layer), caps of 50
+bounds and 50 tickers per group, an unused variable removed. The account.js
+findings are for whoever owns `main`'s account work, not this branch.
+
+**Pre-existing, not fixed:** none noticed.
 
 ## Questions for the handoff session
 
