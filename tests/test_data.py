@@ -347,3 +347,20 @@ class TestSourceChains:
         for bad in ("stooq", "tiingo,stooq", ",,"):
             with pytest.raises(DataFetchError):
                 get_sources(bad)
+
+
+@pytest.mark.parametrize("ticker", ["^GSPC", "EURUSD=X", "^IDX"])
+def test_index_and_fx_tickers_round_trip_through_the_store(
+        store, fake, ticker):
+    """ADR 0007: rule indices (^GSPC) and the FX close (EURUSD=X) are
+    stored and read back by their own names, raw close included, and
+    never clobber each other's files."""
+    start = date.today() - timedelta(days=300)
+    got = store.get(ticker, start=start)
+    assert "close" in got and len(got) > 60
+    again = store.read(ticker)
+    assert again is not None and again["close"].equals(got["close"])
+    assert store.as_of(ticker) == str(fake.history.index[-1].date())
+    assert store._path(ticker).exists()
+    assert len({store._path(t) for t in ("^GSPC", "EURUSD=X", "GSPC",
+                                         "EURUSD")}) == 4
