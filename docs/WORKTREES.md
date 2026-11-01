@@ -194,4 +194,6 @@ Mark the registry row merged (or remove it) in the same commit.
 
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
+| `broker-reconcile` | `feature/broker-reconcile` | 8001 | 2026-11-01 | Background agent running |
+| `scenarios` | `feature/scenarios` | 8002 | 2026-11-01 | Background agent running |
 
