@@ -45,6 +45,7 @@ from pypfopt.exceptions import OptimizationError
 from . import stats
 from . import forecast as _forecast_engine
 from . import history as _history
+from . import stability as _stability
 from .stats import annual_factor
 from .assumptions import Constraints, Prior, ResolvedConstraints
 from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix,
@@ -606,6 +607,75 @@ class AssetSet:
         out["name"] = assumptions.name
         out["assumptions"] = assumptions.to_dict()
         return out
+
+    # -- stability of the best mix ------------------------------------------
+    def _resampled(self, idx) -> "AssetSet":
+        """This set rebuilt on resampled history: the daily return rows
+        `idx` picked for every asset, the T-bill and an outside market
+        proxy alike.  Same dates, options, prior and rate level, so the
+        set's own estimators run on the reshuffled data."""
+        prices = _stability.resample_prices(self.prices, idx)
+        dates = self.prices.index[1:]
+        rf = (None if self._rf_history is None else
+              _stability.resample_series(self._rf_history, dates, idx))
+        ref = None
+        if self._reference_prices is not None:
+            # the proxy's own daily returns on this set's dates; rows before
+            # it starts stay missing and are dropped after the reshuffle
+            r = self._reference_prices.dropna().sort_index()
+            r = r.reindex(r.index.union(self.prices.index)).ffill()
+            r = r.reindex(self.prices.index).pct_change().iloc[1:]
+            ok = r.to_numpy(dtype=float)[np.asarray(idx)]
+            grown = 100.0 * np.cumprod(np.where(np.isnan(ok), 0.0, ok) + 1.0)
+            grown[np.isnan(ok)] = np.nan
+            ref = pd.Series(np.concatenate([[100.0], grown]),
+                            index=self.prices.index,
+                            name=self._reference_prices.name).dropna()
+        return AssetSet(prices, method=self.method,
+                        names={a.ticker: a.name for a in self.assets if a.name},
+                        rf_history=rf, rf_level=self._rf_level,
+                        prior=self._prior, reference_prices=ref,
+                        **self._options)
+
+    def stability(self, risk_free_rate: float, constraints=None, n: int = 100,
+                  block: int = _stability.DEFAULT_BLOCK, seed: int = 0) -> dict:
+        """How much the best (tangency) mix moves on a different history.
+
+        Block-bootstraps the set's daily rows `n` times -- the same blocks
+        for every asset and the T-bill -- and re-runs this set's estimators
+        and the tangency solve (with `constraints` and any prior) on each
+        resample.  A diagnostic on the weights, not a new answer.
+
+        -> {n, n_failed, block, seed, assets: {ticker: {p10, p50, p90,
+        held_share}}}.  A resample whose solve fails, or where nothing beats
+        the rate, counts in `n_failed`; the percentiles and `held_share`
+        are over the `n - n_failed` that solved.  Seeded, so reproducible.
+        """
+        self._require_pair()
+        if n < 1:
+            raise ValueError("n must be at least 1")
+        if (self.premium_mode and risk_free_rate is not None
+                and float(risk_free_rate) != self._rf_level):
+            return self.with_options(rf_level=risk_free_rate).stability(
+                risk_free_rate, constraints, n, block, seed)
+        resolved = self._resolved(constraints)
+        rng = np.random.default_rng(seed)
+        n_rows = len(self.prices) - 1
+        ok, failed = [], 0
+        for _ in range(int(n)):
+            idx = _stability.block_indices(n_rows, block, rng)
+            try:
+                p = self._resampled(idx).tangency(risk_free_rate, resolved)
+            except (ValueError, OptimizationError, cp.error.SolverError,
+                    np.linalg.LinAlgError, FloatingPointError):
+                p = None
+            if p is None:
+                failed += 1
+            else:
+                ok.append(p.weight_array)
+        return {"n": int(n), "n_failed": failed, "block": int(block),
+                "seed": int(seed),
+                "assets": _stability.summarize(ok, self.tickers)}
 
     def meta(self, risk_free_rate: float) -> dict:
         """What this analysis was run on: window, method, whether expected

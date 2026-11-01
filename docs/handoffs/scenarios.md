@@ -132,7 +132,7 @@ Hand-checked; pin each in a test.
 
 - [x] Baseline recorded (445 passed, 4 skipped; 232 OK)
 - [x] Phase 1 scenarios
-- [ ] Phase 2 stability
+- [x] Phase 2 stability
 - [ ] Phase 3 API
 - [ ] Phase 4 UI
 - [ ] Phase 5 CLI + docs + hand review of own diff
