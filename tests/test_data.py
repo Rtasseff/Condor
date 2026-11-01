@@ -240,6 +240,14 @@ class TestRiskFreeHistory:
         with pytest.raises(ValueError):
             rates.risk_free_history("7y", store=store)
 
+    def test_corrupt_cache_is_refetched(self, store, monkeypatch):
+        calls = []
+        rates = self._fake(monkeypatch, calls)
+        rates.risk_free_history("3m", store=store)
+        (store.root / "rates_DGS3MO.parquet").write_bytes(b"not parquet")
+        h = rates.risk_free_history("3m", store=store)
+        assert len(h) == 3 and len(calls) == 2
+
 
 NET = os.environ.get("CONDOR_NET_TESTS") == "1"
 TIINGO = bool(os.environ.get("TIINGO_API_KEY"))

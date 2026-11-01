@@ -27,7 +27,8 @@ def max_drawdown(values: pd.Series) -> dict:
     """Worst fall from a running peak.
 
     Returns {'depth': -0.25, 'peak': date, 'trough': date, 'recovery': date
-    | None}.  `depth` is negative (0.0 if the series never falls); `peak` is
+    | None}.  `depth` is negative; a series that never falls gives
+    {'depth': 0.0, 'peak': None, 'trough': None, 'recovery': None}.  `peak` is
     the last time the running maximum was set before the trough; `recovery`
     is the first date after the trough at which the value is back at the
     peak, None if it never was.
@@ -38,8 +39,7 @@ def max_drawdown(values: pd.Series) -> dict:
     trough = dd.idxmin()
     depth = float(dd.loc[trough])
     if depth >= 0:
-        return {"depth": 0.0, "peak": v.index[0], "trough": v.index[0],
-                "recovery": v.index[0]}
+        return {"depth": 0.0, "peak": None, "trough": None, "recovery": None}
     peak_value = running.loc[trough]
     before = v.loc[:trough]
     peak = before[before >= peak_value].index[-1]

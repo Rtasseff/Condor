@@ -72,4 +72,21 @@ def test_portfolio_history_equals_the_engine(aset):
     assert "fixed weights" in d["basis"]
     assert d["max_drawdown"]["depth"] == h.max_drawdown["depth"]
     assert d["years"][0]["partial"] is False or d["years"][0]["year"] == 2020
-    assert d["worst_year"]["ret"] == min(y["ret"] for y in d["years"])
+    full = [y["ret"] for y in d["years"] if not y["partial"]]
+    assert d["worst_year"]["ret"] == min(full or [y["ret"] for y in d["years"]])
+
+
+def test_never_falling_series_has_no_drawdown():
+    d = history.max_drawdown(series([100, 101, 105]))
+    assert d == {"depth": 0.0, "peak": None, "trough": None, "recovery": None}
+
+
+def test_worst_year_prefers_full_years_over_a_stub():
+    idx = pd.to_datetime(["2020-01-02", "2020-12-31", "2021-12-31", "2022-01-03"])
+    v = pd.Series([100.0, 90.0, 99.0, 90.0], index=idx)   # 2022 is a 1-day stub, -9.1%
+    class P:  # minimal portfolio: only value_index is read
+        value_index = v
+    from condor.model import PortfolioHistory
+    ph = PortfolioHistory(P())
+    assert ph.is_partial(2022) and ph.is_partial(2020) is False
+    assert ph.worst_year[0] == 2020 and ph.worst_year[1] == pytest.approx(-0.10)

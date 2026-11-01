@@ -70,7 +70,7 @@ def _asset_set(args, rf: float) -> AssetSet:
     if not args.no_premium:
         try:
             history = risk_free_history()
-        except DataFetchError:
+        except Exception:  # fetch failure, corrupt cache: run raw, say so
             print("warning: expected returns are raw: T-bill history "
                   "unavailable", file=sys.stderr)
     return AssetSet(prices, method=args.method, rf_history=history, rf_level=rf)
@@ -150,13 +150,17 @@ def cmd_portfolio(args) -> int:
 
 def _history_lines(h) -> str:
     dd = h.max_drawdown
-    rec = f"recovered {dd['recovery'].date()}" if dd["recovery"] is not None \
-        else "not yet recovered"
     wy, wr = h.worst_year
     partial = " (partial year)" if h.is_partial(wy) else ""
+    if dd["peak"] is None:
+        fall = "none (never fell below a prior high)"
+    else:
+        rec = (f"recovered {dd['recovery'].date()}"
+               if dd["recovery"] is not None else "not yet recovered")
+        fall = (f"{_pct(dd['depth'])}  {dd['peak'].date()} → "
+                f"{dd['trough'].date()}, {rec}")
     return (f"History — {h.basis}\n"
-            f"  worst fall   {_pct(dd['depth'])}  {dd['peak'].date()} → "
-            f"{dd['trough'].date()}, {rec}\n"
+            f"  worst fall   {fall}\n"
             f"  worst year   {wy}: {_pct(wr)}{partial}\n"
             f"  growth/year  {_pct(h.cagr)}")
 

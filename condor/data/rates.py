@@ -15,6 +15,7 @@ value (however old) if FRED is unreachable.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -99,22 +100,30 @@ def risk_free_history(maturity: str = DEFAULT_MATURITY,
         s.name = series
         return s
 
+    cached: pd.Series | None = None
     if path.exists():
+        try:
+            cached = _read()
+        except Exception:  # truncated / corrupt cache: treat as absent
+            cached = None
+    if cached is not None:
         age = (datetime.now(timezone.utc).timestamp() - path.stat().st_mtime) / 3600
         if age < CACHE_HOURS:
-            return _read()
+            return cached
     try:
         values = _fetch_series(series).dropna()
         if values.empty:
             raise ValueError("empty series")
     except Exception as e:
-        if path.exists():  # stale beats nothing
-            return _read()
+        if cached is not None:  # stale beats nothing
+            return cached
         from .sources import DataFetchError
         raise DataFetchError(f"Could not fetch {series} from FRED: {e}") from e
 
     hist = (values.astype(float) / 100.0).rename(series)
     hist.index = pd.DatetimeIndex(hist.index)
     store.root.mkdir(parents=True, exist_ok=True)
-    hist.to_frame("yield").to_parquet(path)
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    hist.to_frame("yield").to_parquet(tmp)
+    os.replace(tmp, path)  # atomic: a concurrent reader never sees a partial file
     return hist

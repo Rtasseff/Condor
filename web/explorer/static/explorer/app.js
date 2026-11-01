@@ -510,8 +510,11 @@ function renderHistNote(sel) {
   if (!h) { el.hidden = true; return; }
   const dd = h.max_drawdown, wy = h.worst_year;
   const signed = (x) => (x < 0 ? "−" : "") + pct(Math.abs(x));
+  const fall = dd.peak
+    ? `Worst fall −${pct(Math.abs(dd.depth))} (${dd.peak} → ${dd.trough})`
+    : "No fall below a prior high";
   el.textContent =
-    `Worst fall −${pct(Math.abs(dd.depth))} (${dd.peak} → ${dd.trough}) · ` +
+    `${fall} · ` +
     `worst year ${wy.year}${wy.partial ? " (partial)" : ""} ${signed(wy.ret)} · ` +
     `${signed(h.cagr)}/yr`;
   el.title = "Backtest of these weights held fixed (rebalanced every period) " +

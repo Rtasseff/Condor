@@ -223,14 +223,103 @@ merged 2026-10-24; bucket B `account-plans` runs in parallel):
 
 ## Status
 
-- [ ] Baseline recorded (288 passed / 4 skipped; 172 OK)
-- [ ] Phase 1 T-bill history
-- [ ] Phase 2 engine
-- [ ] Phase 3 model
-- [ ] Phase 4 portfolio history
-- [ ] Phase 5 CLI
-- [ ] Phase 6 web
-- [ ] Phase 7 docs + `/code-review medium` + fixes
+- [x] Baseline recorded: 288 passed / 4 skipped; `manage.py test explorer` 172 OK (matches the brief)
+- [x] Phase 1 T-bill history (`risk_free_history`, Parquet cache `rates_DGS3MO.parquet` next to `rates.json`)
+- [x] Phase 2 engine (`excess_returns`, `premium_annual`, shared `_estimate_annual`, constant-correlation LW)
+- [x] Phase 3 model (`AssetSet` premium mode, `meta`, `meta()` method)
+- [x] Phase 4 portfolio history (`condor/history.py`, `Portfolio.history()`, `PortfolioHistory`)
+- [x] Phase 5 CLI
+- [x] Phase 6 web
+- [x] Phase 7 docs + code review (see below)
+
+### Test counts vs baseline
+
+| | baseline | now |
+|---|---|---|
+| `pytest tests/` | 288 passed, 4 skipped | 323 passed, 4 skipped (+35 tests) |
+| `manage.py test explorer` | 172 OK | 176 OK (+4) |
+| `manage.py check`, `makemigrations --check --dry-run` | clean | clean (no migrations) |
+
+### Deviations / decisions
+
+- **`risk_free_history` cache age** is the Parquet file's mtime (not an entry in `rates.json`); same `CACHE_HOURS`.
+- **`AssetSet.meta(risk_free_rate)`** added as a method so the CLI `--json` for `portfolio` / `frontier` reuses the exact analysis `meta` (the brief only named the `meta` key on `analysis`).
+- **`Portfolio.to_dict()` gains `history` for every portfolio**, so frontier points, min-vol and tangency carry it too (payload is larger by ~one small block per point; CAL points have none). The point card therefore shows the worst-fall line for any selected frontier/anchor point, not only "Your portfolio". Say so if you want it narrowed.
+- `PortfolioHistory.worst_year` prefers full calendar years (a 2-day stub at the edge of the window is not "the worst year"); partial years are used only if there is no full one. A series that never falls reports `peak/trough/recovery: null` (CLI: "none"; web: "No fall below a prior high").
+- `PortfolioHistory.to_dict()` marks the first/last calendar year `partial` (first year starting after 7 Jan, last year ending before 24 Dec) and `worst_year` carries that flag; the CLI and the web line say "(partial)".
+- **Web history failure** is silent in the payload other than `meta.premium: false`; the Optimize line "Expected returns: historical averages (T-bill history unavailable)." is derived from that (also shown when the client sends `premium: false`).
+- `cagr` uses elapsed seconds / 86400 / 365.25, not whole `.days`, so a 730.5-day span is exactly 2.0 years.
+- `Frontier` / `AssetSet.tangency(rf)` called directly with an `rf` different from the set's `rf_level` do **not** re-level (only `AssetSet.analysis` does, per the brief). CLI and web always build the set with `rf_level` = the rate they use.
+- Forecast endpoint (`/api/forecast`) deliberately left on raw `AssetSet` (ADR 0006 point 6).
+
+### Renamed / changed user-facing strings
+
+- `analyze` header: gains a third line (added, nothing renamed): `expected return = T-bill 4.18% + premium over T-bills (window T-bill mean 2.96%)`, or `expected return = historical average (raw)`.
+- `analyze` table: new `Premium` column (premium mode only).
+- Optimize page: new muted line under the chart and a new line in the selected-point card. No existing string changed.
+- Normal-method risk numbers move (constant-correlation target): see smoke check.
+- Payload keys added only: `meta` (analysis, CLI json), `history` (every `Portfolio.to_dict()`), `premium` (summary column). Two key-set assertions updated for them (`tests/test_model.py`, `tests/test_return_options.py`).
+
+### Pinned numbers that moved
+
+- `tests/test_return_options.py::test_normal_risk_matrix_shrinks_the_legacy_series` and `::test_risk_matrix_is_the_old_call`: both pinned `ledoit_wolf()` with the default constant-variance target; now pinned with `shrinkage_target="constant_correlation"`, with the reason written in the test (the old target dragged each asset's own variance toward the average). `test_verification.py` legacy-pinned tests did not move.
+
+### Real-data smoke check (2026-11-01, price window 2019-12-04 to 2026-10-30, T-bill 4.18% as of 2026-10-29)
+
+`python -m condor analyze STIP USFR VT RSP AVDV AVEM GLDM VST URNM` (robust, premium on):
+```
+expected return = T-bill 4.18% + premium over T-bills (window T-bill mean 2.96%)
+STIP 5.34%/1.78% prem 1.16% | USFR 4.13%/0.47% prem -0.05% | VT 23.54%/13.28% | RSP 17.32% | AVDV 28.02% | AVEM 26.74% | GLDM 24.11% | VST 34.84% | URNM 16.00%
+Min dispersion   4.22%   0.45%   0.08   STIP 6.4% . USFR 93.6%
+Tangency        17.39%   6.44%   2.05   STIP 41.3% . VT 11.4% . AVDV 14.2% . AVEM 4.9% . GLDM 24.2% . VST 3.9%
+```
+USFR premium is -0.05% and the tangency carries no USFR (brief: STIP 37, GLDM 26, AVDV 16, VT 11, AVEM 6, VST 4; the mix moved a little with a week of new prices).
+
+Same with `--no-premium` (today's bug, on purpose):
+```
+Tangency   5.92%   0.67%   2.60   USFR 95.4% . VT 0.7% . AVDV 1.1% . AVEM 0.5% . GLDM 1.9% . VST 0.3%
+```
+
+`--method normal`: STIP dispersion 2.82%, USFR 0.49% (before the constant-correlation target: STIP 3.84%, USFR 2.67%), as the brief expected. Normal-method tangency (premium on): RSP 13.0 . GLDM 56.9 . VST 22.3 . URNM 7.7.
+
+`python -m condor portfolio STIP=20 USFR=5 VT=20 RSP=10 AVDV=7.5 AVEM=7.5 GLDM=10 VST=10 URNM=10`:
+```
+Given mix   19.32%  10.20%  1.48
+History - fixed weights, rebalanced every period
+  worst fall   -26.12%  2020-01-16 -> 2020-03-23, recovered 2020-07-20
+  worst year   2022: -6.73%
+  growth/year  15.46%
+```
+`--json` keys: `weights, ret, vol, sharpe, history, meta`; `meta` = window 2019-12-04..2026-10-30 (1,736 days), method robust, premium true, risk_free_rate 0.0418, tbill_window_mean 0.02959, risk_free_source "4.18% (3-mo T-bill, FRED, as of 2026-10-29)".
+
+### What was and was not exercised
+
+- Exercised: pytest, Django test client on `/api/analyze` (premium default, `premium: false`, history failure -> raw, re-level), CLI end to end on real data, `node --check` on `app.js`.
+- **Not exercised in a real browser**: the new Optimize basis line (`#basisnote`) and the point-card worst-fall line (`#histnote`) and its `title` tooltip are untested beyond a JS syntax check and template inspection. RT should click through once.
+
+### Pre-existing / noticed, not fixed
+
+- Intermittent CLI failure `error: If using all scalar values, you must pass an index` on the 9-ticker `analyze` (about 4 of ~25 runs, all runs showed yfinance deprecation warnings in stderr, i.e. a price-store refresh path; the identical command succeeded on the next try and in-process with a traceback hook never reproduced it). Not caused by this branch as far as I can tell (it appeared on `--no-premium` runs, which never touch the new code), not investigated further.
+
+### Code review
+
+The `code-review` skill ran twice through the Skill tool at `medium`. The first run reviewed the wrong checkout (the main worktree's `condor/accounting.py`, nothing of mine), so its three findings were discarded as out of scope. The second was pointed at this branch's diff against main. Findings and disposition:
+
+Fixed in the final commit:
+- `Portfolio.history()` was rebuilt on every `to_dict()` -> now cached per portfolio.
+- `risk_free_history` Parquet write was not atomic and a corrupt cache stayed "fresh" -> write to temp + `os.replace`; an unreadable cache is treated as absent (refetch, or stale-serve of nothing).
+- CLI caught only `DataFetchError` around the history fetch -> any failure now warns once and runs raw.
+- `worst_year` could be a 2-day stub year -> prefers full years.
+- A never-falling series reported a bogus peak/trough/recovery -> nulls, handled in CLI and JS.
+
+Considered and left (by design or out of scope; flagging for the handoff session):
+- Forecast endpoint and `account.py` still use a raw `AssetSet`, so the same mix can show a different expected return in the forecast than on the frontier. This is ADR 0006 point 6 ("forecast untouched") and `account.py` is bucket B's file; revisit when forecast centres move (ADR "Reopens if").
+- `AssetSet.analysis()` re-levels μ when `risk_free_rate != rf_level` (this is the brief's wording); `frontier(rf)` / `tangency(rf)` called directly do not. Documented above.
+- The constant-correlation Σ applies to `--no-premium` / raw mode too (ADR 0006 point 5; the opt-out is about μ only). Old normal-method Σ is not reproducible from the CLI.
+- `risk_free_rate()` and `risk_free_history()` fetch the same FRED CSV into two caches (two round trips on a cold start, independent expiry). Deriving the rate from the history is a sensible follow-up but changes bucket-neutral code; left.
+- `/api/analyze` blocks on a FRED fetch when there is no cached history and FRED is slow; it then falls back to raw (visible only in `meta.premium` and the basis line).
+- `to_dict()` repeats `history` for each frontier point (payload size); cheap to compute, kept to match the brief.
+
 
 ## Questions for the handoff session
 

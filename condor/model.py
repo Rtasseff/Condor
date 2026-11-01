@@ -574,13 +574,17 @@ class Portfolio:
         start = max(first - stats.return_window(aset.timeframe), 0)
         return rets_idx.insert(0, idx[start])
 
+    @cached_property
+    def _history(self) -> "PortfolioHistory":
+        return PortfolioHistory(self)
+
     def history(self) -> "PortfolioHistory":
         """What this mix went through: worst fall, calendar years, growth.
 
         A backtest of *fixed weights, rebalanced every period* — that is
         what `value_index` is — not of a buy-and-hold account.
         """
-        return PortfolioHistory(self)
+        return self._history
 
     def forecast(self, horizon_years: float = 2,
                  levels=_forecast_engine.DEFAULT_LEVELS, *,
@@ -642,11 +646,16 @@ class PortfolioHistory:
 
     @property
     def worst_year(self) -> tuple[int, float]:
-        y = int(self.years.idxmin())
-        return y, float(self.years.loc[y])
+        """Worst calendar year, preferring full years: a two-day stub at the
+        edge of the window must not be reported as "the worst year"."""
+        full = self.years[[not self.is_partial(int(y)) for y in self.years.index]]
+        pool = full if len(full) else self.years
+        y = int(pool.idxmin())
+        return y, float(pool.loc[y])
 
     def to_dict(self) -> dict:
         iso = lambda d: None if d is None else str(d.date())  # noqa: E731
+        # (dates may be None: a series that never falls has no drawdown)
         dd = self.max_drawdown
         wy, wr = self.worst_year
         return {
