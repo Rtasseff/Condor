@@ -69,6 +69,8 @@ def compute_analysis(
     timeframe: str = "D",
     samp_int: int | None = None,
     basis: str = "arithmetic",
+    rf_history: pd.Series | None = None,
+    rf_level: float | None = None,
 ) -> dict:
     """Full analysis payload for a set of assets (procedural facade).
 
@@ -81,10 +83,13 @@ def compute_analysis(
              defaults to equal weights. Weights are normalized to sum to 1.
     metric / timeframe / samp_int / basis: return-calculation options,
              documented on `AssetSet` and `stats.py`.
+    rf_history / rf_level: T-bill history and level for premium mode
+             (expected return = rf_level + premium); see `AssetSet`.
     """
     from .model import AssetSet  # local import: model builds on this module
 
     return AssetSet(prices, method=method, metric=metric, timeframe=timeframe,
-                    samp_int=samp_int, basis=basis).analysis(
+                    samp_int=samp_int, basis=basis, rf_history=rf_history,
+                    rf_level=rf_level).analysis(
         weights=weights, risk_free_rate=risk_free_rate, n_points=n_points
     )

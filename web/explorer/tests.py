@@ -22,6 +22,14 @@ from django.utils.http import urlsafe_base64_encode
 from explorer.models import DraftPortfolio, Holding, SavedPortfolio
 
 
+def fake_history(*args, **kw):
+    """A rising T-bill yield history covering the synthetic price window."""
+    import numpy as np
+    import pandas as pd
+    idx = pd.bdate_range("2019-06-03", periods=1000)
+    return pd.Series(np.linspace(0.005, 0.045, len(idx)), index=idx)
+
+
 def make_user(name="rt"):
     return User.objects.create_user(name, password="x-not-secret-x")
 
@@ -305,6 +313,52 @@ class AuthTests(TestCase):
         self.assertEqual(res.status_code, 200, res.content)
         legacy.refresh_from_db()
         self.assertEqual(legacy.owner, self.bob)
+
+
+class AnalyzePremiumApiTests(TestCase):
+    """/api/analyze: premium mode by default, raw as the fallback / opt-out."""
+
+    BODY = {"tickers": ["AAA", "BBB"], "years": 3, "method": "robust",
+            "risk_free_rate": 0.04}
+
+    def analyze(self, body=None, history=fake_history):
+        with patch("explorer.views.fetch_prices",
+                   side_effect=ForecastApiTests.fake_prices), \
+             patch("explorer.views.risk_free_history", side_effect=history):
+            return self.client.post("/api/analyze",
+                                    data=json.dumps(body or self.BODY),
+                                    content_type="application/json")
+
+    def test_premium_is_the_default_and_meta_says_so(self):
+        res = self.analyze()
+        self.assertEqual(res.status_code, 200, res.content)
+        m = res.json()["meta"]
+        self.assertTrue(m["premium"])
+        self.assertEqual(m["risk_free_rate"], 0.04)
+        self.assertEqual(m["method"], "robust")
+        self.assertEqual(set(m["window"]), {"start", "end", "n_days"})
+        self.assertIsNotNone(m["tbill_window_mean"])
+        self.assertIn("history", res.json()["portfolio"])
+
+    def test_premium_false_is_raw(self):
+        on = self.analyze().json()
+        off = self.analyze({**self.BODY, "premium": False}).json()
+        self.assertFalse(off["meta"]["premium"])
+        self.assertIsNone(off["meta"]["tbill_window_mean"])
+        self.assertNotEqual(on["assets"], off["assets"])
+
+    def test_history_failure_falls_back_to_raw(self):
+        def down(*a, **k):
+            raise OSError("FRED down")
+        res = self.analyze(history=down)
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertFalse(res.json()["meta"]["premium"])
+
+    def test_typed_rate_releveled_not_reestimated(self):
+        lo = self.analyze({**self.BODY, "risk_free_rate": 0.02}).json()
+        hi = self.analyze({**self.BODY, "risk_free_rate": 0.05}).json()
+        for a, b in zip(lo["assets"], hi["assets"]):
+            self.assertAlmostEqual(b["ret"] - a["ret"], 0.03, places=9)
 
 
 class ForecastApiTests(TestCase):
@@ -1344,7 +1398,8 @@ class AnonymousExploreTests(TestCase):
 
     def analyze(self, body):
         with patch("explorer.views.fetch_prices",
-                   side_effect=ForecastApiTests.fake_prices):
+                   side_effect=ForecastApiTests.fake_prices), \
+             patch("explorer.views.risk_free_history", side_effect=fake_history):
             return self.client.post("/api/analyze", data=json.dumps(body),
                                     content_type="application/json")
 
@@ -1648,7 +1703,8 @@ class RateLimitTests(TestCase):
 
     def post(self, path, **extra):
         with patch("explorer.views.fetch_prices",
-                   side_effect=ForecastApiTests.fake_prices):
+                   side_effect=ForecastApiTests.fake_prices), \
+             patch("explorer.views.risk_free_history", side_effect=fake_history):
             return self.client.post(path, data=json.dumps(self.MIX),
                                     content_type="application/json", **extra)
 

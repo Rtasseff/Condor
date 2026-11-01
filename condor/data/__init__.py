@@ -18,7 +18,7 @@ import pandas as pd
 
 from .sources import DataFetchError, get_sources  # noqa: F401
 from .store import PriceStore
-from .rates import risk_free_rate  # noqa: F401
+from .rates import risk_free_history, risk_free_rate  # noqa: F401
 
 DEFAULT_YEARS = 10
 

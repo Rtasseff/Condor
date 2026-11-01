@@ -50,18 +50,6 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     base-currency total via daily FX. *R3 fractional plans dropped
     2026-10-24: RT never buys fractional shares; fractional
     recording stays.*
-  - **C `stats-honesty`** — *in a worktree* (ADR 0006; RT approved
-    the recommendations 2026-10-24). Independent of A/B. F4 (max drawdown,
-    worst calendar year, CAGR on `portfolio`) and F5 (`--json` carries
-    window, method, rf) are plain additions. **RT decides** F1–F3,
-    which change default statistics: F1 Sharpe/tangency vs the
-    *window-average* T-bill instead of today's (today's rate makes a
-    cash fund the tangency: 95% USFR); F2 robust median × 252
-    overstates cash-like returns (USFR 5.0% vs 2.9% mean); F3
-    Ledoit-Wolf's constant-variance target inflates low-vol assets
-    (USFR 0.49% → 2.67%) — a constant-correlation target would keep
-    sample variances. Numbers: that repo's
-    `research/2026-10-23_condor-second-opinion.md`.
   - **Next after B and C: `assumptions-1`** — "under my assumptions and
     rules, where is the best point and how far is my plan from it?"
     Agreed design + RT's decisions (2026-10-24, all defaults; "Condor
@@ -198,6 +186,12 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   (rotate the old credentials first — see CONTEXT.md).
 
 ## Done
+
+- [x] **C `stats-honesty` (ADR 0006)** — expected return = T-bill level +
+      premium measured on excess returns (robust tangency no longer 95%
+      USFR), constant-correlation Ledoit-Wolf, portfolio worst fall / worst
+      year / growth per year (`condor/history.py`), `meta` in CLI JSON and
+      `/api/analyze`; `--no-premium` / `premium: false` for the raw numbers.
 
 - [x] **Mirror import (ADR 0005)** — 2026-10-24. Ledger v2 engine (average
       cost, realized/unrealized, dividend/interest/fee as return, redeem,

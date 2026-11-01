@@ -189,6 +189,66 @@ class TestRates:
             rates.risk_free_rate("7y", store=store)
 
 
+class TestRiskFreeHistory:
+    def _fake(self, monkeypatch, calls, fail=False):
+        from condor.data import rates
+        vals = pd.Series([4.0, 4.2, np.nan, 4.4],
+                         index=pd.to_datetime(["2026-08-17", "2026-08-18",
+                                               "2026-08-19", "2026-08-20"]))
+        def fake_fetch(series):
+            calls.append(series)
+            if fail:
+                raise RuntimeError("FRED down")
+            return vals.dropna()
+        monkeypatch.setattr(rates, "_fetch_series", fake_fetch)
+        return rates
+
+    def test_parse_cache_hit(self, store, monkeypatch):
+        calls = []
+        rates = self._fake(monkeypatch, calls)
+        h = rates.risk_free_history("3m", store=store)
+        assert list(h.values) == pytest.approx([0.04, 0.042, 0.044])
+        assert isinstance(h.index, pd.DatetimeIndex) and len(h) == 3
+        assert (store.root / "rates_DGS3MO.parquet").exists()
+        h2 = rates.risk_free_history("3m", store=store)
+        assert len(calls) == 1 and h2.equals(h)
+
+    def test_refresh_after_cache_hours(self, store, monkeypatch):
+        import os, time
+        calls = []
+        rates = self._fake(monkeypatch, calls)
+        rates.risk_free_history("3m", store=store)
+        p = store.root / "rates_DGS3MO.parquet"
+        old = time.time() - (rates.CACHE_HOURS + 1) * 3600
+        os.utime(p, (old, old))
+        rates.risk_free_history("3m", store=store)
+        assert len(calls) == 2
+
+    def test_stale_fallback_and_failure(self, store, monkeypatch):
+        import os, time
+        calls = []
+        rates = self._fake(monkeypatch, calls)
+        h = rates.risk_free_history("3m", store=store)
+        p = store.root / "rates_DGS3MO.parquet"
+        old = time.time() - 1000 * 3600
+        os.utime(p, (old, old))
+        self._fake(monkeypatch, calls, fail=True)
+        assert rates.risk_free_history("3m", store=store).equals(h)
+        p.unlink()
+        with pytest.raises(DataFetchError):
+            rates.risk_free_history("3m", store=store)
+        with pytest.raises(ValueError):
+            rates.risk_free_history("7y", store=store)
+
+    def test_corrupt_cache_is_refetched(self, store, monkeypatch):
+        calls = []
+        rates = self._fake(monkeypatch, calls)
+        rates.risk_free_history("3m", store=store)
+        (store.root / "rates_DGS3MO.parquet").write_bytes(b"not parquet")
+        h = rates.risk_free_history("3m", store=store)
+        assert len(h) == 3 and len(calls) == 2
+
+
 NET = os.environ.get("CONDOR_NET_TESTS") == "1"
 TIINGO = bool(os.environ.get("TIINGO_API_KEY"))
 

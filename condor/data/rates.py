@@ -15,6 +15,7 @@ value (however old) if FRED is unreachable.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -76,3 +77,53 @@ def risk_free_rate(maturity: str = DEFAULT_MATURITY,
     store.root.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(cache, indent=1, sort_keys=True))
     return result
+
+
+def risk_free_history(maturity: str = DEFAULT_MATURITY,
+                      store: PriceStore | None = None) -> pd.Series:
+    """The full daily yield history, annual decimals, DatetimeIndex.
+
+    Same FRED series as `risk_free_rate` (the CSV is the whole history).
+    Cached as Parquet next to rates.json and refreshed after CACHE_HOURS;
+    if FRED is unreachable the cache is served however old. Raises
+    DataFetchError only if FRED is unreachable AND nothing is cached.
+    """
+    if maturity not in MATURITIES:
+        raise ValueError(f"Unknown maturity '{maturity}'; one of {sorted(MATURITIES)}")
+    series = MATURITIES[maturity]
+    store = store or PriceStore()
+    path = store.root / f"rates_{series}.parquet"
+
+    def _read() -> pd.Series:
+        s = pd.read_parquet(path)["yield"]
+        s.index = pd.DatetimeIndex(s.index)
+        s.name = series
+        return s
+
+    cached: pd.Series | None = None
+    if path.exists():
+        try:
+            cached = _read()
+        except Exception:  # truncated / corrupt cache: treat as absent
+            cached = None
+    if cached is not None:
+        age = (datetime.now(timezone.utc).timestamp() - path.stat().st_mtime) / 3600
+        if age < CACHE_HOURS:
+            return cached
+    try:
+        values = _fetch_series(series).dropna()
+        if values.empty:
+            raise ValueError("empty series")
+    except Exception as e:
+        if cached is not None:  # stale beats nothing
+            return cached
+        from .sources import DataFetchError
+        raise DataFetchError(f"Could not fetch {series} from FRED: {e}") from e
+
+    hist = (values.astype(float) / 100.0).rename(series)
+    hist.index = pd.DatetimeIndex(hist.index)
+    store.root.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    hist.to_frame("yield").to_parquet(tmp)
+    os.replace(tmp, path)  # atomic: a concurrent reader never sees a partial file
+    return hist

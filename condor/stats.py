@@ -3,7 +3,10 @@
 Two estimation methods, mirroring the legacy Condor design (genFin/genStats):
 
 - "normal": arithmetic mean daily return x 252 + Ledoit-Wolf shrunk
-  covariance (via PyPortfolioOpt). Arithmetic, not geometric/CAGR, so it
+  covariance (via PyPortfolioOpt) with the constant-correlation target:
+  each asset keeps its own sample variance, only correlations shrink (the
+  default constant-variance target dragged a T-bill fund's variance up
+  5x; ADR 0006). Arithmetic, not geometric/CAGR, so it
   matches legacy genFin.returnExp + annualize and is on the same footing
   as the robust median x 252.
 - "robust": median return + CoMAD co-dispersion matrix with the 1.4826
@@ -25,6 +28,12 @@ and all defaulting to today's behaviour:
 - `basis`      "arithmetic" (default, legacy) or "geometric" (CAGR-style,
                PyPortfolioOpt's own default) for the "normal" expected
                return.
+
+Expected return can also be built as `rf level + premium`, where the
+premium is the same estimator applied to *excess* returns (asset return
+minus the T-bill's return per period): `excess_returns`, `premium_annual`.
+This removes the period mismatch that made a T-bill fund look like a
+winner (ADR 0006).  Sigma always stays on raw returns.
 
 Everything is annualized at the engine boundary (252 for "D", 12 for "M").
 """
@@ -146,6 +155,24 @@ def growth_factors(returns, metric: str = "relative"):
 # ----------------------------------------------------------------------
 # estimates
 # ----------------------------------------------------------------------
+def _estimate_annual(rets: pd.DataFrame, method: str, metric: str,
+                     timeframe: str, basis: str) -> pd.Series:
+    """The one expected-return estimator, over any return frame.
+
+    Shared by `expected_annual` (raw returns) and `premium_annual` (excess
+    returns) so the two can never drift apart.
+    """
+    freq = annual_factor(timeframe)
+    if method == "robust":
+        return rets.median() * freq
+    # compounding=False -> arithmetic mean * freq (pypfopt's default is the
+    # geometric/CAGR form, which is NOT what legacy Condor computed)
+    return expected_returns.mean_historical_return(
+        rets, returns_data=True, frequency=freq,
+        compounding=(basis == "geometric" and metric != "log"),
+    )
+
+
 def expected_annual(prices: pd.DataFrame, method: str = "normal",
                     metric: str = "relative", timeframe: str = "D",
                     samp_int: int | None = None,
@@ -162,15 +189,46 @@ def expected_annual(prices: pd.DataFrame, method: str = "normal",
     _check_basis(basis)
     rets = asset_returns(prices, metric=metric, timeframe=timeframe,
                          samp_int=samp_int)
-    freq = annual_factor(timeframe)
-    if method == "robust":
-        return rets.median() * freq
-    # compounding=False -> arithmetic mean * freq (pypfopt's default is the
-    # geometric/CAGR form, which is NOT what legacy Condor computed)
-    return expected_returns.mean_historical_return(
-        rets, returns_data=True, frequency=freq,
-        compounding=(basis == "geometric" and metric != "log"),
-    )
+    return _estimate_annual(rets, method, metric, timeframe, basis)
+
+
+def excess_returns(prices: pd.DataFrame, rf_yields: pd.Series,
+                   metric: str = "relative", timeframe: str = "D",
+                   samp_int: int | None = None) -> pd.DataFrame:
+    """`asset_returns` minus the T-bill's return over the same period.
+
+    `rf_yields` is the daily annual-decimal yield history (DatetimeIndex).
+    Each return row gets the yield on its date (forward-filled from the
+    previous fixing, back-filled for a leading gap) divided by the annual
+    factor; for `metric="log"` the period rate is `log1p` of that.
+    """
+    rets = asset_returns(prices, metric=metric, timeframe=timeframe,
+                         samp_int=samp_int)
+    y = rf_yields.dropna().sort_index()
+    if y.empty:
+        raise ValueError("rf_yields is empty")
+    y = y.groupby(level=0).last()
+    aligned = (y.reindex(y.index.union(rets.index)).ffill()
+                .reindex(rets.index).bfill())
+    per_period = aligned / annual_factor(timeframe)
+    if metric == "log":
+        per_period = np.log1p(per_period)
+    return rets.sub(per_period, axis=0)
+
+
+def premium_annual(prices: pd.DataFrame, rf_yields: pd.Series,
+                   method: str = "normal", metric: str = "relative",
+                   timeframe: str = "D", samp_int: int | None = None,
+                   basis: str = "arithmetic") -> pd.Series:
+    """Annualized premium over T-bills: the `expected_annual` estimator
+    applied to `excess_returns`.  Expected return = rf level + premium
+    (docs/decisions/0006-premium-expected-returns.md).
+    """
+    _check_method(method)
+    _check_basis(basis)
+    ex = excess_returns(prices, rf_yields, metric=metric, timeframe=timeframe,
+                        samp_int=samp_int)
+    return _estimate_annual(ex, method, metric, timeframe, basis)
 
 
 def _comad_matrix(rets: pd.DataFrame) -> pd.DataFrame:
@@ -209,7 +267,7 @@ def risk_matrix_annual(prices: pd.DataFrame, method: str = "normal",
     if method == "normal":
         return risk_models.CovarianceShrinkage(
             rets, returns_data=True, frequency=freq
-        ).ledoit_wolf()
+        ).ledoit_wolf(shrinkage_target="constant_correlation")
     comad = _comad_matrix(rets) * freq
     # CoMAD may be slightly non-PSD; repair so cvxpy accepts it
     return risk_models.fix_nonpositive_semidefinite(comad, fix_method="spectral")

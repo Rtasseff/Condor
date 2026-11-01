@@ -156,11 +156,17 @@ class TestEstimatesVsLegacy:
     def test_normal_risk_matrix_shrinks_the_legacy_series(self, gappy_prices,
                                                           timeframe, samp_int):
         """v2 keeps Ledoit-Wolf shrinkage (legacy used the raw covariance),
-        so pin the *inputs*: the legacy series and the legacy factor."""
+        so pin the *inputs*: the legacy series and the legacy factor.
+
+        2026-10-27 (ADR 0006): the target is now constant-correlation. The old
+        constant-variance target pulled every variance toward the average
+        (a T-bill fund's 0.49% became 2.67%), which misstated each asset's
+        own risk; the old pinned number used that target."""
         rets = self._legacy_frame(gappy_prices, timeframe, samp_int)
         factor = {"D": 252, "M": 12}[timeframe]
         expected = pfopt_risk.CovarianceShrinkage(
-            rets, returns_data=True, frequency=factor).ledoit_wolf()
+            rets, returns_data=True, frequency=factor).ledoit_wolf(
+                shrinkage_target="constant_correlation")
         v2 = stats.risk_matrix_annual(gappy_prices, method="normal",
                                       timeframe=timeframe, samp_int=samp_int)
         np.testing.assert_allclose(v2.to_numpy(), expected.to_numpy(), atol=1e-15)
@@ -200,8 +206,11 @@ class TestDefaultsUnchanged:
                 stats.expected_annual(prices, method=method), old)
 
     def test_risk_matrix_is_the_old_call(self, prices):
+        # normal branch: constant-correlation target since ADR 0006 (the old
+        # constant-variance target distorted each asset's own variance).
         old_normal = pfopt_risk.CovarianceShrinkage(
-            prices, frequency=252).ledoit_wolf()
+            prices, frequency=252).ledoit_wolf(
+                shrinkage_target="constant_correlation")
         pd.testing.assert_frame_equal(stats.risk_matrix_annual(prices), old_normal)
         rets = prices.pct_change().dropna(how="all")
         old_robust = pfopt_risk.fix_nonpositive_semidefinite(
@@ -415,13 +424,14 @@ class TestAnalysisFacade:
             base.with_options(**self.OPTS).analysis(n_points=6)
 
     def test_default_payload_is_untouched(self, prices):
-        """Options are opt-in: no new keys, and the same numbers as before."""
+        """Options are opt-in: the only new key is `meta` (ADR 0006 / F5)."""
         aset = AssetSet(prices, "robust")
         assert aset.analysis(n_points=6) == compute_analysis(
             prices, method="robust", n_points=6)
         assert set(aset.analysis(n_points=6)) == {
             "tickers", "method", "risk_free_rate", "assets", "start", "end",
-            "n_days", "portfolio", "min_vol", "tangency", "frontier", "cal"}
+            "n_days", "portfolio", "min_vol", "tangency", "frontier", "cal",
+            "meta"}
 
     def test_monthly_analysis_is_a_different_frontier(self, prices):
         daily = compute_analysis(prices, n_points=8)

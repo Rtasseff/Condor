@@ -116,7 +116,7 @@ class TestPortfolio:
         assert p.dispersion == eng["vol"]
         assert p.sharpe(rf) == eng["sharpe"]
         d = p.to_dict(rf)
-        assert set(d) == {"weights", "ret", "vol", "sharpe"}
+        assert set(d) == {"weights", "ret", "vol", "sharpe", "history"}
         assert d["weights"] == {"AAA": 0.4, "BBB": 0.1, "CCC": 0.3, "DDD": 0.2}
         assert "Portfolio(" in repr(p)
 
@@ -294,7 +294,7 @@ class TestFacade:
         assert len(via_fn["frontier"]) <= 12
         assert set(via_fn) == {"tickers", "method", "risk_free_rate", "assets",
                                "start", "end", "n_days", "portfolio",
-                               "min_vol", "tangency", "frontier", "cal"}
+                               "min_vol", "tangency", "frontier", "cal", "meta"}
 
     def test_boundary_leniency(self, prices):
         # negatives clipped, all-zero -> equal weights; core API would raise

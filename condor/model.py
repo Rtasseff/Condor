@@ -42,11 +42,12 @@ import pandas as pd
 
 from . import stats
 from . import forecast as _forecast_engine
+from . import history as _history
 from .stats import annual_factor
 from .frontier import (N_CAL_POINTS, N_FRONTIER_POINTS, _cal_mix, _perf,
                        _solve, _weights_dict)
 
-__all__ = ["Asset", "AssetSet", "Portfolio", "Frontier"]
+__all__ = ["Asset", "AssetSet", "Portfolio", "PortfolioHistory", "Frontier"]
 
 _UNSET = object()  # "argument not given", where None is a meaningful value
 
@@ -85,6 +86,13 @@ class AssetSet:
                 (1 for "D", 20 for "M", which de-overlaps 21-day windows)
     basis:      "arithmetic" or "geometric" expected return ("normal" only)
 
+    rf_history: optional daily T-bill yield history (annual decimals).  With
+                it the set is in *premium mode*: expected return = `rf_level`
+                + the method's estimator on returns in excess of the T-bill
+                (ADR 0006).  `rf_level` defaults to the history's last value.
+                Σ is always estimated on raw returns.  Without it, expected
+                returns are the raw historical estimates.
+
     Estimates are computed lazily once and cached; an AssetSet is treated
     as immutable — use `with_method()` / `with_options()` to re-estimate.
     """
@@ -92,7 +100,9 @@ class AssetSet:
     def __init__(self, prices: pd.DataFrame, method: str = "normal",
                  names: Mapping[str, str] | None = None, *,
                  metric: str = "relative", timeframe: str = "D",
-                 samp_int: int | None = None, basis: str = "arithmetic"):
+                 samp_int: int | None = None, basis: str = "arithmetic",
+                 rf_history: pd.Series | None = None,
+                 rf_level: float | None = None):
         if not isinstance(prices, pd.DataFrame) or prices.shape[1] == 0:
             raise ValueError("prices must be a non-empty DataFrame (one column per asset)")
         if prices.columns.has_duplicates:
@@ -106,6 +116,13 @@ class AssetSet:
         self._timeframe = timeframe
         self._samp_int = stats.resolve_samp_int(timeframe, samp_int)
         self._basis = basis
+        self._rf_history = rf_history
+        if rf_history is not None:
+            if len(rf_history.dropna()) == 0:
+                raise ValueError("rf_history is empty")
+            if rf_level is None:
+                rf_level = float(rf_history.dropna().sort_index().iloc[-1])
+        self._rf_level = None if rf_level is None else float(rf_level)
         names = names or {}
         self.assets: tuple[Asset, ...] = tuple(
             Asset(str(t), names.get(str(t))) for t in prices.columns
@@ -127,6 +144,34 @@ class AssetSet:
     @property
     def basis(self) -> str:
         return self._basis
+
+    # -- premium mode (read-only) ------------------------------------------
+    @property
+    def premium_mode(self) -> bool:
+        return self._rf_history is not None
+
+    @property
+    def rf_level(self) -> float | None:
+        return self._rf_level
+
+    @cached_property
+    def premiums(self) -> pd.Series | None:
+        """Annualized premium over T-bills per asset; None when off."""
+        if self._rf_history is None:
+            return None
+        return stats.premium_annual(self.prices, self._rf_history,
+                                    method=self.method, **self._options)
+
+    @cached_property
+    def tbill_window_mean(self) -> float | None:
+        """Mean T-bill yield over this set's window; None when off."""
+        if self._rf_history is None:
+            return None
+        h = self._rf_history.dropna()
+        w = h.loc[self.prices.index[0]:self.prices.index[-1]]
+        if w.empty:  # window falls between fixings: use the last one before it
+            w = h.loc[:self.prices.index[-1]].iloc[-1:]
+        return float(w.mean()) if len(w) else None
 
     @property
     def _options(self) -> dict:
@@ -190,7 +235,12 @@ class AssetSet:
 
     @cached_property
     def expected_returns(self) -> pd.Series:
-        """Annualized expected return per asset (μ)."""
+        """Annualized expected return per asset (μ).
+
+        Premium mode: `rf_level + premiums`; otherwise the raw estimate.
+        """
+        if self._rf_history is not None:
+            return self._rf_level + self.premiums
         return stats.expected_annual(self.prices, method=self.method,
                                      **self._options)
 
@@ -222,9 +272,12 @@ class AssetSet:
         return stats.asset_points(self.expected_returns, self.risk_matrix)
 
     def summary(self) -> pd.DataFrame:
-        """One row per asset: expected_return, dispersion."""
-        return pd.DataFrame({"expected_return": self.expected_returns,
-                             "dispersion": self.dispersions})
+        """One row per asset: expected_return, dispersion (+ premium when on)."""
+        cols = {"expected_return": self.expected_returns,
+                "dispersion": self.dispersions}
+        if self.premium_mode:
+            cols["premium"] = self.premiums
+        return pd.DataFrame(cols)
 
     def with_method(self, method: str) -> "AssetSet":
         """Same assets and prices, different estimation method."""
@@ -232,8 +285,13 @@ class AssetSet:
 
     def with_options(self, *, method: str | None = None,
                      metric: str | None = None, timeframe: str | None = None,
-                     samp_int=_UNSET, basis: str | None = None) -> "AssetSet":
+                     samp_int=_UNSET, basis: str | None = None,
+                     rf_level: float | None = None) -> "AssetSet":
         """Same assets and prices, re-estimated under different options.
+
+        `rf_level` re-levels a premium-mode set (the premiums are not
+        re-estimated in substance, only the level they are added to); the
+        T-bill history is always carried over.
 
         Anything left out is carried over, and an all-unchanged call
         returns `self`.  One exception, so the legacy defaults stay
@@ -252,10 +310,12 @@ class AssetSet:
             opts["samp_int"] = None  # the new timeframe's default
         opts["samp_int"] = stats.resolve_samp_int(opts["timeframe"],
                                                   opts["samp_int"])
-        if opts == current:
+        new_level = self._rf_level if rf_level is None else float(rf_level)
+        if opts == current and new_level == self._rf_level:
             return self
         return AssetSet(self.prices,
                         names={a.ticker: a.name for a in self.assets if a.name},
+                        rf_history=self._rf_history, rf_level=new_level,
                         **opts)
 
     # -- portfolios over this set ---------------------------------------
@@ -337,7 +397,9 @@ class AssetSet:
                      names: Mapping[str, str] | None = None, *,
                      metric: str = "relative", timeframe: str = "D",
                      samp_int: int | None = None,
-                     basis: str = "arithmetic") -> "AssetSet":
+                     basis: str = "arithmetic",
+                     rf_history: pd.Series | None = None,
+                     rf_level: float | None = None) -> "AssetSet":
         """Build a set whose members are prices Series and/or Portfolios.
 
         A Portfolio contributes its `value_index` (a prices-like series
@@ -360,7 +422,20 @@ class AssetSet:
                 raise TypeError(f"unsupported member type: {type(m).__name__}")
         prices = pd.concat(cols, axis=1, join="inner")
         return cls(prices, method=method, names=names, metric=metric,
-                   timeframe=timeframe, samp_int=samp_int, basis=basis)
+                   timeframe=timeframe, samp_int=samp_int, basis=basis,
+                   rf_history=rf_history, rf_level=rf_level)
+
+    def meta(self, risk_free_rate: float) -> dict:
+        """What this analysis was run on: window, method, whether expected
+        returns are premium-based, the rate and the window's T-bill mean."""
+        return {
+            "window": {"start": self.start, "end": self.end,
+                       "n_days": self.n_days},
+            "method": self.method,
+            "premium": self.premium_mode,
+            "risk_free_rate": risk_free_rate,
+            "tbill_window_mean": self.tbill_window_mean,
+        }
 
     # -- the Explorer payload (what compute_analysis returns) -----------
     def analysis(self, weights: Mapping[str, float] | None = None,
@@ -377,6 +452,12 @@ class AssetSet:
         The return-calculation options default to this set's own; naming
         one runs the analysis on `with_options(...)` instead.
         """
+        if (self.premium_mode and risk_free_rate is not None
+                and float(risk_free_rate) != self._rf_level):
+            # keep μ and the Sharpe rate the same number
+            return self.with_options(rf_level=risk_free_rate).analysis(
+                weights, risk_free_rate, n_points, metric=metric,
+                timeframe=timeframe, samp_int=samp_int, basis=basis)
         override = self.with_options(metric=metric, timeframe=timeframe,
                                      samp_int=samp_int, basis=basis)
         if override is not self:
@@ -399,6 +480,7 @@ class AssetSet:
             "end": self.end,
             "n_days": self.n_days,
             "portfolio": mine.to_dict(risk_free_rate),
+            "meta": self.meta(risk_free_rate),
         }
         result.update(self.frontier(risk_free_rate, n_points).to_dict())
         return result
@@ -457,7 +539,8 @@ class Portfolio:
     def to_dict(self, risk_free_rate: float = 0.0) -> dict:
         """UI payload shape: weights (non-trivial only) + ret/vol/sharpe."""
         return {"weights": _weights_dict(self._w, self.tickers),
-                **self.perf(risk_free_rate)}
+                **self.perf(risk_free_rate),
+                "history": self.history().to_dict()}
 
     # -- the asset-like face -------------------------------------------
     @cached_property
@@ -491,6 +574,18 @@ class Portfolio:
         start = max(first - stats.return_window(aset.timeframe), 0)
         return rets_idx.insert(0, idx[start])
 
+    @cached_property
+    def _history(self) -> "PortfolioHistory":
+        return PortfolioHistory(self)
+
+    def history(self) -> "PortfolioHistory":
+        """What this mix went through: worst fall, calendar years, growth.
+
+        A backtest of *fixed weights, rebalanced every period* — that is
+        what `value_index` is — not of a buy-and-hold account.
+        """
+        return self._history
+
     def forecast(self, horizon_years: float = 2,
                  levels=_forecast_engine.DEFAULT_LEVELS, *,
                  cash_weight: float = 0.0,
@@ -522,6 +617,60 @@ class Portfolio:
 
     def as_asset(self) -> Asset:
         return Asset(self.label, self.label)
+
+
+# ----------------------------------------------------------------------
+# PortfolioHistory
+# ----------------------------------------------------------------------
+class PortfolioHistory:
+    """Worst fall, calendar-year returns and growth per year of a portfolio,
+    over its `value_index` (fixed weights, rebalanced every period).
+    Numbers come from `condor/history.py`."""
+
+    BASIS = "fixed weights, rebalanced every period"
+
+    def __init__(self, portfolio: Portfolio):
+        v = portfolio.value_index
+        self.basis = self.BASIS
+        self.start = v.index[0]
+        self.end = v.index[-1]
+        self.max_drawdown = _history.max_drawdown(v)
+        self.years = _history.calendar_year_returns(v)
+        self.cagr = _history.cagr(v)
+
+    def is_partial(self, year: int) -> bool:
+        """First/last year are partial unless the series covers them whole."""
+        if year == self.start.year and (self.start.month, self.start.day) > (1, 7):
+            return True
+        return year == self.end.year and (self.end.month, self.end.day) < (12, 24)
+
+    @property
+    def worst_year(self) -> tuple[int, float]:
+        """Worst calendar year, preferring full years: a two-day stub at the
+        edge of the window must not be reported as "the worst year"."""
+        full = self.years[[not self.is_partial(int(y)) for y in self.years.index]]
+        pool = full if len(full) else self.years
+        y = int(pool.idxmin())
+        return y, float(pool.loc[y])
+
+    def to_dict(self) -> dict:
+        iso = lambda d: None if d is None else str(d.date())  # noqa: E731
+        # (dates may be None: a series that never falls has no drawdown)
+        dd = self.max_drawdown
+        wy, wr = self.worst_year
+        return {
+            "basis": self.basis,
+            "start": iso(self.start),
+            "end": iso(self.end),
+            "max_drawdown": {"depth": dd["depth"], "peak": iso(dd["peak"]),
+                             "trough": iso(dd["trough"]),
+                             "recovery": iso(dd["recovery"])},
+            "years": [{"year": int(y), "ret": float(r),
+                       "partial": self.is_partial(int(y))}
+                      for y, r in self.years.items()],
+            "worst_year": {"year": wy, "ret": wr, "partial": self.is_partial(wy)},
+            "cagr": self.cagr,
+        }
 
 
 # ----------------------------------------------------------------------

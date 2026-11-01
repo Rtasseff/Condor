@@ -32,11 +32,12 @@ reads from there instantly. You'll see something like:
 ```
 MSFT, NEE, CVX — robust statistics, 2016-08-22 to 2026-08-21 (2,514 trading days)
 risk-free 3.87% (3-mo T-bill, FRED, as of 2026-08-20)
+expected return = T-bill 3.87% + premium over T-bills (window T-bill mean 2.41%)
 
-Asset    Exp. return  Dispersion
-MSFT          25.82%      19.62%
-NEE           27.96%      17.82%
-CVX           23.64%      19.35%
+Asset    Exp. return  Dispersion   Premium
+MSFT          25.82%      19.62%    21.95%
+NEE           27.96%      17.82%    24.09%
+CVX           23.64%      19.35%    19.77%
 
 Portfolio              Ret        Disp  Sharpe   Weights
 Equal weights       25.81%      11.68%    1.88   MSFT 33.3% · NEE 33.3% · CVX 33.3%
@@ -54,6 +55,13 @@ How to read it:
 - **Min dispersion** — the least-risky mix of these assets.
 - **Tangency** — the mix with the best return *per unit of risk*
   (highest Sharpe ratio); the textbook "reasonable choice".
+- **Premium** — what the asset earned *above the T-bill* day by day over
+  the window. The header line says the expected return is today's T-bill
+  rate plus this premium, so a cash-like fund (T-bill ETF) shows a premium
+  near zero instead of looking like a bargain against today's rate.
+  `--no-premium` skips this and shows the raw historical average (the
+  header then says `historical average (raw)`). If the T-bill history
+  can't be fetched, the tool warns once on stderr and runs raw.
 - The **risk-free rate** is fetched live (3-month US T-bill from FRED)
   and is what the Sharpe ratio compares against.
 
@@ -66,6 +74,9 @@ whole point of the tool.
 ```bash
 # Score a mix you already have (weights in any scale — they're normalized):
 python -m condor portfolio MSFT=30 NEE=40 CVX=30
+# ...also prints what that mix went through: worst fall (peak -> trough,
+# recovered or not yet), worst calendar year, growth per year. It is a
+# fixed-weights backtest, rebalanced every period.
 
 # The whole efficient frontier, point by point:
 python -m condor frontier MSFT NEE CVX
@@ -88,7 +99,14 @@ python -m condor data purge AAPL
 | `--years N` | lookback window | `10` |
 | `--rf X` | risk-free rate: `4` = 4%, `0.04` works too | live FRED 3-mo T-bill |
 | `--source yfinance\|tiingo` | pin the data provider | yfinance, tiingo fallback |
+| `--no-premium` | raw historical expected returns instead of T-bill rate + premium | off (premium on) |
 | `--json` | raw payload instead of a table (for scripts) | off |
+
+`--json` on `analyze`, `portfolio` and `frontier` carries a top-level
+`meta`: `window` (`start`, `end`, `n_days`), `method`, `premium` (bool),
+`risk_free_rate`, `tbill_window_mean` (null in raw mode) and
+`risk_free_source` (the header's rate note). `portfolio --json` also has
+`history`.
 
 `python -m condor <command> --help` shows the full list per command.
 
