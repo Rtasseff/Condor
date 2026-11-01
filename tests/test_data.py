@@ -132,6 +132,19 @@ class TestStore:
         got = store.get("MSFT", start=START)      # no raise
         assert len(got) > 200
 
+    def test_provider_crash_counts_as_a_failed_source(self, store, fake,
+                                                      monkeypatch):
+        # Seen intermittently from the CLI (2026-11-01): a raw pandas error
+        # escaped and failed the whole command while good prices were stored.
+        def boom(self, ticker, start=None):
+            raise ValueError("If using all scalar values, you must pass an index")
+        store.get("MSFT", start=START)
+        _age(store, "MSFT", hours=30)
+        monkeypatch.setattr(FakeSource, "fetch", boom)
+        assert len(store.get("MSFT", start=START)) > 200   # serves stale
+        with pytest.raises(DataFetchError, match="fake failed for 'NEWCO'"):
+            store.get("NEWCO", start=START)                # nothing to serve
+
     def test_failover_chain(self, store, monkeypatch):
         bad, good = FakeSource(make_history().iloc[:0]), FakeSource(make_history())
         bad.name, good.name = "dead", "alive"

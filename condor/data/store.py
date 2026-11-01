@@ -142,6 +142,13 @@ class PriceStore:
                 return src.fetch(ticker, start=start), src.name
             except DataFetchError as e:
                 errors.append(str(e))
+            except Exception as e:
+                # a provider library blowing up is a failed source, not a
+                # reason to take the page down: try the next one, or let
+                # the caller serve what it has
+                log.warning("%s failed for %s: %s: %s",
+                            src.name, ticker, type(e).__name__, e)
+                errors.append(f"{src.name} failed for '{ticker}': {e}")
         raise DataFetchError(" | ".join(errors))
 
     def get(self, ticker: str, start: date, source: str | None = None,
