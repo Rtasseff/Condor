@@ -17,7 +17,9 @@ condor/model.py            DOMAIN MODEL: Asset → AssetSet → Portfolio, Front
 condor/stats.py            ESTIMATION ENGINE: μ, Σ (normal / robust), returns, excess returns / premium,
                            equilibrium prior / blend / Black-Litterman views (ADR 0008)
 condor/frontier.py         OPTIMIZATION ENGINE: _perf, _solve, _weights_dict
-condor/history.py          HISTORY ENGINE: max drawdown, calendar-year returns, CAGR of a value series
+condor/history.py          HISTORY ENGINE: max drawdown, calendar-year returns, CAGR, scenario windows
+condor/stability.py        STABILITY ENGINE: block-bootstrap indices + percentile summary (pure; the
+                           model re-runs its own estimators and solver on each resample)
 condor/assumptions.py      ASSUMPTIONS: validated limits + long-run view (pure dataclasses, ADR 0008)
 condor/forecast.py         FORECAST ENGINE: fan-chart bands (closed form, bootstrap, μ anchors)
 condor/accounting.py       ACCOUNT ENGINE: ledger replay, valuation/TWR/XIRR, rebalance plans

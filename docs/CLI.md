@@ -76,7 +76,16 @@ whole point of the tool.
 python -m condor portfolio MSFT=30 NEE=40 CVX=30
 # ...also prints what that mix went through: worst fall (peak -> trough,
 # recovered or not yet), worst calendar year, growth per year. It is a
-# fixed-weights backtest, rebalanced every period.
+# fixed-weights backtest, rebalanced every period. It also prints how the mix
+# did in named stress periods (2008, 2018 Q4, 2020, 2022): return and worst
+# fall. A period the shared history doesn't fully cover shows no number.
+
+# How much would the best mix move on a different history? Re-runs the
+# optimizer on N block-reshuffled versions of the history (default 100) and
+# prints p10 / median / p90 of each weight and how often it is held (>1%).
+# A check on the answer, not a new answer. With --assumptions it is also
+# run under your limits and long-run view.
+python -m condor analyze MSFT NEE CVX --stability 100
 
 # ...and under your own limits and a long-run view (see section 4b):
 python -m condor portfolio MSFT=30 NEE=40 CVX=30 --assumptions mine.json
@@ -110,7 +119,11 @@ python -m condor data purge AAPL
 `meta`: `window` (`start`, `end`, `n_days`), `method`, `premium` (bool),
 `risk_free_rate`, `tbill_window_mean` (null in raw mode) and
 `risk_free_source` (the header's rate note). `portfolio --json` also has
-`history`.
+`history` and `scenarios` (a list of `{name, start, end, covered, first, ret,
+max_drawdown}`); `analyze --json` carries `scenarios` for the equal-weight
+mix and, with `--stability`, a `stability` block (`n`, `n_failed`, `block`,
+`seed`, `assets: {ticker: {p10, p50, p90, held_share}}`; weights are
+fractions).
 
 `python -m condor <command> --help` shows the full list per command.
 

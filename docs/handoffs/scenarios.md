@@ -135,11 +135,18 @@ Hand-checked; pin each in a test.
 - [x] Phase 2 stability
 - [x] Phase 3 API
 - [x] Phase 4 UI
-- [ ] Phase 5 CLI + docs + hand review of own diff
+- [x] Phase 5 CLI + docs + hand review of own diff
+
+Built 2026-11-01. Suites: pytest 474 passed / 4 skipped; `manage.py test explorer` 243 OK; check and
+makemigrations clean. Not exercised: a real browser (JS checked with `node --check` and a stub-DOM run).
 
 ## Questions for the handoff session
 
-- (none yet)
+- Own-dates row holds one custom window at a time (4 built-ins + 1 = the API's cap of 5). Say if you want
+  the built-ins droppable instead.
+- Stability card sits as its own card under the scenarios card, not inside the assumptions card; the
+  "under my assumptions" button appears only when a set is showing.
+- `/api/stability` has its own rate bucket (`stability`, 6/m) beside analyze's 15/m.
 
 ## Return protocol
 

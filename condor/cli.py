@@ -7,6 +7,7 @@ see ARCHITECTURE.md.
 
     python -m condor analyze MSFT NEE CVX --method robust
     python -m condor portfolio MSFT=30 NEE=40 CVX=30
+    python -m condor analyze MSFT NEE CVX --stability 100
     python -m condor frontier MSFT NEE CVX --csv > frontier.csv
     python -m condor frontier MSFT NEE CVX --html chart.html
     python -m condor data ls | update | purge AAPL
@@ -154,6 +155,11 @@ def cmd_analyze(args) -> int:
         if assumptions:
             payload["assumed"] = under.analysis_under(
                 assumptions, None, rf, reference_prices=under.reference_prices)
+        if args.stability is not None:
+            payload["stability"] = aset.stability(rf, n=args.stability)
+            if assumptions:
+                payload["assumed"]["stability"] = under.stability(
+                    rf, assumptions.constraints, n=args.stability)
         print(json.dumps(payload, indent=1))
         return 0
     out = [_header(aset, rf_note)]
@@ -177,8 +183,35 @@ def cmd_analyze(args) -> int:
     if assumptions:
         out.append("")
         out.extend(_analyze_under(under, assumptions, rf))
+    if args.stability is not None and len(aset) >= 2:
+        out.append("")
+        out.extend(_stability_lines(aset.stability(rf, n=args.stability),
+                                    "on history"))
+        if assumptions:
+            out.append("")
+            out.extend(_stability_lines(
+                under.stability(rf, assumptions.constraints, n=args.stability),
+                f"under: {assumptions.name}"))
     print("\n".join(out))
     return 0
+
+
+def _stability_lines(st: dict, label: str) -> list[str]:
+    """Stability bands as text; the numbers are the model's."""
+    out = [f"How stable is the best mix? {label}: {st['n']} reshuffles of the "
+           f"history (blocks of {st['block']} days, seed {st['seed']})",
+           f"{'Asset':<8}{'p10':>7}{'median':>8}{'p90':>7}{'held':>7}"]
+    for t, v in st["assets"].items():
+        if v["held_share"]:
+            out.append(f"{t:<8}{_pct(v['p10']):>7}{_pct(v['p50']):>8}"
+                       f"{_pct(v['p90']):>7}{_pct(v['held_share']):>7}")
+    if st["n_failed"]:
+        out.append(f"  {st['n_failed']} of {st['n']} reshuffles had no mix "
+                   "beating the risk-free rate or no solution; ranges are "
+                   "over the rest")
+    out.append("  held = share of reshuffles with more than 1% in the asset. "
+               "Wide ranges mean history can't pin this mix down.")
+    return out
 
 
 def _analyze_under(under: AssetSet, assumptions: Assumptions, rf: float):
@@ -219,7 +252,8 @@ def cmd_portfolio(args) -> int:
     port = aset.portfolio(weights, label="Portfolio")
     under = _under(args, aset, assumptions) if assumptions else None
     if args.json:
-        payload = {**port.to_dict(rf), "meta": _meta(aset, rf, rf_note)}
+        payload = {**port.to_dict(rf), "meta": _meta(aset, rf, rf_note),
+                   "scenarios": port.scenarios()}
         if assumptions:
             payload["assumed"] = under.analysis_under(
                 assumptions, weights, rf, reference_prices=under.reference_prices)
@@ -230,6 +264,8 @@ def cmd_portfolio(args) -> int:
     print(_row("Given mix", port.to_dict(rf)))
     print()
     print(_history_lines(port.history()))
+    print()
+    print(_scenario_lines(port.scenarios()))
     if assumptions:
         print()
         print("\n".join(_portfolio_under(under, assumptions, weights, rf)))
@@ -276,6 +312,20 @@ def _portfolio_under(under: AssetSet, assumptions: Assumptions, weights, rf):
     if note:
         out.append(f"  {note}")
     return out
+
+
+def _scenario_lines(rows: list[dict]) -> str:
+    out = ["Stress periods — fixed weights, rebalanced daily; one path "
+           "through history, not a forecast",
+           f"  {'Period':<24}{'Return':>9}{'Worst fall':>12}"]
+    for w in rows:
+        if w["covered"]:
+            out.append(f"  {w['name']:<24}{_pct(w['ret']):>9}"
+                       f"{_pct(w['max_drawdown']):>12}")
+        else:
+            out.append(f"  {w['name']:<24}not in this mix's shared history "
+                       f"(starts {w['first']})")
+    return "\n".join(out)
 
 
 def _history_lines(h) -> str:
@@ -423,6 +473,10 @@ def build_parser() -> argparse.ArgumentParser:
     a = cmds.add_parser("analyze", help="per-asset stats + anchor portfolios")
     _add_common(a)
     _add_assumptions(a)
+    a.add_argument("--stability", nargs="?", type=int, const=100, default=None,
+                   metavar="N",
+                   help="also show how much the best mix moves on N "
+                        "reshuffled versions of the history (default 100)")
     a.set_defaults(fn=cmd_analyze)
 
     p = cmds.add_parser("portfolio", help="performance of a given mix")
