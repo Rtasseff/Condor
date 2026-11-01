@@ -32,3 +32,5 @@ Merged (kept as records):
 - `assumptions-1.md` — `feature/assumptions-1`, merged 2026-11-01:
   constraints, equilibrium prior, distance from best, side-by-side view
   (ADR 0008).
+- `broker-reconcile.md` — `feature/broker-reconcile`, merged 2026-11-01:
+  check a mirror account against the broker, to the cent.

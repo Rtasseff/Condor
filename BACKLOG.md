@@ -116,6 +116,9 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   and dollar-cost-averaging plans for new money.
   References: `reference materials/Portfolio-ManagementProcess/
   Kritzman2008-Portfolio_Rebalancing…`, `MRebalancing.pdf`.
+- [x] **Check against your broker** — 2026-11-01. Panel on mirror accounts:
+  expected cash, securities and account value, booked to the cent; type what
+  the broker shows; match or mismatch with where to look. Read-only.
 - [ ] **From the first month of real use** (`investments-b9`, 2026-11-01):
   open-order awareness (nothing models a placed-but-unfilled order, and
   catch-up double-buys if last month's is still working: needs an optional
@@ -127,9 +130,8 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   ADR 0005); ~~dividends~~ (done: dividend/interest/fee kinds) — splits
   still open; benchmark overlay on the value chart (SPY / your setpoint
   held passively); ~~CSV export of the ledger~~ (done:
-  `export_ledger`). Broker-cent cash: E*Trade rounds each buy's cash
-  debit to the cent (cost stays at the fill price), so a half-cent fill
-  leaves Condor half a cent off the broker's cash (seen 2026-11-01).
+  `export_ledger`). Broker-cent cash: done for the check panel; the headline
+  tiles still use exact fills, so they can differ from the broker by a cent.
 - [ ] **Scenario simulators** — "what if 2008 / 2020 / rates +3%" replay on
   the current portfolio; Monte Carlo on the estimated μ/Σ.
 - [ ] **Optimization constraints:** per-asset max weight, min position,
