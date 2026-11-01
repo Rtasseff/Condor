@@ -481,6 +481,8 @@ def read_rules(src) -> dict[str, list[RuleSpec]]:
                             "ticker.")
         if len(set(targets)) != len(targets):
             errs.append(f"line {line}: target lists a ticker twice.")
+        if len(r["target"]) > 120:
+            errs.append(f"line {line}: target is longer than 120 characters.")
         if len(errs) > n0:
             continue
         out.setdefault(label, []).append(

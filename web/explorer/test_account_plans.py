@@ -141,7 +141,6 @@ from unittest.mock import patch                        # noqa: E402
 
 import pandas as pd                                    # noqa: E402
 
-from condor import alerts as eng_alerts                # noqa: E402
 from condor import payin as eng_payin                  # noqa: E402
 from explorer.models import AccountEvent               # noqa: E402
 

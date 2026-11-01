@@ -110,6 +110,8 @@ def test_rules_fixture():
     ("a,r,drift,,5,alert,,lower\n", "target"),
     ("a,r,drift,,5,alert,,AAA AAA\n", "twice"),
     ("a,R!,drift,,5,alert,,\n", "id"),
+    ("a,r,drift,,5,alert,," + " ".join(f"T{i:03d}" for i in range(30))
+     + "\n", "120 characters"),
     ("a,r,drift,,5,alert,,\na,r,drift,,5,alert,,\n", "duplicate rule id"),
 ])
 def test_rules_errors(body, text):

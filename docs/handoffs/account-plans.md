@@ -301,12 +301,95 @@ rows dated ≤ D (or < D when the step is “before that day’s buys”).
 
 ## Status
 
-- [ ] Baseline recorded (288 passed / 4 skipped; 172 OK)
-- [ ] Phase 1 format v1.1 + storage
-- [ ] Phase 2 engine
-- [ ] Phase 3 web
-- [ ] Phase 4 UI
-- [ ] Phase 5 docs + `/code-review medium` + fixes
+- [x] Baseline recorded: **288 passed / 4 skipped; 172 OK; check clean;
+      makemigrations clean** — identical to the brief.
+- [x] Phase 1 format v1.1 + storage (`c1c6372`)
+- [x] Phase 2 engine (`b3e50d0`)
+- [x] Phase 3 web (`4dba156`)
+- [x] Phase 4 UI (`2964b10`)
+- [x] Phase 5 docs (`50d873e`) + `/code-review medium` + fixes (see below)
+
+**Final counts** (this worktree): `pytest tests/` **354 passed, 4
+skipped** (baseline 288/4: +66); `manage.py test explorer` **201 OK**
+(baseline 172: +29); `check` clean; `makemigrations --check --dry-run`
+clean (migration `0007_account_plans`).
+
+**What was and was not exercised.** All endpoints are exercised with
+Django's test client (patched clock `explorer.account._today` and patched
+`_close_history`, fixture closes). The UI JavaScript was run under node
+against a stub DOM fed the real `/api/account` and `/api/account/tranche`
+JSON of the imported fixture at T2 (panel text, buy list, rules table,
+XIRR "n/a under 3 months" all rendered as expected). **Not done: no real
+browser, no click-through, no visual/CSS check, no live market data
+(`^GSPC` / `EURUSD=X` were never fetched from the network; only the store
+file-naming round-trip is tested offline).** RT's click-through is still
+needed.
+
+**Deviations / judgment calls**
+
+- `below_high` returns the positive fraction `(high - last) / high`
+  (the brief's comment `last / max - 1` contradicts its own prose and
+  the ADR; the prose wins). `RuleResult.measured` is in *percent* (pp
+  for drift) so it compares directly with `threshold`; `RuleResult` also
+  has `breaches` (drift lines: line, weight %, target %).
+- Rule comparisons use `measured > threshold + 1e-9`. Reason: in
+  floating point `100*(12-9.6)/12` is `20.000000000000004`, so "exactly
+  20%" would otherwise fire (fixture step 3 requires not fired).
+- `progress()["pct"]` is percent (0-100). The UI shows the reservoir's
+  % as a dash (it is a standing balance, not progress toward a plan).
+- Target order = DB order (`weight` desc, ticker), because
+  `AccountTarget` has no order column (the brief fixed the column list).
+  For the fixture this equals the file order for dca tickers, but the
+  trim tie-break "first in target order" is therefore "first by weight"
+  for imported accounts. Adding an `order` column is the fix if exact
+  file order matters.
+- `PayInPlan` (engine) got a `build(total, dates, specs)` classmethod,
+  `n` and `reservoir` properties; the Django model of the same name is
+  imported as-is in `models.py` only (no clash in `account.py`, which
+  uses the engine class as `payin.PayInPlan`).
+- `_state.payin` carries two extra keys beyond the brief (`budget`,
+  `dates`); the rules payload has `action_text` and `breaches`. No key
+  was renamed. `combined` is omitted (not null) when not applicable.
+- The tranche endpoint: `through` defaults to `max(k_due, 1)`;
+  `apply_rules=1` raises it to the accelerated `through` and applies
+  targeted extras (effective `through` = max of the two). The UI adds a
+  small "Include fired rules" checkbox (shown only when an accelerate
+  rule fired) so the list can be viewed without the rules; the brief did
+  not ask for it.
+- `combined` supports a USD + EUR pair only (any other currency: omitted
+  and logged). USD and EUR figures are both "everything converted".
+- A pay-in or rule given to `import_ledger` without `--targets` is
+  checked against the targets already stored for the account.
+- `_state` was refactored (`_live`, `_priced` helpers, same output) so
+  the tranche endpoint shares the valuation code.
+- No change to `condor/data/store.py` was needed: `^GSPC` and
+  `EURUSD=X` round-trip (test added).
+
+**Renamed user-facing strings:** none renamed. New: tile "Money-weighted
+(XIRR)" ("n/a under 3 months"); "All accounts: $X · €Y (EURUSD rate,
+date)"; pay-in/rules panels per the brief. The existing "Advice only —
+place trades at your broker and record them in your ledger." is reused.
+
+**Pre-existing bugs noticed, not fixed:** none in my scope. Note `main`
+moved after this branch's base: commit `7840b52` ("time-weighted return
+dropped the account's first day") edits `time_weighted_return` in
+`condor/accounting.py`, right next to where this branch adds
+`money_weighted_return` / `combined_total`: expect a small textual
+conflict on rebase, no semantic one (XIRR does not use TWR).
+
+**Code review (`/code-review medium`).** The skill ran twice (as
+`medium`, and as `medium d5a0dea..HEAD`) but both runs diffed against
+the *current* `main`, which has moved on (`7840b52`, a time-weighted-return
+fix this branch does not have), so every finding was about that commit
+(and, in the second run, about this branch's files appearing as
+"removed" from main). None concerns this branch's code, and I did not
+act on them. In its place I reviewed this branch's full diff against its
+base `d5a0dea` by hand (money math in `payin.py` / `alerts.py` against
+`pflib`; the migration and the replace semantics of `import_ledger`;
+view code for account scoping and mirror safety; the JS under a stub
+DOM). Fixes landed in the final commit: an unused test import; `rules.csv`
+`target` longer than the 120-character column is now a `line N:` format
+error instead of silent overlong storage (test added). Nothing else found.
 
 ## Questions for the handoff session
 
