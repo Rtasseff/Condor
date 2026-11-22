@@ -344,6 +344,18 @@ function renderTranche() {
   inc.textContent = texts.length ? "Includes: " + texts.join("; ") : "";
 }
 
+// A rule fires on strictly more than its threshold, so a reading that rounds
+// to the threshold itself (URNM 19.995% vs "more than 20%") says which side
+// it is on instead of printing "20.0%" beside either verdict.
+function measuredText(r, unit) {
+  if (r.measured == null) return "—";
+  if (r.measured < 0) return `${(-r.measured).toFixed(1)}${unit} above`;
+  const shown = r.measured.toFixed(1);
+  if (Number(shown) !== r.threshold) return shown + unit;
+  const over = r.muted ? r.measured > r.threshold : r.fired;
+  return `just ${over ? "over" : "under"} ${r.threshold}${unit}`;
+}
+
 function renderRules() {
   const rules = state.data.rules || [];
   $("rules").hidden = !rules.length;
@@ -378,10 +390,7 @@ function renderRules() {
     } else {
       status.textContent = "Not fired";
     }
-    tr.append(first,
-              td(r.measured == null ? "—"
-                : r.measured < 0 ? `${(-r.measured).toFixed(1)}${unit} above`
-                : r.measured.toFixed(1) + unit, "num"),
+    tr.append(first, td(measuredText(r, unit), "num"),
               td(r.threshold + unit, "num"), status);
     tb.appendChild(tr);
   }
