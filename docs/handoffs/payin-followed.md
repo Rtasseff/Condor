@@ -154,12 +154,55 @@ rule that stays fired.
 
 ## Status
 
-- [ ] Baseline recorded
-- [ ] Engine: bought_through, rule_target, reservoir rule, leftover_cash + tests
-- [ ] API keys + explorer tests
-- [ ] UI strings (before → after listed here)
-- [ ] ADR 0007 amendment
-- [ ] Browser pass (desktop + phone width)
+- [x] Baseline recorded (before any change): `pytest tests/` 509 passed, 4 skipped;
+  `manage.py test explorer` 256 OK; `check` no issues; `makemigrations --check` no changes.
+- [x] Engine: `payin.bought_through`, `payin.leftover_cash`, `reservoir_trade(..., funded=False)`,
+  `alerts.rule_target` + tests (hand cases, "equals `accelerations`", day-1 BUY kept, no BUY once
+  funded, SELL/short unchanged).
+- [x] API keys + explorer tests (`FollowedTests` in `web/explorer/test_account_plans.py`).
+- [x] UI strings (below).
+- [x] ADR 0007 amendment (2026-11-23), readings A and B for O7.
+- [ ] Browser pass: NOT done in a real browser (see Deviations). API checked through the
+  Django test client; `node --check` passes on `account.js`. Phone-width overflow NOT verified.
+
+**After:** `pytest tests/` 522 passed, 4 skipped (+13); `manage.py test explorer` 268 OK (+12);
+`check` clean; `makemigrations --check` no changes.
+
+### User-facing strings (before -> after)
+
+- Pay-in title: `Pay-in: tranche 2 of 6 · next 2026-12-21` -> `Pay-in: tranche 2 of 6 · bought through 3 · next 2026-12-21`
+  (only when `bought_through` is a number; complete title unchanged).
+- Rule status: `Fired` -> `Fired · followed` only when `followed === true`; "Fired", "Not fired",
+  "Muted during pay-in" otherwise unchanged.
+- Buy-list title: `Buy list for tranche K` -> `Left to buy through tranche K`.
+- Empty row: `Nothing to buy through this tranche.` -> `Nothing left to buy through tranche K.`
+- Reservoir line: `Put the rest in RES: buy N (~$X)` now appears only on day 1 (engine returns a BUY
+  only then). New: `~$X cash carries to the next tranche.` (when `carry` >= 0.01 and there is a next
+  date), else `~$X stays in cash.`; same line as the sell sentence.
+
+### API (additive)
+
+`payin.bought_through` (int or null); each rule `target_through`, `followed`;
+`/api/account/tranche` `carry`, and `reservoir_trade` follows the new rule.
+
+### Existing test expectations changed
+
+None needed: `reservoir_trade` defaults to `funded=False` (old behaviour), and the explorer
+tranche tests only hit the day-1 BUY or SELLs. The API passes `funded` from
+`bought[reservoir] > 0`.
+
+### Deviations
+
+- Browser pass not run: no browser session was set up; I fell back to the Django test client
+  for the JSON the page renders and `node --check` for syntax. The strings in `account.js` are
+  unexercised in a DOM, and the 390 px layout is unchecked. Worth a quick look at the merge.
+- `_payin_payload` and `_rule_dict` gained arguments (`prices`; `plan, nums, prices`).
+- Fixed a latent NameError risk: `nums` is now initialised to None in the account view.
+
+### Pre-existing, not fixed
+
+- The tranche panel's "Cancel last month's unfilled orders..." note is unrelated but shows
+  even when nothing is left to buy.
 
 ## Questions for the handoff session
 
