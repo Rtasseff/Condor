@@ -154,6 +154,84 @@ class TestStore:
         assert store.info().loc["MSFT", "source"] == "alive"
 
 
+class TestFinalBarsOnly:
+    """ADR 0001 amendment (2026-11-23): a bar fetched mid-session is the
+    day in progress, not a close. Real case: Condor stored Monday 13:29 ET
+    prices as Monday's closes, which un-fired a rule and would have stood
+    in for the close for good whenever it landed within the seam
+    tolerance."""
+    MON = date(2026, 11, 23)
+    FRI = date(2026, 11, 20)
+    START = date(2026, 1, 2)
+
+    @staticmethod
+    def at(monkeypatch, day, hh, mm=0):
+        from condor.data import store as st
+        now = datetime.combine(day, datetime.min.time(), st._NY).replace(
+            hour=hh, minute=mm)
+        monkeypatch.setattr(st, "_now", lambda: now)
+
+    @pytest.fixture
+    def src(self, store, monkeypatch):
+        s = FakeSource(make_history(end=self.MON))
+        monkeypatch.setattr("condor.data.store.get_sources", lambda x=None: [s])
+        return s
+
+    def test_day_in_progress_is_not_a_close(self, store, src, monkeypatch):
+        self.at(monkeypatch, self.MON, 13, 29)
+        got = store.get("VT", start=self.START)
+        assert got.index[-1].date() == self.FRI
+        assert store.as_of("VT") == str(self.FRI)
+
+    def test_close_is_picked_up_after_settle_within_the_hour(
+            self, store, src, monkeypatch):
+        self.at(monkeypatch, self.MON, 13, 29)
+        store.get("VT", start=self.START)
+        self.at(monkeypatch, self.MON, 17, 30)      # 4h later, not 24h
+        got = store.get("VT", start=self.START)
+        assert got.index[-1].date() == self.MON
+        assert len(src.calls) == 2
+
+    def test_legacy_mid_session_bar_is_replaced_by_the_close(
+            self, store, src, monkeypatch):
+        final = src.history
+        live = final.copy()
+        live.iloc[-1] *= 1.001                        # within seam tolerance
+        self.at(monkeypatch, self.MON, 13, 29)
+        store._save("VT", live.loc[str(self.START):], "fake", self.START)
+        # before the close: the saved bar is not served, nor the live one
+        got = store.get("VT", start=self.START)
+        assert got.index[-1].date() == self.FRI
+        # after the close: the final bar, not the 13:29 price
+        store._save("VT", live.loc[str(self.START):], "fake", self.START)
+        self.at(monkeypatch, self.MON, 18, 0)
+        got = store.get("VT", start=self.START)
+        assert got["close"].iloc[-1] == final["close"].iloc[-1]
+        assert store.read("VT")["close"].iloc[-1] == final["close"].iloc[-1]
+
+    def test_weekend_does_not_refetch(self, store, src, monkeypatch):
+        src.history = src.history.loc[:str(self.FRI)]
+        self.at(monkeypatch, self.FRI, 18, 0)
+        store.get("VT", start=self.START)
+        self.at(monkeypatch, self.FRI + timedelta(days=1), 15, 0)   # Saturday
+        store.get("VT", start=self.START)
+        assert len(src.calls) == 1
+
+    def test_lagging_provider_is_rechecked_at_most_hourly(
+            self, store, src, monkeypatch):
+        full = src.history
+        src.history = full.loc[:str(self.FRI)]        # Monday's bar not out yet
+        self.at(monkeypatch, self.MON, 17, 45)
+        store.get("VT", start=self.START)
+        self.at(monkeypatch, self.MON, 18, 15)
+        store.get("VT", start=self.START)
+        assert len(src.calls) == 1                    # 30 min: wait
+        src.history = full
+        self.at(monkeypatch, self.MON, 18, 50)
+        got = store.get("VT", start=self.START)
+        assert len(src.calls) == 2 and got.index[-1].date() == self.MON
+
+
 def _age(store, ticker, hours):
     m = store._manifest()
     old = datetime.now(timezone.utc) - timedelta(hours=hours)

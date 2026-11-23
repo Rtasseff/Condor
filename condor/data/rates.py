@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from . import store as _price_store
 from .store import PriceStore, _age_hours
 
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
@@ -73,7 +74,7 @@ def risk_free_rate(maturity: str = DEFAULT_MATURITY,
         "series": series,
     }
     cache[series] = {**result,
-                     "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+                     "fetched_at": _price_store._now().astimezone(timezone.utc).isoformat(timespec="seconds")}
     store.root.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(cache, indent=1, sort_keys=True))
     return result

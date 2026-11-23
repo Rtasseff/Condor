@@ -12,6 +12,14 @@ window and compares it against what we stored. Match -> append the new
 rows. Mismatch -> a corporate action happened -> re-download the full
 history (cheap: ~100 KB per ticker-decade).
 
+Final bars only (ADR 0001, amendment 2026-11-23): providers return the
+day in progress as a daily bar, and a seam append never rewrites the last
+stored row -- so a bar saved mid-session could stand in for that day's
+close indefinitely. The store keeps a bar only once it is final (its date
+is before today in New York, or New York is past SETTLE), drops rows a
+legacy fetch saved before they were final, and re-checks within the hour
+when a newer session's close should exist.
+
 Flat files, no database, on purpose: docs/decisions/0002.
 """
 
@@ -21,8 +29,9 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -38,6 +47,36 @@ log = logging.getLogger(__name__)
 MAX_AGE_HOURS = 24.0   # don't re-hit the network more often than this
 SEAM_ROWS = 20         # stored rows to re-fetch and compare on update
 SEAM_RTOL = 2e-3       # providers round adjusted closes; allow ~0.2%
+RECHECK_HOURS = 1.0    # a newer close is due: look again at most this often
+SETTLE = time(17, 0)   # US close 16:00 ET, plus an hour for bars to settle
+_NY = ZoneInfo("America/New_York")
+
+
+def _now() -> datetime:
+    """Seam for tests: the store's clock (aware, New York time)."""
+    return datetime.now(_NY)
+
+
+def last_final_day(now: datetime) -> date:
+    """Newest date whose daily bar is final at `now`: today in New York
+    once it is past SETTLE, else yesterday. Calendar days -- a weekend or
+    holiday simply has no bar. Conservative for exchanges that close
+    earlier than New York: their close is just picked up at SETTLE."""
+    ny = now.astimezone(_NY)
+    return ny.date() if ny.time() >= SETTLE else ny.date() - timedelta(days=1)
+
+
+def _expected_last(now: datetime) -> date:
+    """The newest weekday whose close should exist (holidays aside)."""
+    d = last_final_day(now)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def _final(frame: pd.DataFrame, now: datetime) -> pd.DataFrame:
+    """Only the rows that were final at `now`."""
+    return frame.loc[frame.index <= pd.Timestamp(last_final_day(now))]
 
 
 def default_root() -> Path:
@@ -127,7 +166,8 @@ class PriceStore:
             req = min(str(requested_start), old_req) if old_req else str(requested_start)
             m[ticker.upper()] = {
                 "source": source,
-                "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "fetched_at": _now().astimezone(timezone.utc).isoformat(
+                    timespec="seconds"),
                 "first": str(frame.index[0].date()),
                 "last": str(frame.index[-1].date()),
                 "requested_start": req,
@@ -172,13 +212,25 @@ class PriceStore:
             return False
         if str(start) < entry["requested_start"] and str(start) < entry["first"]:
             return False
-        return _age_hours(entry["fetched_at"]) < max_age_hours
+        fetched = datetime.fromisoformat(entry["fetched_at"])
+        if entry["last"] > str(last_final_day(fetched)):
+            return False  # holds a bar saved before it was final
+        age = _age_hours(entry["fetched_at"])
+        if entry["last"] < str(_expected_last(_now())) and age >= RECHECK_HOURS:
+            return False  # a newer close should exist by now
+        return age < max_age_hours
 
     def _refresh(self, ticker: str, start: date, source: str | None,
                  max_age_hours: float) -> pd.DataFrame:
         sources = get_sources(source)
         entry = self._manifest().get(ticker)
         stored = self.read(ticker)
+        now = _now()
+        if stored is not None and entry is not None:
+            # drop bars a fetch saved before they were final (pre-amendment)
+            stored = _final(stored, datetime.fromisoformat(entry["fetched_at"]))
+            if stored.empty:
+                stored = None
 
         needs_full = stored is None or entry is None
         if not needs_full and source is not None and entry["source"] != source:
@@ -189,6 +241,7 @@ class PriceStore:
 
         if needs_full:
             frame, name = self._fetch(ticker, start, sources)
+            frame = _final(frame, now)
             if len(frame) < MIN_OBS:
                 raise DataFetchError(
                     f"Only {len(frame)} daily observations for '{ticker}' "
@@ -205,12 +258,14 @@ class PriceStore:
             log.warning("serving stale %s (last %s): %s",
                         ticker, stored.index[-1].date(), e)
             return stored.loc[str(start):]
+        fresh = _final(fresh, now)
         common = seam.index.intersection(fresh.index)
         drifted = len(common) == 0 or not _close(
             seam.loc[common, "adj_close"], fresh.loc[common, "adj_close"])
         if drifted:
             frame, name = self._fetch(
                 ticker, date.fromisoformat(entry["requested_start"]), sources)
+            frame = _final(frame, now)
         else:
             frame = pd.concat([stored, fresh.loc[fresh.index > stored.index[-1]]])
         self._save(ticker, frame, name, start)
@@ -219,7 +274,7 @@ class PriceStore:
 
 def _age_hours(fetched_at_iso: str) -> float:
     fetched = datetime.fromisoformat(fetched_at_iso)
-    return (datetime.now(timezone.utc) - fetched).total_seconds() / 3600.0
+    return (_now() - fetched).total_seconds() / 3600.0
 
 
 def _close(a: pd.Series, b: pd.Series) -> bool:
