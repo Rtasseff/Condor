@@ -74,3 +74,50 @@ ledger and targets.
 - Manual accounts need pay-in plans edited in the UI.
 - Unequal tranches, or tranches defined in dollars instead of k/N.
 - A base currency other than USD/EUR, or FX conversions inside accounts.
+
+## Amendment 2026-11-23: bought through, followed, no reservoir buy-back
+
+A fired accelerate rule was acted on, but the panel kept saying "Fired",
+titled the list for the tranche now due, and told the investor to put
+spare cash back in the reservoir right after selling it. Four changes,
+all display or settle-the-cash only; the buy-list sizing in §1 and §4
+is unchanged.
+
+1. **Bought through N** (`payin.bought_through`): the largest k in 0..N
+   for which the dca buy list through k buys nothing, judged with the
+   list's own half-up whole-share test (0.49 of a share still due counts
+   as bought, 0.51 does not). It measures holdings, not cash: no budget,
+   no lump, no reservoir. Unlike `k_due` it survives an acceleration. A
+   missing price is a `KeyError`; the API reports `null` instead.
+2. **Followed** (`alerts.rule_target`, then `followed = bought_through >=
+   target`). The target is the tranche a fired accelerate rule asks to
+   be bought through: untargeted `min(k_due + tranches, N)`, targeted
+   `min(max(k_due, 1) + tranches, N)`, i.e. what `accelerations` gives
+   for that rule alone. A targeted rule is judged on its own tickers
+   only; an untargeted one on every dca ticker. The page shows
+   "Fired · followed". `followed` is `null` when not fired, an alert
+   rule, muted, no plan, or a price is missing.
+3. **The list is titled by what is left**: "Left to buy through tranche
+   K". The list itself is unchanged.
+4. **No reservoir buy-back after day 1** (supersedes the "spare cash
+   buys `floor(spare / price)`" half of §2). A shortfall still sells
+   reservoir shares, exactly as before. Spare cash buys reservoir shares
+   only while the reservoir has never been bought (`bought[reservoir] ==
+   0`: day 1, when it is funded); afterwards the cash is held until the
+   next tranche, which is what the investor's own tool does. Not inferred
+   from shares held: a reservoir sold down to zero is still funded. The
+   cash left after the list and the trade is `payin.leftover_cash`,
+   returned by `/api/account/tranche` as `carry` and shown as a note.
+
+**Pending decision O7 (the owner's, not resolved here).** What happens
+at the *next* tranche date while an untargeted rule stays fired:
+
+- *Reading A (implemented, stands until the owner answers):* "stay two
+  ahead while fired". `through = k_due + tranches`, re-evaluated every
+  day, so the target moves up with each tranche date.
+- *Reading B:* "once per fall". A firing buys the next two unbought
+  tranches once, and the rule re-arms when the index closes back within
+  its threshold.
+
+Nothing in the amendment assumes B, and the page says nothing about the
+next date's list.
