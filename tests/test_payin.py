@@ -533,3 +533,96 @@ def test_trim_note_reports_the_real_count():
     assert three.loc["AAA", "qty"] == 6
     assert three.loc["AAA", "note"] == \
         "4 shares trimmed to stay within cash; carries forward"
+
+
+# ------------------------------------- bought through / followed / carry
+
+# 4 tranches, total 1000: AAA 40% (400, 100 a tranche), BBB 40%, RES 20%
+HAND = payin.PayInPlan.build(
+    1000, [date(2027, 1, 1), date(2027, 2, 1), date(2027, 3, 1),
+           date(2027, 4, 1)],
+    [("AAA", 0.4, "dca", ""), ("BBB", 0.4, "dca", ""),
+     ("RES", 0.2, "reservoir", "")])
+HPX = {"AAA": 10.0, "BBB": 10.0, "RES": 10.0}
+
+
+def test_bought_through_hand_cases():
+    bt = payin.bought_through
+    assert bt(HAND, {}, HPX) == 0                          # nothing bought
+    assert bt(HAND, {"AAA": 100, "BBB": 100}, HPX) == 1
+    assert bt(HAND, {"AAA": 400, "BBB": 400}, HPX) == 4    # k = N
+    # 0.49 of a share still due counts as bought; 0.51 does not
+    assert bt(HAND, {"AAA": 195.1, "BBB": 200}, HPX) == 2  # 4.9 due on 200
+    assert bt(HAND, {"AAA": 194.9, "BBB": 200}, HPX) == 1
+    # a ticker subset; non-dca tickers passed in are ignored
+    assert bt(HAND, {"AAA": 200}, HPX, ["AAA"]) == 2
+    assert bt(HAND, {"AAA": 200}, HPX, ["AAA", "RES"]) == 2
+    with pytest.raises(KeyError):
+        bt(HAND, {}, {"AAA": 10.0})
+
+
+def test_bought_through_agrees_with_the_list():
+    bought = {"AAA": 230.0, "BBB": 170.0}
+    k = payin.bought_through(HAND, bought, HPX)
+    for through in range(0, HAND.n + 1):
+        qty = payin.tranche_orders(HAND, bought, HPX, through)["qty"].sum()
+        assert (qty == 0) == (through <= k)
+
+
+def test_reservoir_trade_funded_buys_nothing():
+    px = {"RES": 10.0}
+    assert payin.reservoir_trade(HAND, 100, px, 40)["qty"] == 6   # day 1
+    assert payin.reservoir_trade(HAND, 100, px, 40, funded=True) is None
+    sell = payin.reservoir_trade(HAND, 10, px, 40, held=50, funded=True)
+    assert sell["side"] == "SELL" and sell["qty"] == 3            # unchanged
+    short = payin.reservoir_trade(HAND, 0, px, 40, held=1, funded=True)
+    assert short["qty"] == 1 and short["short"] == pytest.approx(30)
+
+
+def test_leftover_cash():
+    px = {"RES": 10.0}
+    lc = payin.leftover_cash
+    assert lc(100, 40, None) == pytest.approx(60)
+    sell = payin.reservoir_trade(HAND, 10, px, 40, held=50)
+    assert lc(10, 40, sell) == pytest.approx(0)            # 3 sold: 30+10-40
+    sell = payin.reservoir_trade(HAND, 10, px, 35, held=50)
+    assert lc(10, 35, sell) == pytest.approx(5)
+    buy = payin.reservoir_trade(HAND, 100, px, 40)
+    assert lc(100, 40, buy) == pytest.approx(0)            # 6 bought: 60
+    buy = payin.reservoir_trade(HAND, 105, px, 40)
+    assert lc(105, 40, buy) == pytest.approx(5)
+    short = payin.reservoir_trade(HAND, 0, px, 40, held=1)
+    assert lc(0, 40, short) == 0
+    assert lc(-5, 0, None) == 0
+
+
+@pytest.mark.parametrize("k_due", [0, 1, 2, 3])
+@pytest.mark.parametrize("targets", [(), ("AAA",)])
+def test_rule_target_equals_accelerations(k_due, targets):
+    n = 4
+    spec = alerts.RuleResult(
+        id="r", rule="below_52w_high", ticker="^IDX", threshold=10,
+        measured=15, fired=True, muted=False, action="accelerate",
+        tranches=2, targets=targets)
+    through, extra = alerts.accelerations([spec], k_due, n)
+    want = through if not targets else min(through + extra["AAA"], n)
+    assert alerts.rule_target(spec, k_due, n) == want
+
+
+def test_rule_target_none_unless_fired_accelerate():
+    base = dict(id="r", rule="below_52w_high", ticker="^IDX", threshold=10,
+                measured=15, fired=True, muted=False, action="accelerate",
+                tranches=2, targets=())
+    mk = lambda **kw: alerts.RuleResult(**{**base, **kw})  # noqa: E731
+    assert alerts.rule_target(mk(), 2, 6) == 4
+    assert alerts.rule_target(mk(), 5, 6) == 6             # capped at N
+    assert alerts.rule_target(mk(fired=False), 2, 6) is None
+    assert alerts.rule_target(mk(action="alert", tranches=None), 2, 6) is None
+    assert alerts.rule_target(mk(tranches=None), 2, 6) is None
+
+
+def test_bought_through_is_none_without_a_dca_ticker():
+    assert payin.bought_through(HAND, {}, HPX, ["RES"]) is None
+    assert payin.bought_through(HAND, {}, HPX, ["ZZZ"]) is None
+    no_dca = payin.PayInPlan.build(100, HAND.dates, [("RES", 1, "reservoir", "")])
+    assert payin.bought_through(no_dca, {}, HPX) is None

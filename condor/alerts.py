@@ -128,3 +128,16 @@ def accelerations(results, k_due: int, n: int) -> tuple[int, dict[str, int]]:
     if untargeted:
         through = k_due + untargeted
     return min(through, n), extra
+
+
+def rule_target(result, k_due: int, n: int) -> int | None:
+    """The tranche a fired `accelerate` rule asks the account to be
+    bought through, or None (not fired, not accelerate, no tranches).
+    Untargeted: min(k_due + tranches, N). Targeted: min(max(k_due, 1) +
+    tranches, N). Equals what `accelerations` yields for that rule
+    alone."""
+    if not (result.fired and result.action == "accelerate"
+            and result.tranches):
+        return None
+    base = max(k_due, 1) if result.targets else k_due
+    return min(base + result.tranches, n)

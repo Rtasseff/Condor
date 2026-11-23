@@ -213,14 +213,43 @@ def tranche_orders(plan: PayInPlan, bought: dict, prices, through: int,
     return _frame(rows)
 
 
+def bought_through(plan: PayInPlan, bought: dict, prices,
+                   tickers=None) -> int | None:
+    """The largest k in 0..N for which the dca buy list through k buys
+    nothing for `tickers` (default: every dca ticker; non-dca tickers
+    are ignored). Measures holdings, not cash: no budget, no lump, no
+    reservoir. Uses the list's own half-up whole-share test, so it can
+    never disagree with `tranche_orders`. None when there is no dca
+    ticker to judge (an empty set would read as "bought through N").
+    A missing price -> KeyError."""
+    n = max(plan.n, 1)
+    dca = plan.tickers("dca")
+    ts = dca if tickers is None else [t for t in dca if t in set(tickers)]
+    if not ts:
+        return None
+    px = {t: _price(prices, t) for t in ts}
+    done = 0
+    for k in range(1, plan.n + 1):
+        if any(round_qty(max(plan.total * plan.weights[t] * k / n
+                             - bought.get(t, 0.0), 0.0), px[t]) > 0
+               for t in ts):
+            break
+        done = k
+    return done
+
+
 def reservoir_trade(plan: PayInPlan, cash: float, prices, buy_total: float,
-                    held: float | None = None) -> dict | None:
+                    held: float | None = None,
+                    funded: bool = False) -> dict | None:
     """Settle the cash after the buys (lump + tranche) in the reservoir
-    ticker. Buys > cash -> SELL ceil((buys − cash)/price); else BUY
-    floor((cash − buys)/price) (the rest goes to the reservoir). None
-    when there is no reservoir, no price, or nothing to trade. `held` is
-    the reservoir shares owned: a SELL is capped at it, and the dollars
-    the sale cannot cover come back as `short`."""
+    ticker. Buys > cash -> SELL ceil((buys − cash)/price). Cash covers
+    the buys -> BUY floor((cash − buys)/price) only while the reservoir
+    has never been bought (`funded` False: day 1, when it gets funded);
+    once funded, leftover cash is held for the next tranche and the
+    result is None. None also when there is no reservoir, no price, or
+    nothing to trade. `held` is the reservoir shares owned: a SELL is
+    capped at it, and the dollars the sale cannot cover come back as
+    `short`."""
     t = plan.reservoir
     if t is None:
         return None
@@ -238,12 +267,25 @@ def reservoir_trade(plan: PayInPlan, cash: float, prices, buy_total: float,
             return {"side": side, "ticker": t, "qty": q, "price": p,
                     "amount": q * p, "short": short}
     else:
+        if funded:
+            return None
         q = int(math.floor((cash - buy_total) / p + _EPS))
         side = "BUY"
     if q <= 0:
         return None
     return {"side": side, "ticker": t, "qty": q, "price": p,
             "amount": q * p}
+
+
+def leftover_cash(cash: float, buy_total: float, trade: dict | None) -> float:
+    """Cash left after the list and the reservoir trade, never below 0
+    (a `short` trade leaves none)."""
+    left = max(cash, 0.0) - buy_total
+    if trade is not None:
+        if "short" in trade:
+            return 0.0
+        left += trade["amount"] if trade["side"] == "SELL" else -trade["amount"]
+    return max(left, 0.0)
 
 
 def is_complete(plan: PayInPlan, bought: dict, prices, budget: float,

@@ -195,13 +195,23 @@ def _payin_numbers(plan, live, prices, today) -> SimpleNamespace:
         complete=payin.is_complete(plan, bought, prices, budget, today))
 
 
-def _payin_payload(plan, nums, today) -> dict:
+def _bought_through(plan, nums, prices, tickers=None):
+    """How far the holdings cover the plan, or None when a price is
+    missing (the page must not fail over it)."""
+    try:
+        return payin.bought_through(plan, nums.bought, prices, tickers)
+    except KeyError:
+        return None
+
+
+def _payin_payload(plan, nums, today, prices) -> dict:
     prog = payin.progress(plan, nums.bought, today)
     upcoming = [d for d in plan.dates if d > today]
     return {
         "total": _round(plan.total), "n": plan.n, "k_due": nums.k_due,
         "next_date": str(upcoming[0]) if upcoming else None,
         "complete": nums.complete,
+        "bought_through": _bought_through(plan, nums, prices),
         "unbought": _round(nums.unbought),
         "unbought_pct": _round(100 * nums.unbought / plan.total, 1),
         "reserve": _round(nums.reserve), "budget": _round(nums.budget),
@@ -232,7 +242,25 @@ def _action_text(r) -> str:
     return f"Buy {r.tranches} tranche{s} early ({which})"
 
 
-def _rule_dict(r) -> dict:
+def _rule_followed(r, plan, nums, prices):
+    """(target_through, followed) for a rule. followed is None when it
+    does not apply: not fired, an alert rule, muted, no plan, the pay-in
+    complete, no dca ticker to judge (both None), or a missing price."""
+    if plan is None or r.muted or nums.complete:
+        return None, None
+    target = alerts.rule_target(r, nums.k_due, plan.n)
+    if target is None:
+        return None, None
+    judged = [t for t in plan.tickers("dca")
+              if not r.targets or t in r.targets]
+    if not judged:          # a rule on no dca ticker has nothing to follow
+        return None, None
+    done = _bought_through(plan, nums, prices, r.targets or None)
+    return target, (None if done is None else done >= target)
+
+
+def _rule_dict(r, plan=None, nums=None, prices=None) -> dict:
+    target, followed = _rule_followed(r, plan, nums, prices)
     return {
         "id": r.id, "rule": r.rule, "ticker": r.ticker or None,
         "threshold": r.threshold,
@@ -242,6 +270,7 @@ def _rule_dict(r) -> dict:
         "breaches": [{"line": ln, "weight": round(w, 2), "target": round(t, 2)}
                      for ln, w, t in r.breaches],
         "text": _rule_text(r), "action_text": _action_text(r),
+        "target_through": target, "followed": followed,
     }
 
 
@@ -357,13 +386,13 @@ def _state(account: Account) -> dict:
         positions.append(pos)
 
     plan = _plan_for(account)
-    payin_out = rules_out = None
+    payin_out = rules_out = nums = None
     active = False
     if plan is not None:
         nums = _payin_numbers(plan, live, prices, today)
-        payin_out = _payin_payload(plan, nums, today)
+        payin_out = _payin_payload(plan, nums, today, prices)
         active = not nums.complete
-    rules_out = [_rule_dict(r) for r in
+    rules_out = [_rule_dict(r, plan, nums, prices) for r in
                  _rule_results(account, live, prices, active, today)]
 
     out = {
@@ -686,8 +715,12 @@ def api_account_tranche(request):
                 "price": _round(r["price"], 4), "amount": _round(r["amount"]),
                 "note": r["note"]})
     buys = float(lump["amount"].sum() + tranche["amount"].sum())
-    trade = payin.reservoir_trade(plan, nums.cash, prices, buys,
-                                  held=nums.res_held)
+    res = plan.reservoir
+    trade = payin.reservoir_trade(
+        plan, nums.cash, prices, buys, held=nums.res_held,
+        funded=bool(res and (nums.bought.get(res, 0) > 0
+                             or nums.res_held > 0)))
+    carry = _round(payin.leftover_cash(nums.cash, buys, trade))
     if trade is not None:
         trade = {**trade, "price": _round(trade["price"], 4),
                  "amount": _round(trade["amount"])}
@@ -697,7 +730,7 @@ def api_account_tranche(request):
         "through": through, "n": plan.n, "applied_rules": applied,
         "cash": _round(nums.cash), "reserve": _round(nums.reserve),
         "budget": _round(nums.budget), "orders": orders,
-        "reservoir_trade": trade})
+        "reservoir_trade": trade, "carry": carry})
 
 
 @api_login_required

@@ -561,3 +561,166 @@ class ImportRecheckStoredTests(TestCase):
     def test_compatible_new_targets_are_fine(self):
         do_import(payin=None, rules=None)
         self.assertEqual(PayInPlan.objects.count(), 1)
+
+
+
+class FollowedTests(PlanWebBase):
+    """bought_through, rule target/followed and the carried cash."""
+
+    def buy(self, ticker, shares, price, day="2027-01-05"):
+        AccountEvent.objects.create(account=self.acc, date=day, kind="buy",
+                                    ticker=ticker, shares=shares,
+                                    price=price, amount=0)
+
+    def rule(self, j, rid):
+        return {r["id"]: r for r in j["rules"]}[rid]
+
+    def test_bought_through_runs_behind_the_clock(self):
+        j = self.at(T2, before=True).get("/api/account")
+        self.assertEqual((j["payin"]["k_due"], j["payin"]["bought_through"]),
+                         (2, 1))
+
+    def test_bought_through_after_the_tranche_is_bought(self):
+        j = self.at(T2).get("/api/account")
+        self.assertEqual((j["payin"]["k_due"], j["payin"]["bought_through"]),
+                         (2, 2))
+
+    def test_fired_and_not_yet_followed(self):
+        j = self.at(T3).get("/api/account")
+        i = self.rule(j, "idx_drawdown")        # untargeted, 2 tranches
+        self.assertTrue(i["fired"])
+        # BBB's trimmed share leaves it one share short of tranche 4
+        self.assertEqual((j["payin"]["bought_through"], i["target_through"],
+                          i["followed"]), (3, 4, False))
+
+    def test_followed_once_the_trimmed_share_is_bought(self):
+        self.at(T3)
+        self.buy("BBB", 2, 37.5, day=T3)
+        j = self.get("/api/account")
+        i = self.rule(j, "idx_drawdown")
+        self.assertEqual((j["payin"]["bought_through"], i["target_through"],
+                          i["followed"]), (4, 4, True))
+
+    def _targeted(self, short):
+        # CCC/DDD tranche 3 asks for 112.5 / 37.5; CCC is bought up to
+        # `short` of a share (at 9 a share) short of it
+        self.at(T2, before=True)
+        AccountEvent.objects.create(account=self.acc, date="2027-01-05",
+                                    kind="deposit", amount=1000)
+        self.buy("CCC", (76.5 - short * 9) / 12, 12)   # avg cost stays 12
+        self.buy("DDD", 3, 7)
+        c = self.rule(self.get("/api/account"), "ccc_below_cost")
+        self.assertTrue(c["fired"])
+        return c
+
+    def test_targeted_rule_half_a_share_short_is_not_followed(self):
+        c = self._targeted(0.51)
+        self.assertEqual((c["target_through"], c["followed"]), (3, False))
+
+    def test_targeted_rule_under_half_a_share_short_is_followed(self):
+        c = self._targeted(0.49)
+        self.assertEqual((c["target_through"], c["followed"]), (3, True))
+
+    def test_followed_is_none_when_it_does_not_apply(self):
+        j = self.at(T3, before=True).get("/api/account")
+        i = self.rule(j, "idx_drawdown")
+        self.assertTrue(i["fired"])
+        j = self.at(T2, before=True).get("/api/account")
+        for rid in ("idx_drawdown", "drift"):   # not fired; muted alert
+            r = self.rule(j, rid)
+            self.assertEqual((r["target_through"], r["followed"]),
+                             (None, None))
+
+    def test_missing_price_gives_none_not_an_error(self):
+        self.at(T3)
+        self.extra = {}
+        px = PX.loc[:pd.Timestamp(T3)]
+        clock = dt.date.fromisoformat(T3)
+
+        def fake(tickers, start):
+            return pd.DataFrame({t: px[t].dropna() for t in tickers})
+        with patch("explorer.account._today", return_value=clock), \
+             patch("explorer.account._close_history", side_effect=fake), \
+             patch("explorer.account.payin.bought_through",
+                   side_effect=KeyError("AAA")):
+            j = self.client.get("/api/account" + self.q).json()
+        self.assertIsNone(j["payin"]["bought_through"])
+        self.assertIsNone(self.rule(j, "idx_drawdown")["followed"])
+
+    def test_carry_is_the_cash_left_after_the_list_and_the_sale(self):
+        # T2: 17 RES sold at 10.02 to fund 165 -> 5.34 stays in cash
+        j = self.at(T2, before=True).get("/api/account/tranche")
+        self.assertEqual(j["carry"], 5.34)
+
+    def test_carry_with_nothing_left_to_buy(self):
+        j = self.at(T3).get("/api/account/tranche")
+        self.assertEqual(j["orders"][0]["qty"] + j["orders"][1]["qty"], 0)
+        self.assertIsNone(j["reservoir_trade"])
+        self.assertEqual(j["carry"], 9.3)
+
+    def test_funded_reservoir_is_never_bought_back(self):
+        # plenty of cash on top of a funded reservoir: no BUY, all carries
+        self.at(T2, before=True)
+        AccountEvent.objects.create(account=self.acc, date="2027-01-05",
+                                    kind="deposit", amount=2000)
+        j = self.get("/api/account/tranche")
+        self.assertIsNone(j["reservoir_trade"])
+        self.assertEqual(j["carry"], round(j["cash"] - 165, 2))
+
+    def test_day_one_still_funds_the_reservoir_and_carries_the_odd_cents(self):
+        j = self.at(D1, deposit_only=True).get("/api/account/tranche")
+        self.assertEqual(j["reservoir_trade"]["side"], "BUY")
+        self.assertEqual(j["carry"], 0)
+
+
+class ReviewFixTests(PlanWebBase):
+    def rule(self, j, rid):
+        return {r["id"]: r for r in j["rules"]}[rid]
+
+    def test_reservoir_held_by_set_shares_is_funded(self):
+        self.at(T2, before=True)
+        AccountEvent.objects.filter(account=self.acc, ticker="RES",
+                                    kind="buy").delete()
+        AccountEvent.objects.create(account=self.acc, date="2027-01-05",
+                                    kind="set_shares", ticker="RES",
+                                    shares=61, price=10, amount=0)
+        AccountEvent.objects.create(account=self.acc, date="2027-01-05",
+                                    kind="deposit", amount=2000)
+        j = self.get("/api/account/tranche")
+        self.assertIsNone(j["reservoir_trade"])
+        self.assertEqual(j["carry"], round(j["cash"] - 165, 2))
+
+    def _retarget(self, targets):
+        self.at(T2, before=True)
+        AccountRule.objects.filter(account=self.acc,
+                                   rule_id="ccc_below_cost").update(
+            targets=targets)
+        c = self.rule(self.get("/api/account"), "ccc_below_cost")
+        self.assertTrue(c["fired"])
+        return c
+
+    def test_targeted_rule_on_a_lump_ticker_gives_none(self):
+        c = self._retarget("LMP")
+        self.assertEqual((c["target_through"], c["followed"]), (None, None))
+
+    def test_targeted_rule_on_an_unknown_ticker_gives_none(self):
+        c = self._retarget("ZZZ")
+        self.assertEqual((c["target_through"], c["followed"]), (None, None))
+
+    def test_plan_without_dca_tickers_has_no_bought_through(self):
+        self.at(T2, before=True)
+        self.acc.targets.filter(timing="dca").delete()
+        j = self.get("/api/account")
+        self.assertIsNone(j["payin"]["bought_through"])
+
+    def test_complete_payin_gives_followed_none(self):
+        self.at(T4)
+        j = self.get("/api/account")
+        self.assertTrue(j["payin"]["complete"])
+        AccountRule.objects.filter(account=self.acc,
+                                   rule_id="idx_drawdown").update(
+            threshold=0.1)       # make an accelerate rule fire
+        j = self.get("/api/account")
+        i = self.rule(j, "idx_drawdown")
+        self.assertTrue(i["fired"])
+        self.assertEqual((i["target_through"], i["followed"]), (None, None))

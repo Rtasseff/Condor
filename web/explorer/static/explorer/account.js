@@ -250,6 +250,8 @@ function renderPayin() {
   $("payin-title").textContent = p.complete
     ? `Pay-in: complete (${p.n} of ${p.n} tranches)`
     : `Pay-in: tranche ${p.k_due} of ${p.n}`
+      + (typeof p.bought_through === "number"
+        ? ` · bought through ${p.bought_through}` : "")
       + (p.next_date ? ` · next ${p.next_date}` : "");
   const ub = $("payin-unbought");
   ub.hidden = !(p.complete && p.unbought > 0);
@@ -307,7 +309,7 @@ async function loadTranche(through) {
 function renderTranche() {
   const t = state.tranche;
   $("payin-through").value = t.through;
-  $("payin-buytitle").textContent = `Buy list for tranche ${t.through}`;
+  $("payin-buytitle").textContent = `Left to buy through tranche ${t.through}`;
   const tb = $("payin-orders").querySelector("tbody");
   tb.replaceChildren();
   const rows = t.orders.filter((o) => o.qty > 0 || o.note);
@@ -321,7 +323,7 @@ function renderTranche() {
   }
   if (!rows.length) {
     const tr = document.createElement("tr");
-    const c = td("Nothing to buy through this tranche.");
+    const c = td(`Nothing left to buy through tranche ${t.through}.`);
     c.colSpan = 6;
     tr.appendChild(c);
     tb.appendChild(tr);
@@ -332,7 +334,12 @@ function renderTranche() {
     : `Put the rest in ${rt.ticker}: buy ${rt.qty} (~${money(rt.amount)})`;
   const shortLine = rt && rt.short > 0
     ? `Short by ${money(rt.short)}: this list needs more cash than the account has.` : "";
-  $("payin-reservoir").textContent = [sellLine, shortLine].filter(Boolean).join(" ");
+  const next = state.data.payin && state.data.payin.next_date;
+  const carryLine = t.carry >= 0.01
+    ? (next ? `~${money(t.carry)} cash carries to the next tranche.`
+            : `~${money(t.carry)} stays in cash.`) : "";
+  $("payin-reservoir").textContent =
+    [sellLine, shortLine, carryLine].filter(Boolean).join(" ");
   $("payin-budget").textContent =
     `Cash available above reserve: ${money(t.budget)}`;
   const inc = $("payin-includes");
@@ -385,7 +392,7 @@ function renderRules() {
       status.appendChild(b);
     } else if (r.fired) {
       const b = document.createElement("strong");
-      b.textContent = "Fired";
+      b.textContent = r.followed === true ? "Fired · followed" : "Fired";
       status.appendChild(b);
     } else {
       status.textContent = "Not fired";
