@@ -1,5 +1,7 @@
 # Handoff — `feature/payin-followed`
 
+**Merged 2026-11-23**; branch and worktree removed. Browser pass by the handoff session (desktop and 454 px, Chrome's narrowest): title, list title, empty row, carry note and the rules toggle all render as specified. It found two pre-existing bugs, fixed on main: the page overflowed sideways on a phone (an `.sr-only` header label escaped its table wrapper), and unticking "Include fired rules" kept the tranche the rules had raised the list to.
+
 <!-- Copy of docs/handoffs/_template.md, seeded by scripts/new-worktree.sh.
      Lives at docs/handoffs/payin-followed.md on the branch. Keep "Status" current. -->
 

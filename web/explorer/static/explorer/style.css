@@ -320,7 +320,9 @@ button.small { padding: 6px 12px; font-size: 13px; }
 }
 
 /* table */
-.tablewrap { overflow-x: auto; }
+/* relative: an absolutely positioned child (the .sr-only header labels)
+   must be clipped by the wrapper, or it widens the page on a phone */
+.tablewrap { overflow-x: auto; position: relative; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--grid); }
 th { color: var(--muted); font-weight: 600; font-size: 12px; }

@@ -1394,7 +1394,9 @@ for (const id of ["af-anchor", "af-anchorvalue"]) {
 }
 $("acct-select").addEventListener("change", (e) => switchAccount(e.target.value));
 $("payin-through").addEventListener("change", (e) => loadTranche(e.target.value));
-$("payin-rules").addEventListener("change", () => loadTranche($("payin-through").value));
+// toggling rules goes back to the tranche due: the selector holds the
+// through the rules raised it to, which would keep them applied
+$("payin-rules").addEventListener("change", () => loadTranche(null));
 $("rc-check").addEventListener("click", () => runReconcile(true));
 for (const id of Object.values(RC_INPUTS)) {
   $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") runReconcile(true); });

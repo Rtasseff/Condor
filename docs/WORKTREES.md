@@ -194,5 +194,4 @@ Mark the registry row merged (or remove it) in the same commit.
 
 | Dir (`~/projects/condor-dev/`) | Branch | Port | Since | Status |
 |---|---|---|---|---|
-| `payin-followed` | `feature/payin-followed` | 8001 | 2026-11-23 | Active: bought-through, rule followed, no reservoir buy-back |
 
