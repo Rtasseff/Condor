@@ -244,12 +244,16 @@ def _action_text(r) -> str:
 
 def _rule_followed(r, plan, nums, prices):
     """(target_through, followed) for a rule. followed is None when it
-    does not apply: not fired, an alert rule, muted, no plan, or a
-    missing price."""
-    if plan is None or r.muted:
+    does not apply: not fired, an alert rule, muted, no plan, the pay-in
+    complete, no dca ticker to judge (both None), or a missing price."""
+    if plan is None or r.muted or nums.complete:
         return None, None
     target = alerts.rule_target(r, nums.k_due, plan.n)
     if target is None:
+        return None, None
+    judged = [t for t in plan.tickers("dca")
+              if not r.targets or t in r.targets]
+    if not judged:          # a rule on no dca ticker has nothing to follow
         return None, None
     done = _bought_through(plan, nums, prices, r.targets or None)
     return target, (None if done is None else done >= target)
@@ -714,7 +718,8 @@ def api_account_tranche(request):
     res = plan.reservoir
     trade = payin.reservoir_trade(
         plan, nums.cash, prices, buys, held=nums.res_held,
-        funded=bool(res and nums.bought.get(res, 0) > 0))
+        funded=bool(res and (nums.bought.get(res, 0) > 0
+                             or nums.res_held > 0)))
     carry = _round(payin.leftover_cash(nums.cash, buys, trade))
     if trade is not None:
         trade = {**trade, "price": _round(trade["price"], 4),

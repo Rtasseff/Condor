@@ -619,3 +619,10 @@ def test_rule_target_none_unless_fired_accelerate():
     assert alerts.rule_target(mk(fired=False), 2, 6) is None
     assert alerts.rule_target(mk(action="alert", tranches=None), 2, 6) is None
     assert alerts.rule_target(mk(tranches=None), 2, 6) is None
+
+
+def test_bought_through_is_none_without_a_dca_ticker():
+    assert payin.bought_through(HAND, {}, HPX, ["RES"]) is None
+    assert payin.bought_through(HAND, {}, HPX, ["ZZZ"]) is None
+    no_dca = payin.PayInPlan.build(100, HAND.dates, [("RES", 1, "reservoir", "")])
+    assert payin.bought_through(no_dca, {}, HPX) is None

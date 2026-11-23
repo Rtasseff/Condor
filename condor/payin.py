@@ -214,15 +214,19 @@ def tranche_orders(plan: PayInPlan, bought: dict, prices, through: int,
 
 
 def bought_through(plan: PayInPlan, bought: dict, prices,
-                   tickers=None) -> int:
+                   tickers=None) -> int | None:
     """The largest k in 0..N for which the dca buy list through k buys
     nothing for `tickers` (default: every dca ticker; non-dca tickers
     are ignored). Measures holdings, not cash: no budget, no lump, no
     reservoir. Uses the list's own half-up whole-share test, so it can
-    never disagree with `tranche_orders`. A missing price -> KeyError."""
+    never disagree with `tranche_orders`. None when there is no dca
+    ticker to judge (an empty set would read as "bought through N").
+    A missing price -> KeyError."""
     n = max(plan.n, 1)
     dca = plan.tickers("dca")
     ts = dca if tickers is None else [t for t in dca if t in set(tickers)]
+    if not ts:
+        return None
     px = {t: _price(prices, t) for t in ts}
     done = 0
     for k in range(1, plan.n + 1):

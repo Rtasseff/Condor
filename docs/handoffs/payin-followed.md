@@ -165,7 +165,17 @@ rule that stays fired.
 - [ ] Browser pass: NOT done in a real browser (see Deviations). API checked through the
   Django test client; `node --check` passes on `account.js`. Phone-width overflow NOT verified.
 
-**After:** `pytest tests/` 522 passed, 4 skipped (+13); `manage.py test explorer` 268 OK (+12);
+### Review fixes (post-review)
+
+1. Tranche view: `funded` is also true when reservoir shares are held (`set_shares`), so no buy-back.
+2. `bought_through` returns None when no dca ticker is judged; a targeted rule on no dca ticker
+   gives `target_through` and `followed` None.
+3. A plan with no dca tickers has `bought_through` None, so the title drops it.
+4. `_rule_followed` returns (None, None) once the pay-in is complete.
+Tests: `ReviewFixTests` (explorer), `test_bought_through_is_none_without_a_dca_ticker` (engine).
+Counts now: pytest 523 passed, 4 skipped; explorer 269 OK.
+
+**After (first pass):** `pytest tests/` 522 passed, 4 skipped (+13); `manage.py test explorer` 268 OK (+12);
 `check` clean; `makemigrations --check` no changes.
 
 ### User-facing strings (before -> after)

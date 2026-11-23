@@ -671,3 +671,56 @@ class FollowedTests(PlanWebBase):
         j = self.at(D1, deposit_only=True).get("/api/account/tranche")
         self.assertEqual(j["reservoir_trade"]["side"], "BUY")
         self.assertEqual(j["carry"], 0)
+
+
+class ReviewFixTests(PlanWebBase):
+    def rule(self, j, rid):
+        return {r["id"]: r for r in j["rules"]}[rid]
+
+    def test_reservoir_held_by_set_shares_is_funded(self):
+        self.at(T2, before=True)
+        AccountEvent.objects.filter(account=self.acc, ticker="RES",
+                                    kind="buy").delete()
+        AccountEvent.objects.create(account=self.acc, date="2027-01-05",
+                                    kind="set_shares", ticker="RES",
+                                    shares=61, price=10, amount=0)
+        AccountEvent.objects.create(account=self.acc, date="2027-01-05",
+                                    kind="deposit", amount=2000)
+        j = self.get("/api/account/tranche")
+        self.assertIsNone(j["reservoir_trade"])
+        self.assertEqual(j["carry"], round(j["cash"] - 165, 2))
+
+    def _retarget(self, targets):
+        self.at(T2, before=True)
+        AccountRule.objects.filter(account=self.acc,
+                                   rule_id="ccc_below_cost").update(
+            targets=targets)
+        c = self.rule(self.get("/api/account"), "ccc_below_cost")
+        self.assertTrue(c["fired"])
+        return c
+
+    def test_targeted_rule_on_a_lump_ticker_gives_none(self):
+        c = self._retarget("LMP")
+        self.assertEqual((c["target_through"], c["followed"]), (None, None))
+
+    def test_targeted_rule_on_an_unknown_ticker_gives_none(self):
+        c = self._retarget("ZZZ")
+        self.assertEqual((c["target_through"], c["followed"]), (None, None))
+
+    def test_plan_without_dca_tickers_has_no_bought_through(self):
+        self.at(T2, before=True)
+        self.acc.targets.filter(timing="dca").delete()
+        j = self.get("/api/account")
+        self.assertIsNone(j["payin"]["bought_through"])
+
+    def test_complete_payin_gives_followed_none(self):
+        self.at(T4)
+        j = self.get("/api/account")
+        self.assertTrue(j["payin"]["complete"])
+        AccountRule.objects.filter(account=self.acc,
+                                   rule_id="idx_drawdown").update(
+            threshold=0.1)       # make an accelerate rule fire
+        j = self.get("/api/account")
+        i = self.rule(j, "idx_drawdown")
+        self.assertTrue(i["fired"])
+        self.assertEqual((i["target_through"], i["followed"]), (None, None))
