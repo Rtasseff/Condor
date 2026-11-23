@@ -345,7 +345,7 @@ function renderTranche() {
 }
 
 // A rule fires on strictly more than its threshold, so a reading that rounds
-// to the threshold itself (URNM 19.995% vs "more than 20%") says which side
+// to the threshold itself (19.995% vs "more than 20%") says which side
 // it is on instead of printing "20.0%" beside either verdict.
 function measuredText(r, unit) {
   if (r.measured == null) return "—";

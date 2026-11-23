@@ -134,6 +134,10 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
   held passively); ~~CSV export of the ledger~~ (done:
   `export_ledger`). Broker-cent cash: done for the check panel; the headline
   tiles still use exact fills, so they can differ from the broker by a cent.
+  The gap grows with each sub-cent fill (seen 2026-11-23: two cents after
+  three half-cent fills). Candidate: mirror accounts show booked cash in the
+  headline and the pay-in budget; confirm first which cent the broker keeps
+  after settlement.
 - [ ] **Scenario simulators** — "what if 2008 / 2020 / rates +3%" replay on
   the current portfolio; Monte Carlo on the estimated μ/Σ.
 - [ ] **Optimization constraints:** per-asset max weight, min position,
