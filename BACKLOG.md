@@ -55,7 +55,38 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
     open: A3 narrowed (T-bill vs TIPS as the risk-free, real display, inflation
     beta, real-dollar fan), which needs design first because a TIPS real yield
     isn't directly comparable with nominal daily returns; no need before the
-    2027-04 sleeve review. Phone layout of the newer panels is unverified.
+    2027-04 sleeve review.
+  - **`payin-followed`**: *merged 2026-11-23*, ADR 0007 amendment. Adds
+    "bought through N", "Fired · followed" and "Left to buy through
+    tranche K"; no reservoir buy-back after day 1, with leftover cash
+    carrying instead.
+
+  How the app side works (who owns what, re-import, checks, privacy):
+  `docs/REAL-USE.md`. **Open app items from real use**, in order:
+  - [ ] **Booked cash for mirror accounts.** The headline, pay-in budget
+    and carry note use exact fills; the broker check books each event to
+    the cent. The gap grows with each sub-cent fill: two cents after
+    three half-cent fills on 2026-11-23. Show booked cash wherever a
+    mirror shows cash. First confirm which cent the broker keeps after
+    settlement; the portfolio session reports it with its next read.
+  - [ ] **Open-order awareness** (format v1.2, an optional `open_orders`
+    file). Nothing models a placed-but-unfilled order, so catch-up
+    sizing can double-buy while last month's order is still working.
+    It is a two-repo change and needs the owner's go-ahead.
+  - [ ] **Rule re-arm mode**, only if the portfolio repo chooses it. The
+    owner has to decide how a fired "buy N tranches early" rule reads
+    while it stays fired (their decision O7). Condor today implements
+    "stay N ahead while fired" (ADR 0007): `through = k_due + N`,
+    re-evaluated daily. The alternative, "once per fall, re-arm when the
+    index recovers", needs state Condor doesn't have. It would come from
+    either the import or index history plus the ledger. Design it only
+    once the owner picks it.
+  - [ ] **The reminder to cancel last month's unfilled orders** shows
+    even when nothing is left to buy. Small UI bug, found 2026-11-23.
+  - [ ] **True phone width (390 px).** `/account` is checked only at
+    454 px (Chrome's narrowest window): no sideways scroll, and tables
+    scroll inside their wrappers. The Optimize panels are unchecked.
+    Needs devtools device emulation or a phone.
 
 ## Next
 
@@ -121,23 +152,17 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 - [x] **Check against your broker** — 2026-11-01. Panel on mirror accounts:
   expected cash, securities and account value, booked to the cent; type what
   the broker shows; match or mismatch with where to look. Read-only.
-- [ ] **From the first month of real use** (`investments-b9`, 2026-11-01):
-  open-order awareness (nothing models a placed-but-unfilled order, and
-  catch-up double-buys if last month's is still working: needs an optional
-  `open_orders` file, format v1.2, two repos, RT's go-ahead); the order
+- [ ] **From the first month of real use** (2026-11-01): open-order
+  awareness (now under the real-use entry in **Now**); the order
   ticket (limit conventions per asset, the source repo fixes it first, then
-  they could ride in `rules.csv`); event-level FX for the Gipuzkoa return,
-  April 2027 (every USD event at that day's ECB rate: R5 taken further).
+  they could ride in `rules.csv`); event-level FX, needed by April 2027
+  (every USD event at that day's ECB rate: R5 taken further).
 - [ ] **Account follow-ons:** ~~multiple accounts per user~~ (done,
   ADR 0005); ~~dividends~~ (done: dividend/interest/fee kinds) — splits
   still open; benchmark overlay on the value chart (SPY / your setpoint
   held passively); ~~CSV export of the ledger~~ (done:
-  `export_ledger`). Broker-cent cash: done for the check panel; the headline
-  tiles still use exact fills, so they can differ from the broker by a cent.
-  The gap grows with each sub-cent fill (seen 2026-11-23: two cents after
-  three half-cent fills). Candidate: mirror accounts show booked cash in the
-  headline and the pay-in budget; confirm first which cent the broker keeps
-  after settlement.
+  `export_ledger`). Broker-cent cash: done for the check panel; the rest is
+  under "Booked cash for mirror accounts" in **Now**.
 - [ ] **Scenario simulators** — "what if 2008 / 2020 / rates +3%" replay on
   the current portfolio; Monte Carlo on the estimated μ/Σ.
 - [ ] **Optimization constraints:** per-asset max weight, min position,
@@ -188,6 +213,16 @@ one-line why and, where useful, a pointer to the legacy source of the idea.
 
 ## Done
 
+- [x] **Real-use fixes, 2026-11-22/23.**
+  - The price store keeps final daily bars only: dated before today in
+    New York, or after 17:00 there. It drops bars a fetch saved
+    mid-session, and re-checks within the hour once a newer close is
+    due (ADR 0001 amendment).
+  - A rule reading that rounds to its threshold says "just under / just
+    over".
+  - Tables no longer widen the page on a phone.
+  - Unticking "Include fired rules" returns to the tranche due.
+- [x] **`payin-followed` (ADR 0007 amendment)**: 2026-11-23. See **Now**.
 - [x] **`assumptions-1` (ADR 0008)** — limits (per-asset and group), an
       equilibrium prior blended with history (T₀ = 20 years) and optional
       views, the constrained best mix, and three gaps from your plan to it.

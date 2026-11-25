@@ -141,6 +141,21 @@ Then the handoff session:
 3. Tells the human the dir path; they open a new agent session there and
    `/model` down.
 
+**Practice since 2026-11:** instead of the human opening a session, the
+handoff session launches a background agent (Agent tool, Sonnet), told
+to work only in the worktree path and not to push, merge or review. When
+the agent reports, the handoff session:
+
+1. rebases the branch onto `main`;
+2. runs `/code-review medium <branch>` itself and sends the findings back
+   to the same agent;
+3. does the browser pass itself, which agents usually can't;
+4. merges `--no-ff`, marks the handoff doc *Merged*, removes the registry
+   row and the worktree, and pushes `main`.
+
+Briefs that come from real use follow the privacy rules in
+[REAL-USE.md](REAL-USE.md): nothing real in briefs or commits.
+
 ## Handoff doc convention
 
 Every worktree branch carries `docs/handoffs/<slug>.md`, committed on

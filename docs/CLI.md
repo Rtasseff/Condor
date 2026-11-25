@@ -173,5 +173,8 @@ limits contradict each other (for example, minimums adding up to over 100%).
   shared trading days with the others). Shorten `--years` or drop it.
 - **Yahoo rate-limits / flakes** — wait a minute and retry, or set
   `TIINGO_API_KEY` so the fallback kicks in.
-- **Stale numbers?** — data refreshes automatically once a day;
-  `python -m condor data update` forces it.
+- **Stale numbers?** Data refreshes automatically: once a day, plus
+  at most hourly once a newer close is due. Only final daily bars are
+  kept, so a day's close appears after 17:00 New York time, and during
+  the session "as of" is the previous close.
+  `python -m condor data update` forces a refresh.

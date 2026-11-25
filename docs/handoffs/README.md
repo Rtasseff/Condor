@@ -36,3 +36,6 @@ Merged (kept as records):
   check a mirror account against the broker, to the cent.
 - `scenarios.md` — `feature/scenarios`, merged 2026-11-01: stress-period
   returns and tangency stability bands.
+- `payin-followed.md` — `feature/payin-followed`, merged 2026-11-23:
+  bought-through, "Fired · followed", "Left to buy", no reservoir
+  buy-back after day 1 (ADR 0007 amendment).

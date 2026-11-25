@@ -8,6 +8,8 @@ needs to break it, say so explicitly and update it in the same commit.
 Orientation: `README.md` (run it), `BACKLOG.md` (what's next, in order),
 `context/CONTEXT.md` (history, mission, UI concept), `context/legacy/`
 (2023–24 code, reference only).
+Working with the real mirrored portfolio (imports, checks, privacy):
+`docs/REAL-USE.md`. Running parallel branches: `docs/WORKTREES.md`.
 
 **If this checkout lives under `~/projects/condor-dev/`** it is a git
 worktree for one branch of work: read `docs/handoffs/<dirname>.md` FIRST —

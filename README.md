@@ -45,12 +45,15 @@ account, and bills that accrete to nominal; `export_ledger` writes the
 same format back out. `/account?account=<id>` switches between accounts.
 With the format's v1.1 files (`--targets` with `timing`/`line`, `--payin`,
 `--rules`; ADR 0007) a mirror also shows the pay-in tracker (progress per
-line, the whole-share buy list for tranche k with catch-up sizing, budget
-trim and the reservoir sale or purchase, completion), rule alerts (index
-below its 52-week high, position below average cost, drift, muted during
-the pay-in), a money-weighted return (XIRR) beside the time-weighted one,
-and a combined USD + EUR total across your accounts. All of it is advice:
-nothing is bought for you.
+line, how far it is bought through, what is left to buy through tranche k
+with catch-up sizing, budget trim and the reservoir sale, which is bought
+only on day 1 (afterwards leftover cash carries to the next tranche),
+completion), rule alerts (index below its 52-week high, position below
+average cost, drift, muted during the pay-in; a fired rule the holdings
+already cover reads "Fired · followed"), a money-weighted return (XIRR)
+beside the time-weighted one, and a combined USD + EUR total across your
+accounts. All of it is advice: nothing is bought for you. Working with a
+real portfolio this way (re-import, checks, privacy): `docs/REAL-USE.md`.
 A mirror also has a **Check against your broker** card: what your broker should
 show if the ledger is complete (cash booked to the cent per event, securities
 value and account value at the last close), with boxes to type what it does
